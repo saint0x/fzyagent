@@ -57,46 +57,7 @@ fn run_path(run_id: str) -> str {
     if run_id == "latest" {
         return "/tmp/fzyagent/runs/latest.json"
     }
-    if run_id == "parallel_bash_latest" {
-        return "/tmp/fzyagent/runs/parallel_bash_latest.json"
-    }
-    if run_id == "parallel_grep_latest" {
-        return "/tmp/fzyagent/runs/parallel_grep_latest.json"
-    }
-    if run_id == "bash_latest" {
-        return "/tmp/fzyagent/runs/bash_latest.json"
-    }
-    if run_id == "grep_search_latest" {
-        return "/tmp/fzyagent/runs/grep_search_latest.json"
-    }
-    if run_id == "release_audit_latest" {
-        return "/tmp/fzyagent/runs/release_audit_latest.json"
-    }
-    if run_id == "timeout_probe_latest" {
-        return "/tmp/fzyagent/runs/timeout_probe_latest.json"
-    }
-    if run_id == "workspace_digest_latest" {
-        return "/tmp/fzyagent/runs/workspace_digest_latest.json"
-    }
-    if run_id == "project_seed_latest" {
-        return "/tmp/fzyagent/runs/project_seed_latest.json"
-    }
-    if run_id == "aegis_latest" {
-        return "/tmp/fzyagent/runs/aegis_latest.json"
-    }
-    if run_id == "browser_ops_seed_latest" {
-        return "/tmp/fzyagent/runs/browser_ops_seed_latest.json"
-    }
-    if run_id == "toolsmith_latest" {
-        return "/tmp/fzyagent/runs/toolsmith_latest.json"
-    }
-    if run_id == "promptsmith_latest" {
-        return "/tmp/fzyagent/runs/promptsmith_latest.json"
-    }
-    if run_id == "fzydoc_latest" {
-        return "/tmp/fzyagent/runs/fzydoc_latest.json"
-    }
-    return "/tmp/fzyagent/runs/generic_latest.json"
+    return str.concat(str.concat("/tmp/fzyagent/runs/", run_id), ".json")
 }
 
 fn ensure_state() -> i32 {

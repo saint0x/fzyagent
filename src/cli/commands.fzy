@@ -1,6 +1,7 @@
 use core.fs;
 use core.process;
 use core.term;
+use core.thread;
 
 fn active_prompt_path() -> str {
     return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
@@ -116,11 +117,10 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
     discard services.sessions.post_message_for(session_id, filtered, request_id, "anthropic_latest")
     let raw = runtime.agent.run_session_turn(session_id, filtered, request_id)
     let parsed = json.parse(raw)
-    let status = json.get_str(parsed, "status")
     let tool_events_raw = json.get_str(json.get(parsed, "tool_events"), "raw")
     discard render_tool_events(tool_events_raw)
     discard render.print_assistant(services.safety.filter_tool_response_text(assistant_text(parsed)))
-    if status == "ok" {
+    if runtime.agent.turn_response_is_ok(parsed) == 1 {
         return 0
     }
     discard render.print_error(str.concat("runtime turn failed: ", raw))

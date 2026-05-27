@@ -1,4 +1,5 @@
 use core.fs;
+use core.thread;
 use core.log;
 
 fn system_prompt_path() -> str {
@@ -180,124 +181,42 @@ fn request_payload_for(messages_json: str, tools_json: str) -> str {
     return json.object(payload)
 }
 
-fn tool_run_id(tool_id: str) -> str {
-    if tool_id == "parallel_bash" {
-        return "parallel_bash_latest"
+enum TurnResponseKind {
+    TurnResponseOk,
+    TurnResponseError,
+}
+
+fn turn_response_status(parsed: JsonHandle) -> TurnResponseKind {
+    if json.get_str(parsed, "status") == "ok" {
+        return TurnResponseKind::TurnResponseOk
     }
-    if tool_id == "parallel_grep" {
-        return "parallel_grep_latest"
+    return TurnResponseKind::TurnResponseError
+}
+
+fn turn_response_is_ok(parsed: JsonHandle) -> i32 {
+    let kind = turn_response_status(parsed)
+    match kind {
+        TurnResponseKind::TurnResponseOk => return 1,
+        _ => return 0,
     }
-    if tool_id == "release_audit" {
-        return "release_audit_latest"
-    }
-    if tool_id == "workspace_digest" {
-        return "workspace_digest_latest"
-    }
-    if tool_id == "aegis" {
-        return "aegis_latest"
-    }
-    if tool_id == "browser_ops_seed" {
-        return "browser_ops_seed_latest"
-    }
-    if tool_id == "project_seed" {
-        return "project_seed_latest"
-    }
-    if tool_id == "bash" {
-        return "bash_latest"
-    }
-    if tool_id == "grep_search" {
-        return "grep_search_latest"
-    }
-    if tool_id == "timeout_probe" {
-        return "timeout_probe_latest"
-    }
-    if tool_id == "toolsmith" {
-        return "toolsmith_latest"
-    }
-    if tool_id == "promptsmith" {
-        return "promptsmith_latest"
-    }
-    if tool_id == "fzydoc" {
-        return "fzydoc_latest"
-    }
-    return "latest"
+    return 0
 }
 
 fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id: str) -> str {
-    let input = json.parse(if input_raw == "" { "{}" } else { input_raw })
-    let action = json.get_str(input, "action")
-    let url = json.get_str(input, "url")
-    let query = json.get_str(input, "query")
-    let eval_js = json.get_str(input, "eval_js")
-    let commands_json = json.get_str(input, "commands_json")
-    let command = json.get_str(input, "command")
-    let pattern = json.get_str(input, "pattern")
-    let target = json.get_str(input, "target")
-    let requested_tool_id = json.get_str(input, "tool_id")
-    let description = json.get_str(input, "description")
-    let command_template = json.get_str(input, "command_template")
-    let input_schema_json = json.get_str(input, "input_schema_json")
-    let kind = json.get_str(input, "kind")
-    let mode = json.get_str(input, "mode")
-    let max_lines = json.get_str(input, "max_lines")
-    let content = json.get_str(input, "content")
-    let tool_input = json.get(input, "tool_input")
-    let tool_input_json = json.get_str(tool_input, "raw")
-    let parsed_commands = json.get(input, "commands")
-    let commands_array_json = json.get_str(parsed_commands, "raw")
-    let effective_commands = if commands_json == "" { commands_array_json } else { commands_json }
+    let normalized = api.rpc.single_request_json(request_id, tool_id, if input_raw == "" { "{}" } else { input_raw })
+    let tool_status = services.tools.dispatch_tool_request(tool_id, normalized)
 
-    let tool_status = if tool_id == "aegis" {
-        services.tools.run_aegis_with_args(action, url, query, eval_js, effective_commands)
-    } else if tool_id == "bash" {
-        services.tools.run_bash_with_command(command)
-    } else if tool_id == "grep_search" {
-        services.tools.run_grep_search(pattern, target)
-    } else if tool_id == "parallel_bash" {
-        services.tools.run_parallel_bash()
-    } else if tool_id == "parallel_grep" {
-        services.tools.run_parallel_grep()
-    } else if tool_id == "release_audit" {
-        services.tools.run_release_audit()
-    } else if tool_id == "workspace_digest" {
-        services.tools.run_workspace_digest()
-    } else if tool_id == "project_seed" {
-        services.tools.run_project_seed()
-    } else if tool_id == "browser_ops_seed" {
-        services.tools.run_browser_ops_seed()
-    } else if tool_id == "timeout_probe" {
-        services.tools.run_with_timeout()
-    } else if tool_id == "toolsmith" {
-        services.tools.run_toolsmith(if action == "" { "protocol" } else { action }, requested_tool_id, description, command_template, input_schema_json, kind, mode)
-    } else if tool_id == "promptsmith" {
-        services.tools.run_promptsmith(if action == "" { "get" } else { action }, content)
-    } else if tool_id == "fzydoc" {
-        services.tools.run_fzydoc(if query == "" { "spawn" } else { query }, max_lines)
-    } else if tool_id == "all" {
-        services.tools.run_parallel()
-    } else {
-        services.tools.run_custom_tool(tool_id, if tool_input_json == "" { input_raw } else { tool_input_json })
-    }
-
-    let result = if tool_id == "promptsmith" { services.tools.safe_read(services.tools.promptsmith_path()) } else { services.tools.last_run_json(tool_id) }
-    let status = if tool_status == 0 { "ok" } else { "error" }
-    let run_id = tool_run_id(tool_id)
+    let result = services.tools.last_run_json(tool_id)
+    let status = api.rpc.tool_result_status(tool_status)
+    let run_id = services.tools.run_id_for_tool(tool_id)
     discard services.sessions.record_tool_run_for(session_id, tool_id, run_id, status)
-
-    let payload = map.new()
-    discard map.set(payload, "status", json.str(status))
-    discard map.set(payload, "tool_id", json.str(tool_id))
-    discard map.set(payload, "run_id", json.str(run_id))
-    discard map.set(payload, "request_id", json.str(request_id))
-    discard map.set(payload, "result", json.raw(result))
-    return json.object(payload)
+    return api.rpc.tool_response_json(request_id, tool_id, run_id, tool_status, services.tools.last_run_artifact_path(tool_id), result)
 }
 
 fn tool_result_content(outcome_json: str) -> str {
     let parsed = json.parse(outcome_json)
-    let result = json.get(parsed, "result")
-    let result_raw = json.get_str(result, "raw")
-    if json.get_str(parsed, "status") == "ok" {
+    let result_raw = api.rpc.response_result_raw(parsed)
+    if api.rpc.response_is_ok(parsed) == 1 {
         return result_raw
     }
     return str.concat("tool_error ", result_raw)
@@ -305,7 +224,7 @@ fn tool_result_content(outcome_json: str) -> str {
 
 fn tool_result_block_json(tool_use_id: str, outcome_json: str) -> str {
     let parsed = json.parse(outcome_json)
-    let is_error = if json.get_str(parsed, "status") == "ok" { "false" } else { "true" }
+    let is_error = if api.rpc.response_is_ok(parsed) == 1 { "false" } else { "true" }
     let block = map.new()
     discard map.set(block, "type", json.str("tool_result"))
     discard map.set(block, "tool_use_id", json.str(tool_use_id))

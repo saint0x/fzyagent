@@ -1,31 +1,53 @@
 use core.fs;
-use core.time;
 
 fn limits_path() -> str {
     return "/tmp/fzyagent/runtime.limits.json"
 }
 
-fn enforce_thread_limit() -> i32 {
+fn env_or(key: str, fallback: str) -> str {
+    let value = env.get(key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+fn thread_limit() -> str {
+    return env_or("AGENT_THREAD_LIMIT", "64")
+}
+
+fn queue_limit() -> str {
+    return env_or("AGENT_QUEUE_LIMIT", "256")
+}
+
+fn memory_limit() -> str {
+    return env_or("AGENT_MEMORY_LIMIT", "536870912")
+}
+
+fn limits_json() -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str("ok"))
+    discard map.set(payload, "thread_limit", json.str(thread_limit()))
+    discard map.set(payload, "queue_limit", json.str(queue_limit()))
+    discard map.set(payload, "memory_limit", json.str(memory_limit()))
+    discard map.set(payload, "policy", json.str("configured"))
+    return json.object(payload)
+}
+
+fn apply_limits() -> i32 {
     fs.mkdir("/tmp/fzyagent")
-    let v = env.get("AGENT_THREAD_LIMIT")
-    let payload = util.json_obj2("thread_limit", json.str(v), "status", json.str("ok"))
-    fs.write_file(limits_path(), payload)
-    time.sleep_ms(25)
+    fs.write_file(limits_path(), limits_json())
     return 0
+}
+
+fn enforce_thread_limit() -> i32 {
+    return apply_limits()
 }
 
 fn enforce_queue_depth() -> i32 {
-    let v = env.get("AGENT_QUEUE_LIMIT")
-    let payload = util.json_obj2("queue_limit", json.str(v), "status", json.str("ok"))
-    fs.write_file(limits_path(), payload)
-    time.sleep_ms(25)
-    return 0
+    return apply_limits()
 }
 
 fn enforce_memory_budget() -> i32 {
-    let v = env.get("AGENT_MEMORY_LIMIT")
-    let payload = util.json_obj2("memory_limit", json.str(v), "status", json.str("ok"))
-    fs.write_file(limits_path(), payload)
-    time.sleep_ms(25)
-    return 0
+    return apply_limits()
 }

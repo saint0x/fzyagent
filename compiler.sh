@@ -59,7 +59,8 @@ resolve_build_fz() {
       --format-version 1 \
       --no-deps \
       --manifest-path "${FOZZYLANG_ROOT}/Cargo.toml" \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'
+      | tr -d '\n' \
+      | sed -E 's/.*"target_directory":"([^"]+)".*/\1/'
   )"
 
   local target_triple="${CARGO_BUILD_TARGET:-}"

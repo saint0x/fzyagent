@@ -1,59 +1,294 @@
-#[repr(C)]
-struct CreateSessionReq {
-    id: i32,
+use core.fs;
+use core.time;
+
+enum ToolRequestKind {
+    ToolRequestSingle,
+    ToolRequestSequence,
+    ToolRequestParallel,
+    ToolRequestInvalid,
 }
 
-#[repr(C)]
-struct CreateSessionRes {
-    id: i32,
-    state: i32,
+enum ToolResponseKind {
+    ToolResponseOk,
+    ToolResponseError,
 }
 
-#[repr(C)]
-struct PostMessageReq {
-    session_id: i32,
-    message_id: i32,
+fn rpc_manifest_path() -> str {
+    return "/tmp/fzyagent/api.rpc.json"
 }
 
-#[repr(C)]
-struct PostMessageRes {
-    accepted: i32,
+fn tool_protocol_version() -> str {
+    return "fzyagent.toolrpc.v1"
 }
 
-#[repr(C)]
-struct ListToolsReq {
-    scope: i32,
+fn request_id_from(raw_body: str) -> str {
+    let parsed = json.parse(if raw_body == "" { "{}" } else { raw_body })
+    let request_id = json.get_str(parsed, "request_id")
+    if request_id != "" {
+        return request_id
+    }
+    return str.concat("req_", str.from_i32(time.now()))
 }
 
-#[repr(C)]
-struct ListToolsRes {
-    count: i32,
+fn step_schema_json() -> str {
+    let properties = map.new()
+    discard map.set(properties, "step_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "tool_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "tool_input", json.raw(util.json_obj1("type", json.str("object"))))
+    let required = list.new()
+    discard list.push(required, json.str("tool_id"))
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "required", json.raw(json.array(required)))
+    return json.object(schema)
 }
 
-#[repr(C)]
-struct RunToolReq {
-    tool_id: i32,
+fn single_request_schema_json() -> str {
+    let properties = map.new()
+    discard map.set(properties, "protocol", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "request_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "op", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "tool_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "input", json.raw(util.json_obj1("type", json.str("object"))))
+    let required = list.new()
+    discard list.push(required, json.str("protocol"))
+    discard list.push(required, json.str("request_id"))
+    discard list.push(required, json.str("op"))
+    discard list.push(required, json.str("tool_id"))
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "required", json.raw(json.array(required)))
+    return json.object(schema)
 }
 
-#[repr(C)]
-struct RunToolRes {
-    run_id: i32,
-    state: i32,
+fn batch_request_schema_json() -> str {
+    let properties = map.new()
+    discard map.set(properties, "protocol", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "request_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "op", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "execution", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "steps", json.raw(util.json_obj2("type", json.str("array"), "items", json.raw(step_schema_json()))))
+    let required = list.new()
+    discard list.push(required, json.str("protocol"))
+    discard list.push(required, json.str("request_id"))
+    discard list.push(required, json.str("op"))
+    discard list.push(required, json.str("execution"))
+    discard list.push(required, json.str("steps"))
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "required", json.raw(json.array(required)))
+    return json.object(schema)
 }
 
-rpc CreateSession(req: CreateSessionReq) -> CreateSessionRes;
-rpc PostMessage(req: PostMessageReq) -> PostMessageRes;
-rpc ListTools(req: ListToolsReq) -> ListToolsRes;
-rpc RunTool(req: RunToolReq) -> RunToolRes;
+fn response_schema_json() -> str {
+    let properties = map.new()
+    discard map.set(properties, "protocol", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "request_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "status", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "tool_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "run_id", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "artifact_path", json.raw(util.json_obj1("type", json.str("string"))))
+    discard map.set(properties, "result", json.raw(util.json_obj1("type", json.str("object"))))
+    let required = list.new()
+    discard list.push(required, json.str("protocol"))
+    discard list.push(required, json.str("request_id"))
+    discard list.push(required, json.str("status"))
+    discard list.push(required, json.str("tool_id"))
+    discard list.push(required, json.str("run_id"))
+    discard list.push(required, json.str("artifact_path"))
+    discard list.push(required, json.str("result"))
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "required", json.raw(json.array(required)))
+    return json.object(schema)
+}
+
+fn protocol_doc_json() -> str {
+    let batch_steps = list.new()
+    discard list.push(batch_steps, json.raw(util.json_obj3("step_id", json.str("a"), "tool_id", json.str("bash"), "tool_input", json.raw(util.json_obj1("command", json.str("printf a"))))))
+    discard list.push(batch_steps, json.raw(util.json_obj3("step_id", json.str("b"), "tool_id", json.str("grep_search"), "tool_input", json.raw(util.json_obj2("pattern", json.str("fn "), "target", json.str("src"))))))
+    let payload = map.new()
+    discard map.set(payload, "protocol", json.str(tool_protocol_version()))
+    discard map.set(payload, "transport", json.str("http+routed-rpc"))
+    discard map.set(payload, "single_request_schema", json.raw(single_request_schema_json()))
+    discard map.set(payload, "batch_request_schema", json.raw(batch_request_schema_json()))
+    discard map.set(payload, "response_schema", json.raw(response_schema_json()))
+    discard map.set(payload, "single_example", json.raw(util.json_obj5("protocol", json.str(tool_protocol_version()), "request_id", json.str("req_example"), "op", json.str("run"), "tool_id", json.str("bash"), "input", json.raw(util.json_obj1("command", json.str("printf hi"))))))
+    discard map.set(payload, "batch_example", json.raw(util.json_obj5("protocol", json.str(tool_protocol_version()), "request_id", json.str("req_batch"), "op", json.str("run"), "execution", json.str("parallel"), "steps", json.raw(json.array(batch_steps)))))
+    return json.object(payload)
+}
 
 fn rpc_touch() -> i32 {
-    let _s_req = CreateSessionReq { id: 1 }
-    let _s_res = CreateSessionRes { id: 1, state: 1 }
-    let _m_req = PostMessageReq { session_id: 1, message_id: 1 }
-    let _m_res = PostMessageRes { accepted: 1 }
-    let _t_req = ListToolsReq { scope: 0 }
-    let _t_res = ListToolsRes { count: 3 }
-    let _r_req = RunToolReq { tool_id: 1 }
-    let _r_res = RunToolRes { run_id: 1, state: 2 }
+    fs.mkdir("/tmp/fzyagent")
+    let methods = list.new()
+    discard list.push(methods, json.raw(util.json_obj4("name", json.str("CreateSession"), "path", json.str("/sessions"), "verb", json.str("POST"), "purpose", json.str("allocate or reset session state"))))
+    discard list.push(methods, json.raw(util.json_obj4("name", json.str("PostMessage"), "path", json.str("/sessions/{session_id}/messages"), "verb", json.str("POST"), "purpose", json.str("run an agent turn"))))
+    discard list.push(methods, json.raw(util.json_obj4("name", json.str("ListTools"), "path", json.str("/tools"), "verb", json.str("GET"), "purpose", json.str("discover runtime tools"))))
+    discard list.push(methods, json.raw(util.json_obj4("name", json.str("RunTool"), "path", json.str("/tools/{tool_id}/run"), "verb", json.str("POST"), "purpose", json.str("execute a single tool request"))))
+    discard list.push(methods, json.raw(util.json_obj4("name", json.str("RunToolBatch"), "path", json.str("/tools/{tool_id}/run"), "verb", json.str("POST"), "purpose", json.str("execute sequence or parallel batched requests through the strict tool RPC envelope"))))
+    let payload = util.json_obj5(
+        "status", json.str("ok"),
+        "transport", json.str("http+routed-rpc"),
+        "project", json.str("fzyagent"),
+        "methods", json.raw(json.array(methods)),
+        "tool_protocol", json.raw(protocol_doc_json()),
+    )
+    fs.write_file(rpc_manifest_path(), payload)
     return 0
+}
+
+fn rpc_error_json(request_id: str, code: str, message: str) -> str {
+    return util.json_obj4(
+        "protocol", json.str(tool_protocol_version()),
+        "request_id", json.str(request_id),
+        "status", json.str("error"),
+        "error", json.raw(util.json_obj2("code", json.str(code), "message", json.str(message))),
+    )
+}
+
+fn request_kind(parsed: JsonHandle) -> ToolRequestKind {
+    if json.get_str(parsed, "protocol") != tool_protocol_version() {
+        return ToolRequestKind::ToolRequestInvalid
+    }
+    let execution = json.get_str(parsed, "execution")
+    if execution == "sequence" {
+        return ToolRequestKind::ToolRequestSequence
+    }
+    if execution == "parallel" {
+        return ToolRequestKind::ToolRequestParallel
+    }
+    if json.get_str(parsed, "tool_id") != "" {
+        return ToolRequestKind::ToolRequestSingle
+    }
+    return ToolRequestKind::ToolRequestInvalid
+}
+
+fn request_kind_code(kind: ToolRequestKind) -> i32 {
+    match kind {
+        ToolRequestKind::ToolRequestSingle => return 1,
+        ToolRequestKind::ToolRequestSequence => return 2,
+        ToolRequestKind::ToolRequestParallel => return 3,
+        _ => return 0,
+    }
+    return 0
+}
+
+fn single_request_json(request_id: str, tool_id: str, tool_input_json: str) -> str {
+    return util.json_obj5(
+        "protocol", json.str(tool_protocol_version()),
+        "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }),
+        "op", json.str("run"),
+        "tool_id", json.str(tool_id),
+        "tool_input", json.raw(if tool_input_json == "" { "{}" } else { tool_input_json }),
+    )
+}
+
+fn tool_result_status(code: i32) -> str {
+    return tool_response_label(tool_response_kind(code))
+}
+
+fn tool_response_kind(code: i32) -> ToolResponseKind {
+    if code == 0 {
+        return ToolResponseKind::ToolResponseOk
+    }
+    return ToolResponseKind::ToolResponseError
+}
+
+fn tool_response_label(kind: ToolResponseKind) -> str {
+    match kind {
+        ToolResponseKind::ToolResponseOk => return "ok",
+        _ => return "error",
+    }
+    return "error"
+}
+
+fn tool_response_json(request_id: str, tool_id: str, run_id: str, status_code: i32, artifact_path: str, result_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "protocol", json.str(tool_protocol_version()))
+    discard map.set(payload, "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }))
+    discard map.set(payload, "status", json.str(tool_result_status(status_code)))
+    discard map.set(payload, "tool_id", json.str(tool_id))
+    discard map.set(payload, "run_id", json.str(run_id))
+    discard map.set(payload, "artifact_path", json.str(artifact_path))
+    discard map.set(payload, "result", json.raw(result_json))
+    return json.object(payload)
+}
+
+fn response_status(parsed: JsonHandle) -> ToolResponseKind {
+    if json.get_str(parsed, "status") == "ok" {
+        return ToolResponseKind::ToolResponseOk
+    }
+    return ToolResponseKind::ToolResponseError
+}
+
+fn response_is_ok(parsed: JsonHandle) -> i32 {
+    let kind = response_status(parsed)
+    match kind {
+        ToolResponseKind::ToolResponseOk => return 1,
+        _ => return 0,
+    }
+    return 0
+}
+
+fn response_result_raw(parsed: JsonHandle) -> str {
+    return json.get_str(json.get(parsed, "result"), "raw")
+}
+
+fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
+    let parsed = json.parse(if raw_body == "" { "{}" } else { raw_body })
+    let protocol = json.get_str(parsed, "protocol")
+    let request_id = request_id_from(raw_body)
+    if protocol == tool_protocol_version() {
+        let op = json.get_str(parsed, "op")
+        let execution = json.get_str(parsed, "execution")
+        let tool_id = json.get_str(parsed, "tool_id")
+        let input_raw = json.get_str(json.get(parsed, "input"), "raw")
+        let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
+        if execution == "parallel" || execution == "sequence" {
+            return util.json_obj5(
+                "protocol", json.str(tool_protocol_version()),
+                "request_id", json.str(request_id),
+                "op", json.str(if op == "" { "run" } else { op }),
+                "execution", json.str(execution),
+                "steps", json.raw(if steps_raw == "" { "[]" } else { steps_raw }),
+            )
+        }
+        return util.json_obj5(
+            "protocol", json.str(tool_protocol_version()),
+            "request_id", json.str(request_id),
+            "op", json.str(if op == "" { "run" } else { op }),
+            "tool_id", json.str(if tool_id == "" { path_tool_id } else { tool_id }),
+            "tool_input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
+        )
+    }
+    return util.json_obj5(
+        "protocol", json.str(tool_protocol_version()),
+        "request_id", json.str(request_id),
+        "op", json.str("run"),
+        "tool_id", json.str(path_tool_id),
+        "tool_input", json.raw(if raw_body == "" { "{}" } else { raw_body }),
+    )
+}
+
+fn validate_normalized_tool_request(normalized_json: str) -> str {
+    let parsed = json.parse(normalized_json)
+    if json.get_str(parsed, "protocol") != tool_protocol_version() {
+        return rpc_error_json(request_id_from(normalized_json), "invalid_protocol", "tool request protocol version is required")
+    }
+    if json.get_str(parsed, "op") != "run" {
+        return rpc_error_json(request_id_from(normalized_json), "invalid_op", "only op=run is currently supported")
+    }
+    let kind = request_kind(parsed)
+    let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
+    match kind {
+        ToolRequestKind::ToolRequestSequence => return if steps_raw == "" || steps_raw == "[]" { rpc_error_json(request_id_from(normalized_json), "missing_steps", "batched tool requests require a non-empty steps array") } else { "" },
+        ToolRequestKind::ToolRequestParallel => return if steps_raw == "" || steps_raw == "[]" { rpc_error_json(request_id_from(normalized_json), "missing_steps", "batched tool requests require a non-empty steps array") } else { "" },
+        ToolRequestKind::ToolRequestSingle => return if json.get_str(parsed, "tool_id") == "" { rpc_error_json(request_id_from(normalized_json), "missing_tool_id", "single tool requests require tool_id") } else { "" },
+        _ => return rpc_error_json(request_id_from(normalized_json), "invalid_shape", "tool request must be a single, sequence, or parallel rpc envelope"),
+    }
+    return ""
 }

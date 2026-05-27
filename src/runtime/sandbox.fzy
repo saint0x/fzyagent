@@ -1,28 +1,36 @@
 use core.fs;
-use core.time;
 
 fn sandbox_path() -> str {
     return "/tmp/fzyagent/runtime.sandbox.json"
 }
 
-fn apply_default_policy() -> i32 {
+fn env_or(key: str, fallback: str) -> str {
+    let value = env.get(key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+fn sandbox_mode() -> str {
+    return env_or("AGENT_SANDBOX_MODE", "standard")
+}
+
+fn write_policy(policy: str, scope: str) -> i32 {
     fs.mkdir("/tmp/fzyagent")
-    let payload = util.json_obj2("policy", json.str("default"), "scope", json.str("runtime"))
+    let payload = util.json_obj3("policy", json.str(policy), "scope", json.str(scope), "mode", json.str(sandbox_mode()))
     fs.write_file(sandbox_path(), payload)
-    time.sleep_ms(12)
     return 0
+}
+
+fn apply_default_policy() -> i32 {
+    return write_policy("default", "runtime")
 }
 
 fn allow_tool_scope() -> i32 {
-    let payload = util.json_obj2("policy", json.str("allow"), "scope", json.str("tools"))
-    fs.write_file(sandbox_path(), payload)
-    time.sleep_ms(12)
-    return 0
+    return write_policy("allow", "tools")
 }
 
 fn deny_tool_scope() -> i32 {
-    let payload = util.json_obj2("policy", json.str("deny"), "scope", json.str("tools"))
-    fs.write_file(sandbox_path(), payload)
-    time.sleep_ms(12)
-    return 0
+    return write_policy("deny", "tools")
 }

@@ -1,3 +1,25 @@
+use core.fs;
+
+fn ffi_manifest_path() -> str {
+    return "/tmp/fzyagent/api.ffi.json"
+}
+
 fn ffi_touch() -> i32 {
+    fs.mkdir("/tmp/fzyagent")
+    let exports = util.json_arr4(
+        json.raw(util.json_obj3("symbol", json.str("fzyagent_main"), "kind", json.str("entrypoint"), "mode", json.str("native"))),
+        json.raw(util.json_obj3("symbol", json.str("fzyagent_chat"), "kind", json.str("cli"), "mode", json.str("interactive"))),
+        json.raw(util.json_obj3("symbol", json.str("fzyagent_http"), "kind", json.str("service"), "mode", json.str("host_http"))),
+        json.raw(util.json_obj3("symbol", json.str("fzyagent_tools"), "kind", json.str("runtime"), "mode", json.str("tooling"))),
+    )
+    let payload_map = map.new()
+    discard map.set(payload_map, "status", json.str("ok"))
+    discard map.set(payload_map, "abi", json.str("c-compatible-descriptor"))
+    discard map.set(payload_map, "project", json.str("fzyagent"))
+    discard map.set(payload_map, "exports", json.raw(exports))
+    discard map.set(payload_map, "rpc_protocol", json.str(api.rpc.tool_protocol_version()))
+    discard map.set(payload_map, "manifests", json.raw(util.json_obj3("ffi", json.str(ffi_manifest_path()), "rpc", json.str("/tmp/fzyagent/api.rpc.json"), "openapi", json.str("/tmp/fzyagent/openapi.json"))))
+    let payload = json.object(payload_map)
+    fs.write_file(ffi_manifest_path(), payload)
     return 0
 }

@@ -136,59 +136,40 @@ fn dispatch(conn: HttpHandle) -> i32 {
         log.info("web dispatch route", util.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
         log.info("web dispatch method", util.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
     }
-    if method == "GET" && path == "/healthz" {
-        services.http.handle_health(conn)
-    } else if method == "POST" && path == "/sessions" {
-        services.http.handle_sessions(conn)
-    } else if method == "GET" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 0 {
-        services.http.handle_session_get(conn, path)
-    } else if method == "POST" && path == "/tools" {
-        services.http.handle_tools_register(conn)
-    } else if method == "GET" && path == "/tools" {
-        services.http.handle_tools_list(conn)
-    } else if method == "DELETE" && str.starts_with(path, "/tools/") == 1 {
-        services.http.handle_tools_delete(conn, path)
-    } else if method == "POST" && str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 {
-        services.http.handle_tools_run(conn, path)
-    } else if method == "POST" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 1 {
-        services.http.handle_messages(conn, path)
-    } else if method == "GET" && str.starts_with(path, "/runs/") == 1 {
-        services.http.handle_runs(conn, path)
-    } else {
-        log.warn("web route not found", util.log_fields2("component", "web", "phase", "not_found"))
-        write_not_found(conn)
+    let route = route_kind(method, path)
+    match route {
+        RouteKind::RouteHealth => return services.http.handle_health(conn),
+        RouteKind::RouteSessionsCreate => return services.http.handle_sessions(conn),
+        RouteKind::RouteSessionGet => return services.http.handle_session_get(conn, path),
+        RouteKind::RouteToolsRegister => return services.http.handle_tools_register(conn),
+        RouteKind::RouteToolsList => return services.http.handle_tools_list(conn),
+        RouteKind::RouteToolsDelete => return services.http.handle_tools_delete(conn, path),
+        RouteKind::RouteToolsRun => return services.http.handle_tools_run(conn, path),
+        RouteKind::RouteMessagesPost => return services.http.handle_messages(conn, path),
+        RouteKind::RouteRunGet => return services.http.handle_runs(conn, path),
+        _ => return dispatch_not_found(conn),
     }
     return 0
 }
 
+fn dispatch_not_found(conn: HttpHandle) -> i32 {
+    log.warn("web route not found", util.log_fields2("component", "web", "phase", "not_found"))
+    return write_not_found(conn)
+}
+
 fn route_key(conn: HttpHandle) -> i32 {
     let route = route_kind(http.method(conn), http.path(conn))
-    if route == RouteKind::RouteHealth {
-        return 0
-    }
-    if route == RouteKind::RouteSessionsCreate {
-        return 1
-    }
-    if route == RouteKind::RouteSessionGet {
-        return 2
-    }
-    if route == RouteKind::RouteToolsRegister {
-        return 3
-    }
-    if route == RouteKind::RouteToolsList {
-        return 4
-    }
-    if route == RouteKind::RouteToolsDelete {
-        return 5
-    }
-    if route == RouteKind::RouteToolsRun {
-        return 6
-    }
-    if route == RouteKind::RouteMessagesPost {
-        return 7
-    }
-    if route == RouteKind::RouteRunGet {
-        return 8
+    match route {
+        RouteKind::RouteHealth => return 0,
+        RouteKind::RouteSessionsCreate => return 1,
+        RouteKind::RouteSessionGet => return 2,
+        RouteKind::RouteToolsRegister => return 3,
+        RouteKind::RouteToolsList => return 4,
+        RouteKind::RouteToolsDelete => return 5,
+        RouteKind::RouteToolsRun => return 6,
+        RouteKind::RouteMessagesPost => return 7,
+        RouteKind::RouteRunGet => return 8,
+        _ => return 255,
     }
     return 255
 }

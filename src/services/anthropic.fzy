@@ -1,5 +1,6 @@
 use core.http;
 use core.time;
+use core.thread;
 use core.log;
 
 enum ModelClass {
@@ -115,15 +116,17 @@ fn default_model_name() -> str {
 }
 
 fn model_code(model: ModelClass) -> i32 {
-    if model == ModelClass::ClaudeSonnet46 {
-        return 46
+    match model {
+        ModelClass::ClaudeSonnet46 => return 46,
+        _ => return 45,
     }
     return 45
 }
 
 fn model_name(model: ModelClass) -> str {
-    if model == ModelClass::ClaudeSonnet46 {
-        return "claude-sonnet-4-6"
+    match model {
+        ModelClass::ClaudeSonnet46 => return "claude-sonnet-4-6",
+        _ => return "claude-haiku-4-5-20251001",
     }
     return "claude-haiku-4-5-20251001"
 }
@@ -143,8 +146,9 @@ fn resolve_provider(use_fallback: i32) -> ProviderClass {
 }
 
 fn provider_class_code(provider_class: ProviderClass) -> i32 {
-    if provider_class == ProviderClass::AnthropicPrimary {
-        return 1
+    match provider_class {
+        ProviderClass::AnthropicPrimary => return 1,
+        _ => return 2,
     }
     return 2
 }

@@ -1,4 +1,5 @@
 use core.http;
+use core.thread;
 use core.log;
 
 fn configure_server() -> i32 {
@@ -219,7 +220,6 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     let parsed = json.parse(result)
     let assistant = safety.filter_tool_response_text(json.get_str(parsed, "assistant"))
     let raw_response = json.get_str(parsed, "raw_response")
-    let status = json.get_str(parsed, "status")
     let tool_events = json.get_str(json.get(parsed, "tool_events"), "raw")
     let provider_payload_map = map.new()
     discard map.set(provider_payload_map, "provider", json.str("anthropic"))
@@ -227,7 +227,7 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     discard map.set(provider_payload_map, "raw_response", json.str(raw_response))
     discard map.set(provider_payload_map, "tool_events", json.raw(if tool_events == "" { "[]" } else { tool_events }))
     let provider_payload = json.object(provider_payload_map)
-    if status == "ok" {
+    if runtime.agent.turn_response_is_ok(parsed) == 1 {
         let body = util.json_obj4("status", json.str("ok"), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(provider_payload))
         http.write_json(conn, 200, body)
         return 0
@@ -238,7 +238,8 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
 }
 
 fn prompt_from_request(conn: HttpHandle) -> str {
-    let parsed = http.body_json(conn)
+    let raw_body = http.body(conn)
+    let parsed = json.parse(if raw_body == "" { "{}" } else { raw_body })
     let prompt = json.get_str(parsed, "message")
     if prompt == "" {
         return "runtime status"
@@ -281,108 +282,39 @@ fn handle_tools_run(conn: HttpHandle, path: str) -> i32 {
         log.info("http.handle_tools_run start", util.log_fields3("component", "http", "handler", "tools_run", "phase", "start"))
     }
     let tool_id = tool_id_from_run_path(path)
-    let parsed = http.body_json(conn)
-    let action = json.get_str(parsed, "action")
-    let op = json.get_str(parsed, "op")
-    let url = json.get_str(parsed, "url")
-    let query = json.get_str(parsed, "query")
-    let eval_js = json.get_str(parsed, "eval_js")
-    let commands_json = json.get_str(parsed, "commands_json")
-    let command = json.get_str(parsed, "command")
-    let pattern = json.get_str(parsed, "pattern")
-    let target = json.get_str(parsed, "target")
-    let requested_tool_id = json.get_str(parsed, "create_tool_id")
-    let description = json.get_str(parsed, "description")
-    let command_template = json.get_str(parsed, "command_template")
-    let input_schema_json = json.get_str(parsed, "input_schema_json")
-    let kind = json.get_str(parsed, "kind")
-    let mode = json.get_str(parsed, "mode")
-    let max_lines = json.get_str(parsed, "max_lines")
-    let content = json.get_str(parsed, "content")
-    let tool_input_json = json.get_str(parsed, "tool_input_json")
-    let tool_action = if op == "" { action } else { op }
-    let tool_status = if tool_id == "aegis" || tool_id == "aegis_headless" {
-        tools.run_aegis_with_args(tool_action, url, query, eval_js, commands_json)
-    } else if tool_id == "bash" {
-        tools.run_bash_with_command(command)
-    } else if tool_id == "grep_search" {
-        tools.run_grep_search(pattern, target)
-    } else if tool_id == "toolsmith" {
-        tools.run_toolsmith(if tool_action == "" { "protocol" } else { tool_action }, requested_tool_id, description, command_template, input_schema_json, kind, mode)
-    } else if tool_id == "promptsmith" {
-        tools.run_promptsmith(if tool_action == "" { "get" } else { tool_action }, content)
-    } else if tool_id == "fzydoc" {
-        tools.run_fzydoc(if query == "" { "spawn" } else { query }, max_lines)
+    let raw_body = http.body(conn)
+    let normalized = api.rpc.normalize_tool_request(tool_id, raw_body)
+    let rpc_error = api.rpc.validate_normalized_tool_request(normalized)
+    if rpc_error != "" {
+        http.write_json(conn, 400, rpc_error)
+        return 0
+    }
+    let parsed = json.parse(normalized)
+    let request_id = json.get_str(parsed, "request_id")
+    let rpc_kind = api.rpc.request_kind(parsed)
+    let rpc_kind_code = api.rpc.request_kind_code(rpc_kind)
+    let dispatch_tool_id = json.get_str(parsed, "tool_id")
+    let effective_tool_id = if dispatch_tool_id == "" { tool_id } else { dispatch_tool_id }
+    let tool_status = if rpc_kind_code == 2 || tool_id == "tool_sequence" {
+        tools.run_tool_sequence(normalized)
+    } else if rpc_kind_code == 3 || tool_id == "tool_parallel" {
+        tools.run_tool_parallel(normalized)
     } else if tool_id == "all" {
         tools.run_parallel()
     } else {
-        tools.run_custom_tool(tool_id, tool_input_json)
+        tools.dispatch_tool_request(effective_tool_id, normalized)
     }
-    let run_id = if tool_id == "promptsmith" { "promptsmith_latest" } else { run_id_for_tool(tool_id) }
-    let result = if tool_id == "promptsmith" { tools.safe_read(tools.promptsmith_path()) } else { tools.last_run_json(tool_id) }
-    let body_status = if tool_status == 0 { "ok" } else { "error" }
-    let body = if tool_id == "aegis" || tool_id == "aegis_headless" {
-        util.json_obj5(
-            "status", json.str(body_status),
-            "tool_id", json.str(tool_id),
-            "run_id", json.str(run_id),
-            "artifact_path", json.str(tools.last_run_artifact_path(tool_id)),
-            "result_text", json.str(result),
-        )
-    } else {
-        util.json_obj4("status", json.str(body_status), "tool_id", json.str(tool_id), "run_id", json.str(run_id), "result", json.raw(result))
-    }
+    let run_id = tools.run_id_for_tool(effective_tool_id)
+    let result = tools.last_run_json(effective_tool_id)
+    let body = api.rpc.tool_response_json(request_id, effective_tool_id, run_id, tool_status, tools.last_run_artifact_path(effective_tool_id), result)
     persistence.save_named_run(run_id, body)
     let session_id = json.get_str(parsed, "session_id")
     if session_id != "" {
-        discard sessions.record_tool_run_for(session_id, tool_id, run_id, body_status)
+        discard sessions.record_tool_run_for(session_id, effective_tool_id, run_id, api.rpc.tool_result_status(tool_status))
     }
     let code = if tool_status == 0 { 200 } else { 500 }
     http.write_json(conn, code, body)
     return 0
-}
-
-fn run_id_for_tool(tool_id: str) -> str {
-    if tool_id == "parallel_bash" {
-        return "parallel_bash_latest"
-    }
-    if tool_id == "parallel_grep" {
-        return "parallel_grep_latest"
-    }
-    if tool_id == "release_audit" {
-        return "release_audit_latest"
-    }
-    if tool_id == "workspace_digest" {
-        return "workspace_digest_latest"
-    }
-    if tool_id == "aegis" || tool_id == "aegis_headless" {
-        return "aegis_latest"
-    }
-    if tool_id == "browser_ops_seed" {
-        return "browser_ops_seed_latest"
-    }
-    if tool_id == "project_seed" {
-        return "project_seed_latest"
-    }
-    if tool_id == "bash" {
-        return "bash_latest"
-    }
-    if tool_id == "grep_search" {
-        return "grep_search_latest"
-    }
-    if tool_id == "timeout_probe" {
-        return "timeout_probe_latest"
-    }
-    if tool_id == "toolsmith" {
-        return "toolsmith_latest"
-    }
-    if tool_id == "promptsmith" {
-        return "promptsmith_latest"
-    }
-    if tool_id == "fzydoc" {
-        return "fzydoc_latest"
-    }
-    return "latest"
 }
 
 fn handle_runs(conn: HttpHandle, path: str) -> i32 {

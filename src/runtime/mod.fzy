@@ -18,11 +18,6 @@ fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
     events.boot_bus()
     config.apply_server_config()
     supervisor.configure_limits()
-    limits.enforce_thread_limit()
-    limits.enforce_queue_depth()
-    limits.enforce_memory_budget()
-    sandbox.apply_default_policy()
-    sandbox.allow_tool_scope()
     recovery.save_checkpoint()
     if background_enabled == 1 {
         let worker_handle = spawn_ctx(worker.run, 100)

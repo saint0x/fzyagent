@@ -1,4 +1,5 @@
 use core.log;
+use core.thread;
 
 fn anthropic_transport() -> i32 {
     log.info("provider.anthropic_transport", util.log_fields2("component", "provider", "phase", "transport"))

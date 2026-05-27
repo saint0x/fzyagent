@@ -1,7 +1,10 @@
 use core.proc;
 use core.fs;
+use core.storage;
 use core.thread;
 use core.log;
+use core.text;
+use core.path;
 
 enum ToolFailureClass {
     ToolSpawnFailure,
@@ -9,6 +12,32 @@ enum ToolFailureClass {
     ToolNonzeroExit,
     ToolMalformedOutput,
 }
+
+enum DispatchKind {
+    DispatchAegis,
+    DispatchBash,
+    DispatchGrepSearch,
+    DispatchParallelBash,
+    DispatchParallelGrep,
+    DispatchReleaseAudit,
+    DispatchWorkspaceDigest,
+    DispatchProjectSeed,
+    DispatchBrowserOpsSeed,
+    DispatchTimeoutProbe,
+    DispatchToolsmith,
+    DispatchPromptsmith,
+    DispatchFzydoc,
+    DispatchToolSequence,
+    DispatchToolParallel,
+    DispatchAll,
+    DispatchCustom,
+}
+
+static mut QUEUE_PENDING_COUNT: i32 = 0;
+static mut QUEUE_ACTIVE_COUNT: i32 = 0;
+static mut QUEUE_COMPLETED_COUNT: i32 = 0;
+static mut QUEUE_CANCELLED_COUNT: i32 = 0;
+static mut NEXT_PARALLEL_CONTEXT_BASE: i32 = 100000;
 
 fn state_dir() -> str {
     return "/tmp/fzyagent"
@@ -24,6 +53,51 @@ fn runs_dir() -> str {
 
 fn last_parallel_path() -> str {
     return "/tmp/fzyagent/runs/parallel.last.json"
+}
+
+fn queue_dir() -> str {
+    return "/tmp/fzyagent/queue"
+}
+
+fn queue_pending_path() -> str {
+    return "/tmp/fzyagent/queue/pending.jsonl"
+}
+
+fn queue_active_path() -> str {
+    return "/tmp/fzyagent/queue/active.jsonl"
+}
+
+fn queue_monitor_path() -> str {
+    return "/tmp/fzyagent/queue/monitor.json"
+}
+
+fn queue_summary_path() -> str {
+    return "/tmp/fzyagent/queue/summary.json"
+}
+
+fn queue_cancel_path() -> str {
+    return "/tmp/fzyagent/queue/cancel.signal"
+}
+
+fn parallel_step_limit() -> i32 {
+    return 4
+}
+
+fn next_parallel_context_base() -> i32 {
+    NEXT_PARALLEL_CONTEXT_BASE += 16
+    return NEXT_PARALLEL_CONTEXT_BASE
+}
+
+fn parallel_step_request_path(context_id: i32) -> str {
+    return str.concat("/tmp/fzyagent/runs/tool_parallel.step.", str.concat(str.from_i32(context_id), ".request.json"))
+}
+
+fn parallel_step_result_path(context_id: i32) -> str {
+    return str.concat("/tmp/fzyagent/runs/tool_parallel.step.", str.concat(str.from_i32(context_id), ".result.json"))
+}
+
+fn parallel_step_payload_path(context_id: i32) -> str {
+    return str.concat("/tmp/fzyagent/runs/tool_parallel.step.", str.concat(str.from_i32(context_id), ".payload.json"))
 }
 
 fn bash_a_path() -> str {
@@ -109,53 +183,367 @@ fn custom_tool_request_path(tool_id: str) -> str {
 }
 
 fn custom_tool_state_dir(tool_id: str) -> str {
-    return str.concat2("/tmp/fzyagent/custom_tools/", tool_id)
+    return str.concat3("/tmp/fzyagent/custom_tools/", tool_id, "")
+}
+
+fn custom_tools_root() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/custom_tools"
+}
+
+fn prompt_config_dir() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config"
+}
+
+fn prompt_active_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
+}
+
+fn prompt_default_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.default.md"
+}
+
+fn docs_root() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/docs/fzy"
+}
+
+fn aegis_state_dir() -> str {
+    return "/tmp/fzyagent/aegis"
+}
+
+fn aegis_pid_path() -> str {
+    return "/tmp/fzyagent/aegis/serve.pid"
+}
+
+fn aegis_log_path() -> str {
+    return "/tmp/fzyagent/aegis/serve.log"
+}
+
+fn aegis_addr() -> str {
+    let value = env.get("AEGIS_PORT")
+    if value == "" {
+        return "127.0.0.1:7979"
+    }
+    return str.concat("127.0.0.1:", value)
+}
+
+fn aegis_base_url() -> str {
+    return str.concat("http://", aegis_addr())
+}
+
+fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
+    let argv = shell_argv(command)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, timeout_ms)
+    return proc.stdout(handle)
+}
+
+fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> i32 {
+    let argv = shell_argv(command)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, timeout_ms)
+    return proc.exit_code(handle)
+}
+
+fn shell_payload_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
+    let argv = shell_argv(command)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, timeout_ms)
+    let exit_code = proc.exit_code(handle)
+    let status = status_from_exit_code(exit_code)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
+    let payload = util.json_obj3("status", json.str(status), "exit_code", json.str(str.from_i32(exit_code)), "streams", json.raw(streams))
+    return payload
+}
+
+fn is_lower_letter(ch: str) -> i32 {
+    if ch == "a" || ch == "b" || ch == "c" || ch == "d" || ch == "e" || ch == "f" || ch == "g" || ch == "h" || ch == "i" || ch == "j" || ch == "k" || ch == "l" || ch == "m" || ch == "n" || ch == "o" || ch == "p" || ch == "q" || ch == "r" || ch == "s" || ch == "t" || ch == "u" || ch == "v" || ch == "w" || ch == "x" || ch == "y" || ch == "z" {
+        return 1
+    }
+    return 0
+}
+
+fn is_digit_char(ch: str) -> i32 {
+    if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" {
+        return 1
+    }
+    return 0
+}
+
+fn uppercase_ascii(ch: str) -> str {
+    if ch == "a" { return "A" }
+    if ch == "b" { return "B" }
+    if ch == "c" { return "C" }
+    if ch == "d" { return "D" }
+    if ch == "e" { return "E" }
+    if ch == "f" { return "F" }
+    if ch == "g" { return "G" }
+    if ch == "h" { return "H" }
+    if ch == "i" { return "I" }
+    if ch == "j" { return "J" }
+    if ch == "k" { return "K" }
+    if ch == "l" { return "L" }
+    if ch == "m" { return "M" }
+    if ch == "n" { return "N" }
+    if ch == "o" { return "O" }
+    if ch == "p" { return "P" }
+    if ch == "q" { return "Q" }
+    if ch == "r" { return "R" }
+    if ch == "s" { return "S" }
+    if ch == "t" { return "T" }
+    if ch == "u" { return "U" }
+    if ch == "v" { return "V" }
+    if ch == "w" { return "W" }
+    if ch == "x" { return "X" }
+    if ch == "y" { return "Y" }
+    if ch == "z" { return "Z" }
+    return ch
+}
+
+fn valid_tool_id(tool_id: str) -> i32 {
+    let env_map = default_proc_env()
+    discard proc.env_set(env_map, "FZY_TOOL_ID", tool_id)
+    let cmd = "printf '%s' \"$FZY_TOOL_ID\" | grep -Eq '^[a-z][a-z0-9_]{1,63}$'"
+    let exit_code = shell_status_with_env(cmd, env_map, 5000)
+    if exit_code == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn dispatch_kind(tool_id: str) -> DispatchKind {
+    if tool_id == "aegis" || tool_id == "aegis_headless" {
+        return DispatchKind::DispatchAegis
+    }
+    if tool_id == "bash" {
+        return DispatchKind::DispatchBash
+    }
+    if tool_id == "grep_search" {
+        return DispatchKind::DispatchGrepSearch
+    }
+    if tool_id == "parallel_bash" {
+        return DispatchKind::DispatchParallelBash
+    }
+    if tool_id == "parallel_grep" {
+        return DispatchKind::DispatchParallelGrep
+    }
+    if tool_id == "release_audit" {
+        return DispatchKind::DispatchReleaseAudit
+    }
+    if tool_id == "workspace_digest" {
+        return DispatchKind::DispatchWorkspaceDigest
+    }
+    if tool_id == "project_seed" {
+        return DispatchKind::DispatchProjectSeed
+    }
+    if tool_id == "browser_ops_seed" {
+        return DispatchKind::DispatchBrowserOpsSeed
+    }
+    if tool_id == "timeout_probe" {
+        return DispatchKind::DispatchTimeoutProbe
+    }
+    if tool_id == "toolsmith" {
+        return DispatchKind::DispatchToolsmith
+    }
+    if tool_id == "promptsmith" {
+        return DispatchKind::DispatchPromptsmith
+    }
+    if tool_id == "fzydoc" {
+        return DispatchKind::DispatchFzydoc
+    }
+    if tool_id == "tool_sequence" {
+        return DispatchKind::DispatchToolSequence
+    }
+    if tool_id == "tool_parallel" {
+        return DispatchKind::DispatchToolParallel
+    }
+    if tool_id == "all" {
+        return DispatchKind::DispatchAll
+    }
+    return DispatchKind::DispatchCustom
+}
+
+fn canonical_tool_id(tool_id: str) -> str {
+    if tool_id == "aegis_headless" {
+        return "aegis"
+    }
+    return tool_id
+}
+
+fn sanitize_env_fragment(value: str) -> str {
+    let mut out = ""
+    let mut idx: i32 = 0
+    while idx < str.len(value) {
+        let ch = str.slice(value, idx, idx + 1)
+        if is_lower_letter(ch) == 1 || is_digit_char(ch) == 1 || ch == "_" {
+            out = str.concat(out, uppercase_ascii(ch))
+        } else {
+            out = str.concat(out, "_")
+        }
+        idx += 1
+    }
+    return out
+}
+
+fn prompt_line_count(text_value: str) -> i32 {
+    if text_value == "" {
+        return 0
+    }
+    let mut count: i32 = 1
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            count += 1
+        }
+        idx += 1
+    }
+    return count
+}
+
+fn prompt_preview(text_value: str) -> str {
+    if str.len(text_value) <= 400 {
+        return text_value
+    }
+    return str.slice(text_value, 0, 400)
+}
+
+fn prompt_meta_json(text_value: str) -> str {
+    return util.json_obj5(
+        "active_path", json.str(prompt_active_path()),
+        "default_path", json.str(prompt_default_path()),
+        "chars", json.str(str.from_i32(str.len(text_value))),
+        "lines", json.str(str.from_i32(prompt_line_count(text_value))),
+        "preview", json.str(prompt_preview(text_value)),
+    )
+}
+
+fn ensure_prompt_files() -> i32 {
+    fs.mkdir(prompt_config_dir())
+    if fs.exists(prompt_default_path()) == 0 {
+        fs.write_file(prompt_default_path(), "You are the fzyagent agent CLI.\n")
+    }
+    if fs.exists(prompt_active_path()) == 0 {
+        fs.write_file(prompt_active_path(), fs.read_file(prompt_default_path()))
+    }
+    return 0
+}
+
+fn template_lint_warnings(command_template: str) -> str {
+    let env_map = default_proc_env()
+    discard proc.env_set(env_map, "FZY_TEMPLATE", command_template)
+    let has_token = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q 'TOOL_ARG_'", env_map, 5000)
+    let has_dollar = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\$TOOL_ARG_'", env_map, 5000)
+    let has_brace = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\${TOOL_ARG_'", env_map, 5000)
+    let warnings = list.new()
+    if has_token == 0 && has_dollar != 0 && has_brace != 0 {
+        discard list.push(warnings, json.str("command_template references TOOL_ARG_* tokens without shell variable expansion; use $TOOL_ARG_FIELD or ${TOOL_ARG_FIELD}"))
+    }
+    return json.array(warnings)
 }
 
 fn last_run_path_for(tool_id: str) -> str {
-    if tool_id == "parallel_bash" {
+    let normalized = canonical_tool_id(tool_id)
+    if normalized == "parallel_bash" {
         return "/tmp/fzyagent/runs/parallel_bash.json"
     }
-    if tool_id == "parallel_grep" {
+    if normalized == "parallel_grep" {
         return "/tmp/fzyagent/runs/parallel_grep.json"
     }
-    if tool_id == "release_audit" {
+    if normalized == "release_audit" {
         return "/tmp/fzyagent/runs/release_audit.json"
     }
-    if tool_id == "workspace_digest" {
+    if normalized == "workspace_digest" {
         return workspace_digest_path()
     }
-    if tool_id == "aegis" || tool_id == "aegis_headless" {
+    if normalized == "aegis" {
         return aegis_path()
     }
-    if tool_id == "bash" {
+    if normalized == "bash" {
         return "/tmp/fzyagent/runs/bash.json"
     }
-    if tool_id == "grep_search" {
+    if normalized == "grep_search" {
         return "/tmp/fzyagent/runs/grep_search.json"
     }
-    if tool_id == "timeout_probe" {
+    if normalized == "timeout_probe" {
         return "/tmp/fzyagent/runs/timeout_probe.json"
     }
-    if tool_id == "toolsmith" {
+    if normalized == "tool_sequence" {
+        return "/tmp/fzyagent/runs/tool_sequence.json"
+    }
+    if normalized == "tool_parallel" {
+        return "/tmp/fzyagent/runs/tool_parallel.json"
+    }
+    if normalized == "toolsmith" {
         return toolsmith_path()
     }
-    if tool_id == "promptsmith" {
+    if normalized == "promptsmith" {
         return promptsmith_path()
     }
-    if tool_id == "fzydoc" {
+    if normalized == "fzydoc" {
         return fzydoc_path()
     }
-    if fs.exists(custom_tool_manifest_path(tool_id)) != 0 {
-        return custom_tool_last_run_path(tool_id)
+    if fs.exists(custom_tool_manifest_path(normalized)) != 0 {
+        return custom_tool_last_run_path(normalized)
     }
     return "/tmp/fzyagent/runs/generic.json"
+}
+
+fn run_id_for_tool(tool_id: str) -> str {
+    let normalized = canonical_tool_id(tool_id)
+    if normalized == "parallel_bash" {
+        return "parallel_bash_latest"
+    }
+    if normalized == "parallel_grep" {
+        return "parallel_grep_latest"
+    }
+    if normalized == "release_audit" {
+        return "release_audit_latest"
+    }
+    if normalized == "workspace_digest" {
+        return "workspace_digest_latest"
+    }
+    if normalized == "aegis" {
+        return "aegis_latest"
+    }
+    if normalized == "browser_ops_seed" {
+        return "browser_ops_seed_latest"
+    }
+    if normalized == "project_seed" {
+        return "project_seed_latest"
+    }
+    if normalized == "bash" {
+        return "bash_latest"
+    }
+    if normalized == "grep_search" {
+        return "grep_search_latest"
+    }
+    if normalized == "timeout_probe" {
+        return "timeout_probe_latest"
+    }
+    if normalized == "tool_sequence" {
+        return "tool_sequence_latest"
+    }
+    if normalized == "tool_parallel" {
+        return "tool_parallel_latest"
+    }
+    if normalized == "toolsmith" {
+        return "toolsmith_latest"
+    }
+    if normalized == "promptsmith" {
+        return "promptsmith_latest"
+    }
+    if normalized == "fzydoc" {
+        return "fzydoc_latest"
+    }
+    return "latest"
 }
 
 fn ensure_dirs() -> i32 {
     fs.mkdir(state_dir())
     fs.mkdir(tools_dir())
     fs.mkdir(runs_dir())
+    fs.mkdir(queue_dir())
     return 0
 }
 
@@ -198,6 +586,13 @@ fn default_proc_env() -> ProcessEnv {
     let env_map: ProcessEnv = proc.env_new()
     discard proc.env_set(env_map, "TERM", "dumb")
     return env_map
+}
+
+fn default_input_schema() -> str {
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw("{}"))
+    return json.object(schema)
 }
 
 fn shell_argv(command: str) -> ProcessArgv {
@@ -309,15 +704,88 @@ fn run_release_inventory() -> i32 {
 }
 
 fn run_workspace_digest() -> i32 {
+    return run_workspace_digest_to(workspace_digest_path())
+}
+
+fn run_workspace_digest_to(out_path: str) -> i32 {
     let cmd = env_or(
         "TOOL_WORKSPACE_DIGEST",
         "printf 'root=%s\\nfiles=%s\\nfunctions=%s\\nservices=%s\\nruntime=%s\\n\\n==files==\\n%s\\n\\n==top_http==\\n%s\\n\\n==top_tools==\\n%s\\n' \"$PWD\" \"$(rg --files src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src/services | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src/runtime | wc -l | tr -d ' ')\" \"$(rg --files src | sort | head -n 40)\" \"$(sed -n '1,220p' src/services/http.fzy)\" \"$(sed -n '1,260p' src/services/tools.fzy)\"",
     )
-    return run_shell_to_file("workspace_digest", cmd, 12000, workspace_digest_path())
+    return run_shell_to_file("workspace_digest", cmd, 12000, out_path)
 }
 
 fn run_aegis() -> i32 {
     return run_aegis_with_args("", "", "", "", "")
+}
+
+fn run_aegis_with_args_to(action: str, url: str, query: str, eval_js: str, commands_json: str, out_path: str) -> i32 {
+    ensure_dirs()
+    if ensure_aegis_server() != 0 {
+        let failure = util.json_obj4(
+            "tool", json.str("aegis"),
+            "status", json.str("failed"),
+            "server", json.str(aegis_addr()),
+            "message", json.str("aegis server did not become ready"),
+        )
+        fs.write_file(out_path, failure)
+        fs.write_file(aegis_path(), failure)
+        return 13
+    }
+    let effective_action = if action == "" { "runtime" } else { action }
+    let env_map = default_proc_env()
+    let base = aegis_base_url()
+    let mut command = str.concat("curl -sS ", str.concat(base, "/runtime"))
+    if effective_action == "manifest" {
+        command = str.concat("curl -sS ", str.concat(base, "/manifest"))
+    } else if effective_action == "doctor" {
+        command = str.concat("curl -sS ", str.concat(base, "/doctor"))
+    } else if effective_action == "dom" {
+        command = str.concat("curl -sS ", str.concat(base, "/dom"))
+    } else if effective_action == "session" {
+        command = str.concat("curl -sS ", str.concat(base, "/session"))
+    } else if effective_action == "events" {
+        command = str.concat("curl -sS ", str.concat(base, "/events?since=0"))
+    } else if effective_action == "navigate" {
+        let body = util.json_obj1("url", json.str(url))
+        discard proc.env_set(env_map, "AEGIS_BODY", body)
+        command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/navigate"))
+    } else if effective_action == "execute" {
+        let body = util.json_obj1("commands", json.raw(if commands_json == "" { "[]" } else { commands_json }))
+        discard proc.env_set(env_map, "AEGIS_BODY", body)
+        command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
+    } else if effective_action == "eval" {
+        let commands = list.new()
+        discard list.push(commands, json.raw(util.json_obj2("type", json.str("eval"), "code", json.str(eval_js))))
+        let body = util.json_obj1("commands", json.raw(json.array(commands)))
+        discard proc.env_set(env_map, "AEGIS_BODY", body)
+        command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
+    } else if effective_action == "search_eval" {
+        let encoded = text.replace(query, " ", "+")
+        let target_url = str.concat("https://duckduckgo.com/?q=", encoded)
+        let commands = list.new()
+        discard list.push(commands, json.raw(util.json_obj2("type", json.str("eval"), "code", json.str(str.concat("window.location.href = ", str.concat(json.str(target_url), ";"))))))
+        let body = util.json_obj1("commands", json.raw(json.array(commands)))
+        discard proc.env_set(env_map, "AEGIS_BODY", body)
+        command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
+    }
+    let payload = shell_payload_with_env(command, env_map, 180000)
+    let parsed = json.parse(payload)
+    let status = json.get_str(parsed, "status")
+    let stdout = json.get_str(json.get(json.get(parsed, "streams"), "stdout"), "raw")
+    let wrapped = util.json_obj5(
+        "tool", json.str("aegis"),
+        "status", json.str(status),
+        "action", json.str(effective_action),
+        "server", json.str(aegis_addr()),
+        "response", json.raw(stdout),
+    )
+    fs.write_file(out_path, wrapped)
+    fs.write_file(aegis_path(), wrapped)
+    if status == "ok" {
+        return 0
+    }
+    return 13
 }
 
 fn run_bash_with_command(command: str) -> i32 {
@@ -325,47 +793,47 @@ fn run_bash_with_command(command: str) -> i32 {
     return run_shell_to_file("bash", cmd, 20000, last_run_path_for("bash"))
 }
 
-fn run_aegis_with_args(action: str, url: str, query: str, eval_js: str, commands_json: str) -> i32 {
-    let cmd = env_or(
-        "TOOL_AEGIS",
-        "python3 /Users/deepsaint/Desktop/fzyagent/scripts/aegis_headless_tool.py",
-    )
+fn ensure_aegis_server() -> i32 {
+    fs.mkdir(aegis_state_dir())
     let env_map = default_proc_env()
-    if action != "" {
-        discard proc.env_set(env_map, "AEGIS_ACTION", action)
+    let ready_cmd = str.concat("curl -s -o /dev/null -w '%{http_code}' ", str.concat(aegis_base_url(), "/readyz"))
+    let initial = text.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+    if initial == "200" || initial == "503" {
+        return 0
     }
-    if url != "" {
-        discard proc.env_set(env_map, "AEGIS_URL", url)
+    let launch_cmd = str.concat(
+        str.concat("./aegis.sh --mode headless serve --addr ", aegis_addr()),
+        str.concat(" >", str.concat(aegis_log_path(), " 2>&1 & echo $!")),
+    )
+    let pid = text.trim(shell_stdout_with_env(launch_cmd, env_map, 15000))
+    if pid != "" {
+        fs.write_file(aegis_pid_path(), pid)
     }
-    if query != "" {
-        discard proc.env_set(env_map, "AEGIS_QUERY", query)
+    let mut attempt: i32 = 0
+    while attempt < 80 {
+        let code = text.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+        if code == "200" {
+            return 0
+        }
+        time.sleep_ms(250)
+        attempt += 1
     }
-    if eval_js != "" {
-        discard proc.env_set(env_map, "AEGIS_EVAL_JS", eval_js)
-    }
-    if commands_json != "" {
-        discard proc.env_set(env_map, "AEGIS_COMMANDS_JSON", commands_json)
-    }
-    let argv = shell_argv(cmd)
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    discard proc.wait(handle, 120000)
-    let exit_code = proc.exit_code(handle)
-    let status = status_from_exit_code(exit_code)
-    let stdout = proc.stdout(handle)
-    let stderr = proc.stderr(handle)
-    if exit_code != 0 {
-        let meta = util.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("browser"))
-        let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
-        let payload = util.json_obj4("tool", json.str("aegis"), "status", json.str(status), "streams", json.raw(streams), "meta", json.raw(meta))
-        fs.write_file(aegis_path(), payload)
-    }
-    return shell_result_code(exit_code)
+    return 13
+}
+
+fn run_aegis_with_args(action: str, url: str, query: str, eval_js: str, commands_json: str) -> i32 {
+    return run_aegis_with_args_to(action, url, query, eval_js, commands_json, aegis_path())
 }
 
 fn run_toolsmith(action: str, tool_id: str, description: str, command_template: str, input_schema_json: str, kind: str, mode: str) -> i32 {
-    let env_map = default_proc_env()
-    let request_path = toolsmith_request_path_for(action, tool_id)
-    let response_path = toolsmith_response_path_for(action, tool_id)
+    return run_toolsmith_to(action, tool_id, description, command_template, input_schema_json, kind, mode, toolsmith_path())
+}
+
+fn run_toolsmith_to(action: str, tool_id: str, description: str, command_template: str, input_schema_json: str, kind: str, mode: str, out_path: str) -> i32 {
+    ensure_dirs()
+    let effective_action = if action == "" { "protocol" } else { action }
+    let request_path = toolsmith_request_path_for(effective_action, tool_id)
+    let response_path = toolsmith_response_path_for(effective_action, tool_id)
     let meta = util.json_obj5(
         "tool_id", json.str(tool_id),
         "description", json.str(description),
@@ -373,77 +841,247 @@ fn run_toolsmith(action: str, tool_id: str, description: str, command_template: 
         "mode", json.str(mode),
         "command_template", json.str(command_template),
     )
-    let schema = if input_schema_json == "" { "{}" } else { input_schema_json }
-    let request = util.json_obj3("action", json.str(action), "meta", json.raw(meta), "input_schema", json.raw(schema))
+    let schema = if input_schema_json == "" { default_input_schema() } else { input_schema_json }
+    let request = util.json_obj3("action", json.str(effective_action), "meta", json.raw(meta), "input_schema", json.raw(schema))
     fs.write_file(request_path, request)
-    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/toolsmith_tool.py ", request_path, " ", response_path)
-    let argv = shell_argv(cmd)
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    discard proc.wait(handle, 120000)
-    let exit_code = proc.exit_code(handle)
-    let payload = safe_read(response_path)
-    if payload != "{}" {
-        fs.write_file(toolsmith_path(), payload)
-        fs.write_file(last_run_path_for("toolsmith"), payload)
+    let mut payload = "{}"
+    if effective_action == "protocol" {
+        payload = util.json_obj5(
+            "tool", json.str("toolsmith"),
+            "status", json.str("ok"),
+            "action", json.str("protocol"),
+            "actions", json.raw(util.json_arr4(json.str("protocol"), json.str("create"), json.str("list"), json.str("inspect"))),
+            "requirements", json.raw(util.json_obj3("tool_id", json.str("lowercase snake_case, starts with a letter"), "command_template", json.str("shell command that uses TOOL_ARG_<FIELD> env vars"), "input_schema", json.str("JSON schema object with properties and optional required list"))),
+        )
+    } else if effective_action == "list" {
+        let entries = list.new()
+        if fs.exists(custom_tools_root()) == 1 {
+            let discovered = fs.listdir(custom_tools_root())
+            let mut copy_idx: i32 = 0
+            while copy_idx < list.len(discovered) {
+                discard list.push(entries, list.get(discovered, copy_idx))
+                copy_idx += 1
+            }
+        }
+        let items = list.new()
+        let mut idx: i32 = 0
+        while idx < list.len(entries) {
+            let entry = list.get(entries, idx)
+            let manifest_path = path.join(path.join(custom_tools_root(), entry), "tool.json")
+            if fs.exists(manifest_path) == 1 {
+                let raw = fs.read_file(manifest_path)
+                if raw != "" {
+                    let manifest = json.parse(raw)
+                    let item = util.json_obj5(
+                        "id", json.str(json.get_str(manifest, "id")),
+                        "description", json.str(json.get_str(manifest, "description")),
+                        "kind", json.str(json.get_str(manifest, "kind")),
+                        "mode", json.str(json.get_str(manifest, "mode")),
+                        "manifest_path", json.str(manifest_path),
+                    )
+                    discard list.push(items, json.raw(item))
+                }
+            }
+            idx += 1
+        }
+        payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("ok"), "action", json.str("list"), "tools", json.raw(json.array(items)))
+    } else if effective_action == "inspect" {
+        let manifest_path = custom_tool_manifest_path(tool_id)
+        if tool_id == "" || valid_tool_id(tool_id) == 0 || fs.exists(manifest_path) == 0 {
+            payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("inspect"), "message", json.str("custom tool not found"))
+        } else {
+            payload = util.json_obj5(
+                "tool", json.str("toolsmith"),
+                "status", json.str("ok"),
+                "action", json.str("inspect"),
+                "manifest", json.raw(fs.read_file(manifest_path)),
+                "manifest_path", json.str(manifest_path),
+            )
+        }
+    } else {
+        if valid_tool_id(tool_id) == 0 || description == "" || command_template == "" {
+            payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("create"), "message", json.str("tool_id, description, and command_template are required"))
+        } else {
+            let tool_dir = path.join(custom_tools_root(), tool_id)
+            fs.mkdir(custom_tools_root())
+            fs.mkdir(tool_dir)
+            let manifest = map.new()
+            discard map.set(manifest, "id", json.str(tool_id))
+            discard map.set(manifest, "description", json.str(description))
+            discard map.set(manifest, "kind", json.str(if kind == "" { "process" } else { kind }))
+            discard map.set(manifest, "mode", json.str(if mode == "" { "single" } else { mode }))
+            discard map.set(manifest, "runner", json.str("shell"))
+            discard map.set(manifest, "command_template", json.str(command_template))
+            discard map.set(manifest, "input_schema", json.raw(schema))
+            let manifest_path = path.join(tool_dir, "tool.json")
+            let readme_path = path.join(tool_dir, "README.md")
+            fs.write_file(manifest_path, json.object(manifest))
+            fs.write_file(readme_path, str.concat("# ", str.concat(tool_id, str.concat("\n\n", str.concat(description, str.concat("\n\n## Command Template\n\n```sh\n", str.concat(command_template, str.concat("\n```\n\n## Input Schema\n\n```json\n", str.concat(schema, "\n```\n")))))))))
+            discard services.registry.refresh_runtime()
+            let registry_entry = json.parse(services.registry.get_tool_json(tool_id))
+            let verified = if json.get_str(registry_entry, "id") == tool_id { "true" } else { "false" }
+            let created = map.new()
+            discard map.set(created, "tool", json.str("toolsmith"))
+            discard map.set(created, "status", json.str("ok"))
+            discard map.set(created, "action", json.str("create"))
+            discard map.set(created, "created_tool", json.str(tool_id))
+            discard map.set(created, "manifest_path", json.str(manifest_path))
+            discard map.set(created, "readme_path", json.str(readme_path))
+            discard map.set(created, "manifest_exists", json.raw("true"))
+            discard map.set(created, "readme_exists", json.raw("true"))
+            discard map.set(created, "verified_in_registry", json.raw(verified))
+            discard map.set(created, "warnings", json.raw(template_lint_warnings(command_template)))
+            payload = json.object(created)
+        }
     }
-    return shell_result_code(exit_code)
+    fs.write_file(response_path, payload)
+    fs.write_file(out_path, payload)
+    fs.write_file(toolsmith_path(), payload)
+    fs.write_file(last_run_path_for("toolsmith"), payload)
+    return if json.get_str(json.parse(payload), "status") == "ok" { 0 } else { 13 }
 }
 
 fn run_fzydoc(query: str, max_lines: str) -> i32 {
-    let cmd = "python3 /Users/deepsaint/Desktop/fzyagent/scripts/fzydoc_tool.py"
+    return run_fzydoc_to(query, max_lines, fzydoc_path())
+}
+
+fn run_fzydoc_to(query: str, max_lines: str, out_path: str) -> i32 {
     let env_map = default_proc_env()
-    discard proc.env_set(env_map, "FZYDOC_QUERY", query)
-    if max_lines != "" {
-        discard proc.env_set(env_map, "FZYDOC_MAX_LINES", max_lines)
-    }
-    let argv = shell_argv(cmd)
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    discard proc.wait(handle, 60000)
-    let exit_code = proc.exit_code(handle)
-    let payload = safe_read(fzydoc_path())
-    if payload != "{}" {
-        fs.write_file(last_run_path_for("fzydoc"), payload)
-    }
-    return shell_result_code(exit_code)
+    let effective_query = if query == "" { "spawn" } else { query }
+    let line_budget = if max_lines == "" { "6" } else { max_lines }
+    let cmd = str.concat("grep -R -n -C 2 -- ", str.concat(json.str(effective_query), str.concat(" ", docs_root())))
+    let stdout = shell_stdout_with_env(cmd, env_map, 60000)
+    let payload = util.json_obj5(
+        "tool", json.str("fzydoc"),
+        "status", json.str("ok"),
+        "query", json.str(effective_query),
+        "max_lines", json.str(line_budget),
+        "hits", json.str(stdout),
+    )
+    fs.write_file(out_path, payload)
+    fs.write_file(fzydoc_path(), payload)
+    fs.write_file(last_run_path_for("fzydoc"), payload)
+    return 0
 }
 
 fn run_promptsmith(action: str, content: str) -> i32 {
-    let env_map = default_proc_env()
-    let request_path = promptsmith_request_path_for(action)
-    let response_path = promptsmith_response_path_for(action)
-    let request = util.json_obj2("action", json.str(action), "content", json.str(content))
+    return run_promptsmith_to(action, content, promptsmith_path())
+}
+
+fn run_promptsmith_to(action: str, content: str, out_path: str) -> i32 {
+    discard ensure_prompt_files()
+    let effective_action = if action == "" { "get" } else { action }
+    let request_path = promptsmith_request_path_for(effective_action)
+    let response_path = promptsmith_response_path_for(effective_action)
+    let request = util.json_obj2("action", json.str(effective_action), "content", json.str(content))
     fs.write_file(request_path, request)
-    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/promptsmith_tool.py ", request_path, " ", response_path)
-    let argv = shell_argv(cmd)
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    discard proc.wait(handle, 60000)
-    let exit_code = proc.exit_code(handle)
-    let payload = safe_read(response_path)
-    if payload != "{}" {
-        fs.write_file(promptsmith_path(), payload)
-        fs.write_file(last_run_path_for("promptsmith"), payload)
+    let mut payload = "{}"
+    if effective_action == "protocol" {
+        payload = util.json_obj5(
+            "tool", json.str("promptsmith"),
+            "status", json.str("ok"),
+            "action", json.str("protocol"),
+            "actions", json.raw(util.json_arr4(json.str("protocol"), json.str("get"), json.str("set"), json.str("append"))),
+            "requirements", json.raw(util.json_obj1("content", json.str("full prompt text for set, appended text for append"))),
+        )
+    } else if effective_action == "reset" {
+        let default_text = fs.read_file(prompt_default_path())
+        fs.write_file(prompt_active_path(), default_text)
+        payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("reset"), "content", json.str(default_text), "meta", json.raw(prompt_meta_json(default_text)))
+    } else if effective_action == "set" {
+        if text.trim(content) == "" {
+            payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("set"), "message", json.str("content is required"))
+        } else {
+            fs.write_file(prompt_active_path(), content)
+            payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("set"), "content", json.str(content), "meta", json.raw(prompt_meta_json(content)))
+        }
+    } else if effective_action == "append" {
+        if text.trim(content) == "" {
+            payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("append"), "message", json.str("content is required"))
+        } else {
+            let current = fs.read_file(prompt_active_path())
+            let updated = str.concat(current, str.concat("\n\n", str.concat(text.trim(content), "\n")))
+            fs.write_file(prompt_active_path(), updated)
+            payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("append"), "content", json.str(updated), "meta", json.raw(prompt_meta_json(updated)))
+        }
+    } else {
+        let current = fs.read_file(prompt_active_path())
+        payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("get"), "content", json.str(current), "meta", json.raw(prompt_meta_json(current)))
     }
-    return shell_result_code(exit_code)
+    fs.write_file(response_path, payload)
+    fs.write_file(out_path, payload)
+    fs.write_file(promptsmith_path(), payload)
+    fs.write_file(last_run_path_for("promptsmith"), payload)
+    return if json.get_str(json.parse(payload), "status") == "ok" { 0 } else { 13 }
 }
 
 fn run_custom_tool(tool_id: str, tool_input_json: str) -> i32 {
+    return run_custom_tool_to(tool_id, tool_input_json, custom_tool_last_run_path(tool_id))
+}
+
+fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 {
+    let manifest_path = custom_tool_manifest_path(tool_id)
+    if fs.exists(manifest_path) == 0 {
+        let missing = util.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool manifest not found"), "manifest_path", json.str(manifest_path))
+        fs.write_file(custom_tool_state_path(tool_id), missing)
+        fs.write_file(out_path, missing)
+        fs.write_file(custom_tool_last_run_path(tool_id), missing)
+        return 13
+    }
+    let manifest = json.parse(fs.read_file(manifest_path))
+    let command_template = json.get_str(manifest, "command_template")
+    if command_template == "" {
+        let invalid = util.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool missing command_template"), "manifest_path", json.str(manifest_path))
+        fs.write_file(custom_tool_state_path(tool_id), invalid)
+        fs.write_file(out_path, invalid)
+        fs.write_file(custom_tool_last_run_path(tool_id), invalid)
+        return 13
+    }
     let env_map = default_proc_env()
-    let request = util.json_obj2("tool_id", json.str(tool_id), "tool_input", json.raw(tool_input_json))
+    let raw_input = if tool_input_json == "" { "{}" } else { tool_input_json }
+    let request = util.json_obj2("tool_id", json.str(tool_id), "tool_input", json.raw(raw_input))
     let request_path = custom_tool_request_path(tool_id)
     fs.mkdir("/tmp/fzyagent/custom_tools")
     fs.mkdir(custom_tool_state_dir(tool_id))
     fs.write_file(request_path, request)
-    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/custom_tool_runner.py ", request_path, " ", custom_tool_state_path(tool_id))
-    let argv = shell_argv(cmd)
+    discard proc.env_set(env_map, "TOOL_INPUT_JSON", raw_input)
+    let parsed_input = json.parse(raw_input)
+    let keys = json.keys(parsed_input)
+    let exported_keys = list.new()
+    let mut idx: i32 = 0
+    while idx < list.len(keys) {
+        let key = list.get(keys, idx)
+        let child = json.get(parsed_input, key)
+        let scalar = json.get_str(parsed_input, key)
+        let raw = json.get_str(child, "raw")
+        let value = if scalar == "" { raw } else { scalar }
+        let upper_key = sanitize_env_fragment(key)
+        discard proc.env_set(env_map, str.concat("TOOL_ARG_", upper_key), value)
+        discard list.push(exported_keys, json.str(str.concat("TOOL_ARG_", upper_key)))
+        idx += 1
+    }
+    let argv = shell_argv(command_template)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
     discard proc.wait(handle, 180000)
     let exit_code = proc.exit_code(handle)
-    let payload = safe_read(custom_tool_state_path(tool_id))
-    if payload != "{}" {
-        fs.write_file(custom_tool_last_run_path(tool_id), payload)
-        fs.write_file(last_run_path_for(tool_id), payload)
-    }
-    return shell_result_code(exit_code)
+    let status = if exit_code == 0 { "ok" } else { "failed" }
+    let streams = util.json_obj2("stdout", json.str(proc.stdout(handle)), "stderr", json.str(proc.stderr(handle)))
+    let meta = util.json_obj2("runner", json.str(json.get_str(manifest, "runner")), "exit_code", json.str(str.from_i32(exit_code)))
+    let payload = map.new()
+    discard map.set(payload, "tool", json.str(tool_id))
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "manifest_path", json.str(manifest_path))
+    discard map.set(payload, "command_template", json.str(command_template))
+    discard map.set(payload, "input", json.raw(raw_input))
+    discard map.set(payload, "exported_env_keys", json.raw(json.array(exported_keys)))
+    discard map.set(payload, "streams", json.raw(streams))
+    discard map.set(payload, "meta", json.raw(meta))
+    let encoded = json.object(payload)
+    fs.write_file(custom_tool_state_path(tool_id), encoded)
+    fs.write_file(out_path, encoded)
+    fs.write_file(custom_tool_last_run_path(tool_id), encoded)
+    fs.write_file(last_run_path_for(tool_id), encoded)
+    return if exit_code == 0 { 0 } else { 13 }
 }
 
 fn assemble_pair(path_a: str, path_b: str) -> str {
@@ -454,36 +1092,122 @@ fn assemble_pair(path_a: str, path_b: str) -> str {
 
 fn boot_runner() -> i32 {
     ensure_dirs()
+    init_tool_queue()
     return 0
+}
+
+fn queue_summary_doc(pending_count: i32, active_count: i32, completed_count: i32, cancelled_count: i32, last_tool_id: str, last_status: str) -> str {
+    return util.json_obj6(
+        "pending_count", json.str(str.from_i32(pending_count)),
+        "active_count", json.str(str.from_i32(active_count)),
+        "completed_count", json.str(str.from_i32(completed_count)),
+        "cancelled_count", json.str(str.from_i32(cancelled_count)),
+        "last_tool_id", json.str(last_tool_id),
+        "last_status", json.str(last_status),
+    )
+}
+
+fn queue_summary_json() -> str {
+    let payload = safe_read(queue_summary_path())
+    if payload == "{}" {
+        return queue_summary_doc(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "", "idle")
+    }
+    return payload
+}
+
+fn write_queue_summary(pending_count: i32, active_count: i32, completed_count: i32, cancelled_count: i32, last_tool_id: str, last_status: str) -> i32 {
+    fs.write_file(queue_summary_path(), queue_summary_doc(pending_count, active_count, completed_count, cancelled_count, last_tool_id, last_status))
+    return 0
+}
+
+fn queue_event(tool_id: str, run_id: str, state: str, status: str) -> str {
+    return util.json_obj5(
+        "tool_id", json.str(tool_id),
+        "run_id", json.str(run_id),
+        "state", json.str(state),
+        "status", json.str(status),
+        "recorded_at", json.str(str.from_i32(time.now())),
+    )
 }
 
 fn init_tool_queue() -> i32 {
     ensure_dirs()
+    if fs.exists(queue_pending_path()) == 0 {
+        fs.write_file(queue_pending_path(), "")
+    }
+    if fs.exists(queue_active_path()) == 0 {
+        fs.write_file(queue_active_path(), "")
+    }
+    if fs.exists(queue_summary_path()) == 0 {
+        discard write_queue_summary(0, 0, 0, 0, "", "idle")
+    }
+    if fs.exists(queue_monitor_path()) == 0 {
+        fs.write_file(queue_monitor_path(), util.json_obj3("status", json.str("ok"), "phase", json.str("boot"), "queue", json.raw(safe_read(queue_summary_path()))))
+    }
+    return 0
+}
+
+fn enqueue_tool_named(tool_id: str, run_id: str) -> i32 {
+    discard init_tool_queue()
+    discard storage.atomic_append(queue_pending_path(), str.concat(queue_event(tool_id, run_id, "pending", "queued"), "\n"))
+    QUEUE_PENDING_COUNT += 1
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, "queued")
     return 0
 }
 
 fn enqueue_tool() -> i32 {
-    checkpoint()
+    return enqueue_tool_named("generic", "latest")
+}
+
+fn dequeue_tool_named(tool_id: str, run_id: str, status: str) -> i32 {
+    discard init_tool_queue()
+    discard storage.atomic_append(queue_active_path(), str.concat(queue_event(tool_id, run_id, "completed", status), "\n"))
+    if QUEUE_PENDING_COUNT > 0 {
+        QUEUE_PENDING_COUNT -= 1
+    }
+    if QUEUE_ACTIVE_COUNT > 0 {
+        QUEUE_ACTIVE_COUNT -= 1
+    }
+    QUEUE_COMPLETED_COUNT += 1
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, status)
     return 0
 }
 
 fn dequeue_tool() -> i32 {
-    checkpoint()
-    return 0
+    return dequeue_tool_named("generic", "latest", "completed")
 }
 
 fn process_background() -> i32 {
-    checkpoint()
+    discard init_tool_queue()
+    let payload = util.json_obj4(
+        "status", json.str("ok"),
+        "phase", json.str("process_background"),
+        "queue", json.raw(queue_summary_json()),
+        "updated_at", json.str(str.from_i32(time.now())),
+    )
+    fs.write_file(queue_monitor_path(), payload)
     return 0
 }
 
 fn spawn_background() -> i32 {
-    checkpoint()
+    discard init_tool_queue()
+    QUEUE_ACTIVE_COUNT += QUEUE_PENDING_COUNT
+    QUEUE_PENDING_COUNT = 0
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", "spawned")
+    discard process_background()
     return 0
 }
 
 fn monitor_background() -> i32 {
-    checkpoint()
+    discard init_tool_queue()
+    let payload = util.json_obj5(
+        "status", json.str("ok"),
+        "phase", json.str("monitor_background"),
+        "queue", json.raw(queue_summary_json()),
+        "cancel_signal", json.str(if fs.exists(queue_cancel_path()) == 1 { "present" } else { "absent" }),
+        "updated_at", json.str(str.from_i32(time.now())),
+    )
+    fs.write_file(queue_monitor_path(), payload)
     return 0
 }
 
@@ -492,7 +1216,13 @@ fn spawn_probe_worker() -> i32 {
 }
 
 fn kill_background() -> i32 {
-    return proc.exit_class()
+    discard init_tool_queue()
+    fs.write_file(queue_cancel_path(), "kill")
+    QUEUE_ACTIVE_COUNT = 0
+    QUEUE_CANCELLED_COUNT += 1
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", "killed")
+    discard monitor_background()
+    return 0
 }
 
 fn run_parallel_bash() -> i32 {
@@ -565,16 +1295,17 @@ fn run_parallel() -> i32 {
     log.info("tools.run_parallel start", util.log_fields2("component", "tools", "phase", "run_parallel_start"))
     runtime.events.emit_tool_started()
     ensure_dirs()
-    enqueue_tool()
-    enqueue_tool()
+    enqueue_tool_named("parallel_bash", "parallel_bash_latest")
+    enqueue_tool_named("parallel_grep", "parallel_grep_latest")
 
     let bash_task = spawn(run_parallel_bash_worker)
     let grep_task = spawn(run_parallel_grep_worker)
     let bash_status = join(bash_task)
     let grep_status = join(grep_task)
 
-    dequeue_tool()
-    dequeue_tool()
+    dequeue_tool_named("parallel_bash", "parallel_bash_latest", status_from_exit_code(bash_status))
+    dequeue_tool_named("parallel_grep", "parallel_grep_latest", status_from_exit_code(grep_status))
+    discard monitor_background()
 
     let bash_result = safe_read(last_run_path_for("parallel_bash"))
     let grep_result = safe_read(last_run_path_for("parallel_grep"))
@@ -593,6 +1324,10 @@ fn run_release_audit() -> i32 {
     runtime.events.emit_tool_started()
     ensure_dirs()
 
+    enqueue_tool_named("parallel_bash", "parallel_bash_latest")
+    enqueue_tool_named("parallel_grep", "parallel_grep_latest")
+    enqueue_tool_named("release_inventory", "release_inventory_latest")
+
     let bash_task = spawn(run_parallel_bash_worker)
     let grep_task = spawn(run_parallel_grep_worker)
     let inventory_task = spawn(run_release_inventory_worker)
@@ -600,6 +1335,10 @@ fn run_release_audit() -> i32 {
     let bash_status = join(bash_task)
     let grep_status = join(grep_task)
     let inventory_status = join(inventory_task)
+    dequeue_tool_named("parallel_bash", "parallel_bash_latest", status_from_exit_code(bash_status))
+    dequeue_tool_named("parallel_grep", "parallel_grep_latest", status_from_exit_code(grep_status))
+    dequeue_tool_named("release_inventory", "release_inventory_latest", status_from_exit_code(inventory_status))
+    discard monitor_background()
 
     let bash_result = safe_read(last_run_path_for("parallel_bash"))
     let grep_result = safe_read(last_run_path_for("parallel_grep"))
@@ -629,11 +1368,16 @@ fn run_project_seed() -> i32 {
     runtime.events.emit_tool_started()
     ensure_dirs()
 
+    enqueue_tool_named("release_audit", "release_audit_latest")
+    enqueue_tool_named("workspace_digest", "workspace_digest_latest")
     let audit_task = spawn(run_release_audit)
     let digest_task = spawn(run_workspace_digest_worker)
 
     let audit_status = join(audit_task)
     let digest_status = join(digest_task)
+    dequeue_tool_named("release_audit", "release_audit_latest", status_from_exit_code(audit_status))
+    dequeue_tool_named("workspace_digest", "workspace_digest_latest", status_from_exit_code(digest_status))
+    discard monitor_background()
 
     let audit_result = safe_read(last_run_path_for("release_audit"))
     let digest_result = safe_read(workspace_digest_path())
@@ -660,11 +1404,16 @@ fn run_browser_ops_seed() -> i32 {
     runtime.events.emit_tool_started()
     ensure_dirs()
 
+    enqueue_tool_named("workspace_digest", "workspace_digest_latest")
+    enqueue_tool_named("aegis", "aegis_latest")
     let digest_task = spawn(run_workspace_digest_worker)
     let browser_task = spawn(run_aegis_worker)
 
     let digest_status = join(digest_task)
     let browser_status = join(browser_task)
+    dequeue_tool_named("workspace_digest", "workspace_digest_latest", status_from_exit_code(digest_status))
+    dequeue_tool_named("aegis", "aegis_latest", status_from_exit_code(browser_status))
+    discard monitor_background()
 
     let digest_result = safe_read(workspace_digest_path())
     let browser_result = safe_read(aegis_path())
@@ -686,95 +1435,275 @@ fn run_browser_ops_seed() -> i32 {
     return 13
 }
 
-fn run_named(tool_id: str) -> i32 {
-    if tool_id == "parallel_bash" {
-        return run_parallel_bash()
+fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
+    let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
+    let nested_input = json.get(parsed, "tool_input")
+    let action = json.get_str(parsed, "action")
+    let op = json.get_str(parsed, "op")
+    let effective_action = if op == "" { action } else { op }
+    let url = if json.get_str(parsed, "url") == "" { json.get_str(nested_input, "url") } else { json.get_str(parsed, "url") }
+    let query = if json.get_str(parsed, "query") == "" { json.get_str(nested_input, "query") } else { json.get_str(parsed, "query") }
+    let eval_js = if json.get_str(parsed, "eval_js") == "" { json.get_str(nested_input, "eval_js") } else { json.get_str(parsed, "eval_js") }
+    let commands_json = if json.get_str(parsed, "commands_json") == "" { json.get_str(nested_input, "commands_json") } else { json.get_str(parsed, "commands_json") }
+    let commands_raw = json.get_str(json.get(parsed, "commands"), "raw")
+    let nested_commands_raw = json.get_str(json.get(nested_input, "commands"), "raw")
+    let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
+    let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
+    let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
+    let requested_tool_id = json.get_str(parsed, "tool_id")
+    let create_tool_id = json.get_str(parsed, "create_tool_id")
+    let description = json.get_str(parsed, "description")
+    let command_template = json.get_str(parsed, "command_template")
+    let input_schema_json = json.get_str(parsed, "input_schema_json")
+    let input_schema_raw = json.get_str(json.get(parsed, "input_schema"), "raw")
+    let kind = json.get_str(parsed, "kind")
+    let mode = json.get_str(parsed, "mode")
+    let max_lines = json.get_str(parsed, "max_lines")
+    let content = json.get_str(parsed, "content")
+    let tool_input_raw = json.get_str(json.get(parsed, "tool_input"), "raw")
+    let effective_commands = if commands_json == "" {
+        if commands_raw == "" { nested_commands_raw } else { commands_raw }
+    } else {
+        commands_json
     }
-    if tool_id == "parallel_grep" {
-        return run_parallel_grep()
-    }
-    if tool_id == "bash" {
-        return run_bash_with_command("")
-    }
-    if tool_id == "grep_search" {
-        return run_grep_search("", "")
-    }
-    if tool_id == "timeout_probe" {
-        return run_with_timeout()
-    }
-    if tool_id == "release_audit" {
-        return run_release_audit()
-    }
-    if tool_id == "workspace_digest" {
-        return run_workspace_digest()
-    }
-    if tool_id == "aegis" || tool_id == "aegis_headless" {
-        return run_aegis()
-    }
-    if tool_id == "project_seed" {
-        return run_project_seed()
-    }
-    if tool_id == "browser_ops_seed" {
-        return run_browser_ops_seed()
-    }
-    if tool_id == "toolsmith" {
-        return run_toolsmith("protocol", "", "", "", "", "", "")
-    }
-    if tool_id == "promptsmith" {
-        return run_promptsmith("get", "")
-    }
-    if tool_id == "fzydoc" {
-        return run_fzydoc("spawn", "6")
-    }
-    if tool_id == "desktop_grep" {
-        return run_parallel_grep()
-    }
-    if tool_id == "all" {
-        return run_parallel()
-    }
-    if fs.exists(custom_tool_manifest_path(tool_id)) != 0 {
-        return run_custom_tool(tool_id, "{}")
+    let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
+    let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
+    let kind_tag = dispatch_kind(tool_id)
+    match kind_tag {
+        DispatchKind::DispatchAegis => return run_aegis_with_args(effective_action, url, query, eval_js, effective_commands),
+        DispatchKind::DispatchBash => return run_bash_with_command(command),
+        DispatchKind::DispatchGrepSearch => return run_grep_search(pattern, target),
+        DispatchKind::DispatchParallelBash => return run_parallel_bash(),
+        DispatchKind::DispatchParallelGrep => return run_parallel_grep(),
+        DispatchKind::DispatchReleaseAudit => return run_release_audit(),
+        DispatchKind::DispatchWorkspaceDigest => return run_workspace_digest(),
+        DispatchKind::DispatchProjectSeed => return run_project_seed(),
+        DispatchKind::DispatchBrowserOpsSeed => return run_browser_ops_seed(),
+        DispatchKind::DispatchTimeoutProbe => return run_with_timeout(),
+        DispatchKind::DispatchToolsmith => return run_toolsmith(if effective_action == "" { "protocol" } else { effective_action }, effective_requested_tool_id, description, command_template, effective_input_schema, kind, mode),
+        DispatchKind::DispatchPromptsmith => return run_promptsmith(if effective_action == "" { "get" } else { effective_action }, content),
+        DispatchKind::DispatchFzydoc => return run_fzydoc(if query == "" { "spawn" } else { query }, max_lines),
+        DispatchKind::DispatchToolSequence => return run_tool_sequence(input_raw),
+        DispatchKind::DispatchToolParallel => return run_tool_parallel(input_raw),
+        DispatchKind::DispatchAll => return run_parallel(),
+        _ => return run_custom_tool(tool_id, if tool_input_raw == "" { input_raw } else { tool_input_raw }),
     }
     return 13
 }
 
-fn run_named_browser(tool_id: str, action: str, url: str, query: str, eval_js: str, commands_json: str, command: str, pattern: str, target: str, tool_input_json: str, description: str, command_template: str, input_schema_json: str, kind: str, mode: str, max_lines: str, requested_tool_id: str, content: str) -> i32 {
-    if tool_id == "aegis" || tool_id == "aegis_headless" {
-        return run_aegis_with_args(action, url, query, eval_js, commands_json)
+fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -> i32 {
+    let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
+    let nested_input = json.get(parsed, "tool_input")
+    let action = json.get_str(parsed, "action")
+    let op = json.get_str(parsed, "op")
+    let effective_action = if op == "" { action } else { op }
+    let url = if json.get_str(parsed, "url") == "" { json.get_str(nested_input, "url") } else { json.get_str(parsed, "url") }
+    let query = if json.get_str(parsed, "query") == "" { json.get_str(nested_input, "query") } else { json.get_str(parsed, "query") }
+    let eval_js = if json.get_str(parsed, "eval_js") == "" { json.get_str(nested_input, "eval_js") } else { json.get_str(parsed, "eval_js") }
+    let commands_json = if json.get_str(parsed, "commands_json") == "" { json.get_str(nested_input, "commands_json") } else { json.get_str(parsed, "commands_json") }
+    let commands_raw = json.get_str(json.get(parsed, "commands"), "raw")
+    let nested_commands_raw = json.get_str(json.get(nested_input, "commands"), "raw")
+    let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
+    let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
+    let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
+    let requested_tool_id = json.get_str(parsed, "tool_id")
+    let create_tool_id = json.get_str(parsed, "create_tool_id")
+    let description = json.get_str(parsed, "description")
+    let command_template = json.get_str(parsed, "command_template")
+    let input_schema_json = json.get_str(parsed, "input_schema_json")
+    let input_schema_raw = json.get_str(json.get(parsed, "input_schema"), "raw")
+    let kind = json.get_str(parsed, "kind")
+    let mode = json.get_str(parsed, "mode")
+    let max_lines = json.get_str(parsed, "max_lines")
+    let content = json.get_str(parsed, "content")
+    let tool_input_raw = json.get_str(json.get(parsed, "tool_input"), "raw")
+    let effective_commands = if commands_json == "" {
+        if commands_raw == "" { nested_commands_raw } else { commands_raw }
+    } else {
+        commands_json
     }
-    if tool_id == "bash" {
-        return run_bash_with_command(command)
+    let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
+    let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
+    let kind_tag = dispatch_kind(tool_id)
+    match kind_tag {
+        DispatchKind::DispatchAegis => return run_aegis_with_args_to(effective_action, url, query, eval_js, effective_commands, out_path),
+        DispatchKind::DispatchBash => return run_shell_to_file("bash", if command == "" { env_or("TOOL_BASH", "echo bash-tool-default") } else { command }, 20000, out_path),
+        DispatchKind::DispatchGrepSearch => return run_grep_to_file("grep_search", if pattern == "" { env_or("TOOL_GREP_PATTERN_A", "fn ") } else { pattern }, if target == "" { env_or("TOOL_GREP_TARGET_A", "src") } else { target }, 15000, out_path),
+        DispatchKind::DispatchWorkspaceDigest => return run_workspace_digest_to(out_path),
+        DispatchKind::DispatchToolsmith => return run_toolsmith_to(if effective_action == "" { "protocol" } else { effective_action }, effective_requested_tool_id, description, command_template, effective_input_schema, kind, mode, out_path),
+        DispatchKind::DispatchPromptsmith => return run_promptsmith_to(if effective_action == "" { "get" } else { effective_action }, content, out_path),
+        DispatchKind::DispatchFzydoc => return run_fzydoc_to(if query == "" { "spawn" } else { query }, max_lines, out_path),
+        DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if tool_input_raw == "" { input_raw } else { tool_input_raw }, out_path),
+        _ => return dispatch_tool_request_copy(tool_id, input_raw, out_path),
     }
-    if tool_id == "grep_search" {
-        return run_grep_search(pattern, target)
+    return 13
+}
+
+fn dispatch_tool_request_copy(tool_id: str, input_raw: str, out_path: str) -> i32 {
+    let status = dispatch_tool_request(tool_id, input_raw)
+    fs.write_file(out_path, last_run_json(tool_id))
+    return status
+}
+
+fn tool_step_result_json(step_id: str, tool_id: str, status_code: i32) -> str {
+    return tool_step_result_from_payload_json(step_id, tool_id, status_code, last_run_json(tool_id))
+}
+
+fn tool_step_result_from_payload_json(step_id: str, tool_id: str, status_code: i32, result_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "step_id", json.str(step_id))
+    discard map.set(payload, "tool_id", json.str(tool_id))
+    discard map.set(payload, "status", json.str(if status_code == 0 { "ok" } else { "error" }))
+    discard map.set(payload, "result", json.raw(result_json))
+    return json.object(payload)
+}
+
+fn tool_step_skipped_json(step_id: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "step_id", json.str(step_id))
+    discard map.set(payload, "tool_id", json.str(""))
+    discard map.set(payload, "status", json.str("skipped"))
+    discard map.set(payload, "result", json.raw("{}"))
+    return json.object(payload)
+}
+
+fn parallel_step_request_json(step_raw: str) -> str {
+    if step_raw == "" {
+        return util.json_obj3("step_id", json.str(""), "tool_id", json.str(""), "tool_input", json.raw("{}"))
     }
-    if tool_id == "toolsmith" {
-        let create_action = if action == "" { "protocol" } else { action }
-        return run_toolsmith(create_action, requested_tool_id, description, command_template, input_schema_json, kind, mode)
+    return step_raw
+}
+
+fn run_parallel_step_ctx() -> i32 {
+    let context_id = thread.context_id()
+    let request_raw = safe_read(parallel_step_request_path(context_id))
+    let step = json.parse(request_raw)
+    let step_id = json.get_str(step, "step_id")
+    let tool_id = json.get_str(step, "tool_id")
+    if tool_id == "" {
+        fs.write_file(parallel_step_result_path(context_id), tool_step_skipped_json(step_id))
+        return 0
     }
-    if tool_id == "promptsmith" {
-        let prompt_action = if action == "" { "get" } else { action }
-        return run_promptsmith(prompt_action, content)
+    let tool_input = json.get_str(json.get(step, "tool_input"), "raw")
+    let payload_path = parallel_step_payload_path(context_id)
+    let status = dispatch_tool_request_isolated(tool_id, if tool_input == "" { "{}" } else { tool_input }, payload_path)
+    fs.write_file(parallel_step_result_path(context_id), tool_step_result_from_payload_json(if step_id == "" { str.from_i32(context_id) } else { step_id }, tool_id, status, safe_read(payload_path)))
+    return status
+}
+
+fn run_tool_sequence(request_json: str) -> i32 {
+    let parsed = json.parse(if request_json == "" { "{}" } else { request_json })
+    let steps = json.get(parsed, "steps")
+    let items = list.new()
+    let mut idx: i32 = 0
+    let mut overall: i32 = 0
+    while idx < 32 {
+        let step = json.get(steps, str.from_i32(idx))
+        let step_raw = json.get_str(step, "raw")
+        if step_raw == "" {
+            break
+        }
+        let step_id = json.get_str(step, "step_id")
+        let tool_id = json.get_str(step, "tool_id")
+        let tool_input = json.get_str(json.get(step, "tool_input"), "raw")
+        let status = dispatch_tool_request(tool_id, if tool_input == "" { "{}" } else { tool_input })
+        discard list.push(items, json.raw(tool_step_result_json(if step_id == "" { str.from_i32(idx) } else { step_id }, tool_id, status)))
+        if status != 0 && overall == 0 {
+            overall = status
+            break
+        }
+        idx += 1
     }
-    if tool_id == "fzydoc" {
-        let doc_query = if query == "" { "spawn" } else { query }
-        return run_fzydoc(doc_query, max_lines)
+    let payload = util.json_obj3("tool", json.str("tool_sequence"), "status", json.str(if overall == 0 { "ok" } else { "error" }), "steps", json.raw(json.array(items)))
+    fs.write_file("/tmp/fzyagent/runs/tool_sequence.json", payload)
+    return overall
+}
+
+fn run_tool_parallel(request_json: str) -> i32 {
+    let parsed = json.parse(if request_json == "" { "{}" } else { request_json })
+    let steps = json.get(parsed, "steps")
+    let step0 = json.get(steps, "0")
+    let step1 = json.get(steps, "1")
+    let step2 = json.get(steps, "2")
+    let step3 = json.get(steps, "3")
+    let overflow = json.get_str(json.get(steps, "4"), "raw")
+    if overflow != "" {
+        let payload = util.json_obj4(
+            "tool", json.str("tool_parallel"),
+            "status", json.str("error"),
+            "message", json.str("parallel step limit exceeded"),
+            "limit", json.str(str.from_i32(parallel_step_limit())),
+        )
+        fs.write_file("/tmp/fzyagent/runs/tool_parallel.json", payload)
+        return 13
     }
-    if tool_id == "all" {
-        return run_parallel()
+
+    let base = next_parallel_context_base()
+    let ctx0 = base + 1
+    let ctx1 = base + 2
+    let ctx2 = base + 3
+    let ctx3 = base + 4
+
+    let step0_raw = json.get_str(step0, "raw")
+    let step1_raw = json.get_str(step1, "raw")
+    let step2_raw = json.get_str(step2, "raw")
+    let step3_raw = json.get_str(step3, "raw")
+
+    fs.write_file(parallel_step_request_path(ctx0), parallel_step_request_json(step0_raw))
+    fs.write_file(parallel_step_request_path(ctx1), parallel_step_request_json(step1_raw))
+    fs.write_file(parallel_step_request_path(ctx2), parallel_step_request_json(step2_raw))
+    fs.write_file(parallel_step_request_path(ctx3), parallel_step_request_json(step3_raw))
+
+    let handle0 = spawn_ctx(run_parallel_step_ctx, ctx0)
+    let handle1 = spawn_ctx(run_parallel_step_ctx, ctx1)
+    let handle2 = spawn_ctx(run_parallel_step_ctx, ctx2)
+    let handle3 = spawn_ctx(run_parallel_step_ctx, ctx3)
+
+    let status0 = join(handle0)
+    let status1 = join(handle1)
+    let status2 = join(handle2)
+    let status3 = join(handle3)
+
+    let items = list.new()
+    let mut overall: i32 = 0
+    if step0_raw != "" {
+        discard list.push(items, json.raw(safe_read(parallel_step_result_path(ctx0))))
+        if status0 != 0 && overall == 0 {
+            overall = status0
+        }
     }
-    return run_custom_tool(tool_id, tool_input_json)
+    if step1_raw != "" {
+        discard list.push(items, json.raw(safe_read(parallel_step_result_path(ctx1))))
+        if status1 != 0 && overall == 0 {
+            overall = status1
+        }
+    }
+    if step2_raw != "" {
+        discard list.push(items, json.raw(safe_read(parallel_step_result_path(ctx2))))
+        if status2 != 0 && overall == 0 {
+            overall = status2
+        }
+    }
+    if step3_raw != "" {
+        discard list.push(items, json.raw(safe_read(parallel_step_result_path(ctx3))))
+        if status3 != 0 && overall == 0 {
+            overall = status3
+        }
+    }
+    let payload = util.json_obj3("tool", json.str("tool_parallel"), "status", json.str(if overall == 0 { "ok" } else { "error" }), "steps", json.raw(json.array(items)))
+    fs.write_file("/tmp/fzyagent/runs/tool_parallel.json", payload)
+    return overall
 }
 
 fn last_run_json(tool_id: str) -> str {
-    if tool_id == "all" {
+    if canonical_tool_id(tool_id) == "all" {
         return safe_read(last_parallel_path())
     }
     return safe_read(last_run_path_for(tool_id))
 }
 
 fn last_run_artifact_path(tool_id: str) -> str {
-    if tool_id == "all" {
+    if canonical_tool_id(tool_id) == "all" {
         return last_parallel_path()
     }
     return last_run_path_for(tool_id)
@@ -801,7 +1730,12 @@ fn run_with_timeout() -> i32 {
 }
 
 fn cancel_tool_run() -> i32 {
-    return proc.exit_class()
+    discard init_tool_queue()
+    fs.write_file(queue_cancel_path(), "cancel")
+    QUEUE_CANCELLED_COUNT += 1
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "generic", "cancelled")
+    discard monitor_background()
+    return 0
 }
 
 fn retry_with_backoff() -> i32 {
@@ -823,28 +1757,22 @@ fn classify_failure() -> i32 {
 }
 
 fn classify_failure_kind(code: i32) -> ToolFailureClass {
-    if code == 11 {
-        return ToolFailureClass::ToolSpawnFailure
-    }
-    if code == 12 {
-        return ToolFailureClass::ToolTimeout
-    }
-    if code == 14 {
-        return ToolFailureClass::ToolMalformedOutput
+    match code {
+        11 => return ToolFailureClass::ToolSpawnFailure,
+        12 => return ToolFailureClass::ToolTimeout,
+        14 => return ToolFailureClass::ToolMalformedOutput,
+        _ => return ToolFailureClass::ToolNonzeroExit,
     }
     return ToolFailureClass::ToolNonzeroExit
 }
 
 fn failure_class_label(code: i32) -> str {
     let kind = classify_failure_kind(code)
-    if kind == ToolFailureClass::ToolSpawnFailure {
-        return "spawn_failure"
-    }
-    if kind == ToolFailureClass::ToolTimeout {
-        return "timeout"
-    }
-    if kind == ToolFailureClass::ToolNonzeroExit {
-        return "nonzero_exit"
+    match kind {
+        ToolFailureClass::ToolSpawnFailure => return "spawn_failure",
+        ToolFailureClass::ToolTimeout => return "timeout",
+        ToolFailureClass::ToolNonzeroExit => return "nonzero_exit",
+        _ => return "malformed_output",
     }
     return "malformed_output"
 }

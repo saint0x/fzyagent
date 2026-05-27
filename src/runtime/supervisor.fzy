@@ -1,4 +1,3 @@
-use core.time;
 use core.fs;
 use core.log;
 
@@ -6,12 +5,28 @@ fn shutdown_signal_path() -> str {
     return "/tmp/fzyagent/shutdown.signal"
 }
 
+fn supervisor_path() -> str {
+    return "/tmp/fzyagent/runtime.supervisor.json"
+}
+
+fn supervisor_state_json(phase: str, shutdown: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str("ok"))
+    discard map.set(payload, "phase", json.str(phase))
+    discard map.set(payload, "shutdown_requested", json.str(shutdown))
+    discard map.set(payload, "limits", json.raw(runtime.limits.limits_json()))
+    discard map.set(payload, "sandbox", json.raw(fs.read_file(runtime.sandbox.sandbox_path())))
+    discard map.set(payload, "queue", json.raw(services.tools.queue_summary_json()))
+    return json.object(payload)
+}
+
 fn configure_limits() -> i32 {
     log.info("runtime.supervisor configure_limits", util.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
-    runtime.limits.enforce_thread_limit()
-    runtime.limits.enforce_queue_depth()
-    runtime.limits.enforce_memory_budget()
-    time.sleep_ms(50)
+    fs.mkdir("/tmp/fzyagent")
+    runtime.limits.apply_limits()
+    runtime.sandbox.apply_default_policy()
+    runtime.sandbox.allow_tool_scope()
+    fs.write_file(supervisor_path(), supervisor_state_json("configured", "false"))
     return 0
 }
 
@@ -21,7 +36,7 @@ fn begin_shutdown() -> i32 {
     runtime.sandbox.deny_tool_scope()
     services.http.graceful_stop()
     runtime.recovery.recover_inflight_jobs()
-    time.sleep_ms(50)
+    fs.write_file(supervisor_path(), supervisor_state_json("shutdown", "true"))
     return 0
 }
 
@@ -36,6 +51,7 @@ fn run_forever() -> i32 {
     log.info("runtime.supervisor started", util.log_fields2("component", "runtime.supervisor", "phase", "loop_start"))
     loop {
         runtime.events.emit_health_tick()
-        time.sleep_ms(20)
+        fs.write_file(supervisor_path(), supervisor_state_json("running", if shutdown_requested() == 1 { "true" } else { "false" }))
+        checkpoint()
     }
 }
