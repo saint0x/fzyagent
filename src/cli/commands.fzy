@@ -115,12 +115,12 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
         return 13
     }
     discard services.sessions.post_message_for(session_id, filtered, request_id, "anthropic_latest")
-    let raw = runtime.agent.run_session_turn(session_id, filtered, request_id)
+    let raw = runtime.agent.run_session_turn_streamed(session_id, filtered, request_id)
     let parsed = json.parse(raw)
-    let tool_events_raw = json.get_str(json.get(parsed, "tool_events"), "raw")
-    discard render_tool_events(tool_events_raw)
-    discard render.print_assistant(services.safety.filter_tool_response_text(assistant_text(parsed)))
     if runtime.agent.turn_response_is_ok(parsed) == 1 {
+        if assistant_text(parsed) == "" {
+            discard render.print_assistant("(empty response)")
+        }
         return 0
     }
     discard render.print_error(str.concat("runtime turn failed: ", raw))

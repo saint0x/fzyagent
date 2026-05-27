@@ -483,6 +483,10 @@ fn response_is_ok(parsed: JsonHandle) -> i32 {
     return 0
 }
 
+fn response_status_text(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "status")
+}
+
 fn response_result_raw(parsed: JsonHandle) -> str {
     return json.get_str(json.get(parsed, "result"), "raw")
 }

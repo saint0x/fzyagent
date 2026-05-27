@@ -1,6 +1,8 @@
 use core.fs;
+use core.http;
 use core.thread;
 use core.log;
+use core.term;
 
 fn system_prompt_path() -> str {
     return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
@@ -179,9 +181,136 @@ fn request_payload_for(messages_json: str, tools_json: str) -> str {
     discard map.set(payload, "model", json.str(services.anthropic.default_model_name()))
     discard map.set(payload, "system", json.str(load_system_prompt()))
     discard map.set(payload, "max_tokens", json.raw("600"))
+    discard map.set(payload, "stream", json.raw("true"))
     discard map.set(payload, "messages", json.raw(messages_json))
     discard map.set(payload, "tools", json.raw(tools_json))
     return json.object(payload)
+}
+
+struct StreamBlock {
+    block_type: str,
+    text: str,
+    tool_id: str,
+    tool_name: str,
+    input_raw: str,
+}
+
+fn empty_stream_block() -> StreamBlock {
+    return StreamBlock {
+        block_type: "",
+        text: "",
+        tool_id: "",
+        tool_name: "",
+        input_raw: "",
+    }
+}
+
+fn stream_index_raw(parsed: JsonHandle) -> str {
+    let raw = json.get_str(json.get(parsed, "index"), "raw")
+    if raw != "" {
+        return raw
+    }
+    return json.get_str(parsed, "index")
+}
+
+fn stream_block_from_start(content_block: JsonHandle) -> StreamBlock {
+    let block_type = json.get_str(content_block, "type")
+    if block_type == "text" {
+        return StreamBlock {
+            block_type: "text",
+            text: json.get_str(content_block, "text"),
+            tool_id: "",
+            tool_name: "",
+            input_raw: "",
+        }
+    }
+    if block_type == "tool_use" {
+        let input_raw = json.get_str(json.get(content_block, "input"), "raw")
+        return StreamBlock {
+            block_type: "tool_use",
+            text: "",
+            tool_id: json.get_str(content_block, "id"),
+            tool_name: json.get_str(content_block, "name"),
+            input_raw: if input_raw == "" || input_raw == "{}" { "" } else { input_raw },
+        }
+    }
+    return empty_stream_block()
+}
+
+fn stream_block_apply_delta(block: StreamBlock, delta: JsonHandle) -> StreamBlock {
+    let delta_type = json.get_str(delta, "type")
+    if delta_type == "text_delta" {
+        return StreamBlock {
+            block_type: block.block_type,
+            text: str.concat(block.text, json.get_str(delta, "text")),
+            tool_id: block.tool_id,
+            tool_name: block.tool_name,
+            input_raw: block.input_raw,
+        }
+    }
+    if delta_type == "input_json_delta" {
+        return StreamBlock {
+            block_type: block.block_type,
+            text: block.text,
+            tool_id: block.tool_id,
+            tool_name: block.tool_name,
+            input_raw: str.concat(block.input_raw, json.get_str(delta, "partial_json")),
+        }
+    }
+    return block
+}
+
+fn stream_block_json(block: StreamBlock) -> str {
+    if block.block_type == "text" {
+        return util.json_obj2("type", json.str("text"), "text", json.str(block.text))
+    }
+    if block.block_type == "tool_use" {
+        let payload = map.new()
+        discard map.set(payload, "type", json.str("tool_use"))
+        discard map.set(payload, "id", json.str(block.tool_id))
+        discard map.set(payload, "name", json.str(block.tool_name))
+        discard map.set(payload, "input", json.raw(if block.input_raw == "" { "{}" } else { block.input_raw }))
+        return json.object(payload)
+    }
+    return ""
+}
+
+fn maybe_push_stream_block(items: ListHandle, block: StreamBlock) -> i32 {
+    let encoded = stream_block_json(block)
+    if encoded != "" {
+        discard list.push(items, encoded)
+    }
+    return 0
+}
+
+fn streamed_response_json(stop_reason: str, block0: StreamBlock, block1: StreamBlock, block2: StreamBlock, block3: StreamBlock) -> str {
+    let items = list.new()
+    discard maybe_push_stream_block(items, block0)
+    discard maybe_push_stream_block(items, block1)
+    discard maybe_push_stream_block(items, block2)
+    discard maybe_push_stream_block(items, block3)
+    let payload = map.new()
+    discard map.set(payload, "type", json.str("message"))
+    discard map.set(payload, "role", json.str("assistant"))
+    discard map.set(payload, "content", json.raw(json.array(items)))
+    discard map.set(payload, "stop_reason", json.str(stop_reason))
+    return json.object(payload)
+}
+
+fn stream_print_assistant_start() -> i32 {
+    discard cli.logger.blank()
+    discard cli.logger.print_line(str.concat(cli.logger.assistant_tag(), ">"))
+    discard term.print("  ")
+    return 0
+}
+
+fn stream_print_assistant_finish(started: i32) -> i32 {
+    if started == 0 {
+        return 0
+    }
+    discard term.print_line("")
+    discard cli.logger.blank()
+    return 0
 }
 
 enum TurnResponseKind {
@@ -272,7 +401,7 @@ fn tool_event_json(tool_id: str, tool_use_id: str, input_raw: str, outcome_json:
     return json.object(event)
 }
 
-fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHandle, index: str, session_id: str, request_id: str) -> i32 {
+fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHandle, index: str, session_id: str, request_id: str, stream_mode: i32) -> i32 {
     if content_block_type(parsed, index) != "tool_use" {
         return 0
     }
@@ -280,18 +409,23 @@ fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHan
     let tool_use_id = content_block_tool_id(parsed, index)
     let input_raw = content_block_tool_input_raw(parsed, index)
     let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
+    if stream_mode == 1 {
+        let outcome_parsed = json.parse(outcome)
+        discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
+        discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
+    }
     discard list.push(items, tool_result_block_json(tool_use_id, outcome))
     discard list.push(events, tool_event_json(name, tool_use_id, input_raw, outcome))
     return 1
 }
 
-fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str) -> str {
+fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> str {
     let tool_results = list.new()
     let tool_events = list.new()
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "0", session_id, request_id)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "1", session_id, request_id)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "2", session_id, request_id)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "3", session_id, request_id)
+    discard maybe_push_tool_result(tool_results, tool_events, parsed, "0", session_id, request_id, stream_mode)
+    discard maybe_push_tool_result(tool_results, tool_events, parsed, "1", session_id, request_id, stream_mode)
+    discard maybe_push_tool_result(tool_results, tool_events, parsed, "2", session_id, request_id, stream_mode)
+    discard maybe_push_tool_result(tool_results, tool_events, parsed, "3", session_id, request_id, stream_mode)
     let payload = map.new()
     let tool_results_json = json.array(tool_results)
     let tool_events_json = json.array(tool_events)
@@ -302,20 +436,96 @@ fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str
     return json.object(payload)
 }
 
-fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str) -> str {
+fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
+    let mut stop_reason = ""
+    let mut block0 = empty_stream_block()
+    let mut block1 = empty_stream_block()
+    let mut block2 = empty_stream_block()
+    let mut block3 = empty_stream_block()
+    let mut assistant_started: i32 = 0
+    let mut stream_error = ""
+
+    loop {
+        let event = http.sse_next(stream)
+        if event.done == 1 {
+            break
+        }
+        if event.event_type == "ping" {
+            continue
+        }
+        if event.event_type == "error" {
+            stream_error = event.data
+            break
+        }
+
+        let event_data = json.parse(event.data)
+        if event.event_type == "message_delta" {
+            let delta = json.get(event_data, "delta")
+            let next_stop_reason = json.get_str(delta, "stop_reason")
+            if next_stop_reason != "" {
+                stop_reason = next_stop_reason
+            }
+            continue
+        }
+        if event.event_type == "content_block_start" {
+            let index = stream_index_raw(event_data)
+            let content_block = json.get(event_data, "content_block")
+            if index == "0" { block0 = stream_block_from_start(content_block) }
+            if index == "1" { block1 = stream_block_from_start(content_block) }
+            if index == "2" { block2 = stream_block_from_start(content_block) }
+            if index == "3" { block3 = stream_block_from_start(content_block) }
+            continue
+        }
+        if event.event_type == "content_block_delta" {
+            let index = stream_index_raw(event_data)
+            let delta = json.get(event_data, "delta")
+            let delta_type = json.get_str(delta, "type")
+            if delta_type == "text_delta" && stream_mode == 1 {
+                if assistant_started == 0 {
+                    discard stream_print_assistant_start()
+                    assistant_started = 1
+                }
+                discard term.print(json.get_str(delta, "text"))
+            }
+            if index == "0" { block0 = stream_block_apply_delta(block0, delta) }
+            if index == "1" { block1 = stream_block_apply_delta(block1, delta) }
+            if index == "2" { block2 = stream_block_apply_delta(block2, delta) }
+            if index == "3" { block3 = stream_block_apply_delta(block3, delta) }
+            continue
+        }
+        if event.event_type == "message_stop" {
+            break
+        }
+    }
+
+    discard stream_print_assistant_finish(assistant_started)
+    discard http.stream_close(stream)
+    discard services.anthropic.finish_message_stream()
+
+    if stream_error != "" {
+        return util.json_obj2("status", json.str("error"), "error", json.str(stream_error))
+    }
+    return streamed_response_json(stop_reason, block0, block1, block2, block3)
+}
+
+fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32) -> str {
     if depth >= max_agent_iterations() {
         return turn_error_json("tool_loop_exhausted", "", "", accumulated_events_json, "")
     }
 
     let payload = request_payload_for(messages_json, services.registry.list_tool_definitions_json())
-    let raw = services.anthropic.request_messages_sync(payload)
+    let stream = services.anthropic.open_message_stream(payload)
+    let status = http.stream_status(stream)
+    let raw = consume_streamed_message(stream, stream_mode)
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
-    let status = services.anthropic.last_status()
     if status < 200 || status >= 300 {
-        return turn_error_json("", raw, services.anthropic.last_error(), accumulated_events_json, str.from_i32(status))
+        return turn_error_json("", raw, http.stream_error(stream), accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)
+    if json.get_str(parsed, "status") == "error" {
+        return turn_error_json("", raw, json.get_str(parsed, "error"), accumulated_events_json, str.from_i32(status))
+    }
     let stop_reason = json.get_str(parsed, "stop_reason")
     if stop_reason != "tool_use" {
         let response_text = extract_text_block(parsed)
@@ -326,7 +536,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
 
     let assistant_message = assistant_message_json(parsed)
     write_debug("assistant_message.json", assistant_message)
-    let tool_bundle = build_tool_result_bundle(parsed, session_id, request_id)
+    let tool_bundle = build_tool_result_bundle(parsed, session_id, request_id, stream_mode)
     let bundle_parsed = json.parse(tool_bundle)
     let tool_results_array = json.get_str(json.get(bundle_parsed, "tool_results"), "raw")
     let tool_events_array = json.get_str(json.get(bundle_parsed, "tool_events"), "raw")
@@ -335,12 +545,17 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     let next_messages = append_message_json(append_message_json(messages_json, assistant_message), tool_result_message)
     write_debug("next_messages.json", next_messages)
     let next_events = append_array_json(accumulated_events_json, tool_events_array)
-    return run_session_turn_loop(session_id, request_id, next_messages, depth + 1, next_events)
+    return run_session_turn_loop(session_id, request_id, next_messages, depth + 1, next_events, stream_mode)
 }
 
 fn run_session_turn(session_id: str, prompt: str, request_id: str) -> str {
     let messages_json = initial_messages_json(session_id, prompt)
-    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]")
+    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 0)
+}
+
+fn run_session_turn_streamed(session_id: str, prompt: str, request_id: str) -> str {
+    let messages_json = initial_messages_json(session_id, prompt)
+    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 1)
 }
 
 fn run_loop() -> i32 {

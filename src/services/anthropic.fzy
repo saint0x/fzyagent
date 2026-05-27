@@ -39,6 +39,12 @@ fn queue_headers() -> i32 {
     return 0
 }
 
+fn queue_stream_headers() -> i32 {
+    discard queue_headers()
+    discard http.header_set("accept", "text/event-stream")
+    return 0
+}
+
 fn smoke_sonnet() -> i32 {
     log.info("anthropic.smoke_sonnet start", util.log_fields2("component", "anthropic", "phase", "smoke_start"))
     let model = default_model_name()
@@ -71,6 +77,20 @@ fn request_messages_sync(payload: str) -> str {
     let out = http.post_json_capture(endpoint(), payload)
     provider.normalize_response()
     return out
+}
+
+fn open_message_stream(payload: str) -> HttpStreamHandle {
+    provider.anthropic_transport()
+    provider.normalize_request()
+    provider.translate_tool_calls()
+    provider.stream_completion()
+    queue_stream_headers()
+    return http.post_json_stream(endpoint(), payload)
+}
+
+fn finish_message_stream() -> i32 {
+    provider.normalize_response()
+    return 0
 }
 
 async fn request_messages(payload: str) -> str {
