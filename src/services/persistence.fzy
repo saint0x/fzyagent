@@ -106,18 +106,17 @@ fn session_doc_for(session_id: str, state: str, turn_count: str, last_run_id: st
         "history_path", json.str(session_messages_path(session_id)),
         "runs_path", json.str(session_runs_path(session_id)),
     )
-    let payload = map.new()
-    discard map.set(payload, "status", json.str("ok"))
-    discard map.set(payload, "session_id", json.str(normalize_session_id(session_id)))
-    discard map.set(payload, "state", json.str(state))
-    discard map.set(payload, "turn_count", json.str(turn_count))
-    discard map.set(payload, "last_run_id", json.str(last_run_id))
-    discard map.set(payload, "last_request_id", json.str(last_request_id))
-    discard map.set(payload, "last_user_message", json.str(last_user_message))
-    discard map.set(payload, "last_assistant_message", json.str(last_assistant_message))
-    discard map.set(payload, "tool_count", json.str(tool_count))
-    discard map.set(payload, "meta", json.raw(meta))
-    return json.object(payload)
+    return model.types.session_doc_json(
+        normalize_session_id(session_id),
+        state,
+        turn_count,
+        last_run_id,
+        last_user_message,
+        last_assistant_message,
+        last_request_id,
+        tool_count,
+        meta,
+    )
 }
 
 fn default_session_doc_for(session_id: str) -> str {
@@ -125,13 +124,7 @@ fn default_session_doc_for(session_id: str) -> str {
 }
 
 fn write_session_index(session_id: str, state: str) -> i32 {
-    let index = map.new()
-    discard map.set(index, "status", json.str("ok"))
-    discard map.set(index, "active_session_id", json.str(normalize_session_id(session_id)))
-    discard map.set(index, "state", json.str(state))
-    discard map.set(index, "updated_at", json.str(now_label()))
-    discard map.set(index, "session_path", json.str(session_state_path(session_id)))
-    let payload = json.object(index)
+    let payload = model.types.session_index_json(normalize_session_id(session_id), state, now_label(), session_state_path(session_id))
     fs.write_file(static_index_path(), payload)
     return 0
 }
@@ -139,7 +132,7 @@ fn write_session_index(session_id: str, state: str) -> i32 {
 fn save_session_for(session_id: str, payload: str) -> i32 {
     ensure_session(session_id)
     fs.write_file(session_state_path(session_id), payload)
-    write_session_index(session_id, json.get_str(json.parse(payload), "state"))
+    write_session_index(session_id, session_state_value(json.parse(payload)))
     return 0
 }
 
@@ -153,24 +146,88 @@ fn append_line(path: str, line: str) -> i32 {
     return 0
 }
 
+fn count_lines(text_value: str) -> i32 {
+    if text_value == "" {
+        return 0
+    }
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            count += 1
+        }
+        idx += 1
+    }
+    if count == 0 {
+        return 1
+    }
+    return count
+}
+
+fn first_line(text_value: str) -> str {
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            return str.slice(text_value, 0, idx)
+        }
+        idx += 1
+    }
+    return text_value
+}
+
+fn drop_first_line(text_value: str) -> str {
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            if idx + 1 >= str.len(text_value) {
+                return ""
+            }
+            return str.slice(text_value, idx + 1, str.len(text_value))
+        }
+        idx += 1
+    }
+    return ""
+}
+
+fn count_turn_markers(text_value: str) -> i32 {
+    if text_value == "" {
+        return 0
+    }
+    let mut count: i32 = 0
+    let mut remaining = text_value
+    while remaining != "" {
+        let line = first_line(remaining)
+        if line == "turn" {
+            count += 1
+        }
+        remaining = drop_first_line(remaining)
+    }
+    return count
+}
+
+fn session_turn_count(session_id: str) -> str {
+    ensure_session(session_id)
+    return str.from_i32(count_turn_markers(fs.read_file(session_turns_path(session_id))))
+}
+
+fn session_tool_count(session_id: str) -> str {
+    ensure_session(session_id)
+    return str.from_i32(count_lines(fs.read_file(session_runs_path(session_id))))
+}
+
 fn save_session_event(session_id: str, event: str, state: str, turn_count: str) -> i32 {
     ensure_session(session_id)
     let current = load_session_json_for(session_id)
     let parsed = json.parse(current)
-    let last_run_id = json.get_str(parsed, "last_run_id")
-    let last_request_id = json.get_str(parsed, "last_request_id")
-    let last_user = json.get_str(parsed, "last_user_message")
-    let last_assistant = json.get_str(parsed, "last_assistant_message")
-    let tool_count = json.get_str(parsed, "tool_count")
+    let last_run_id = session_last_run_id_value(parsed)
+    let last_request_id = session_last_request_id_value(parsed)
+    let last_user = session_last_user_message_value(parsed)
+    let last_assistant = session_last_assistant_message_value(parsed)
+    let tool_count = session_tool_count(session_id)
     let payload = session_doc_for(session_id, state, turn_count, last_run_id, last_user, last_assistant, last_request_id, tool_count)
-    let event_payload = map.new()
-    discard map.set(event_payload, "event", json.str(event))
-    discard map.set(event_payload, "state", json.str(state))
-    discard map.set(event_payload, "turn_count", json.str(turn_count))
-    discard map.set(event_payload, "recorded_at", json.str(now_label()))
-    let event_line = json.object(event_payload)
+    let event_line = model.types.session_event_json(event, state, turn_count, now_label())
     fs.write_file(session_state_path(session_id), payload)
-    append_line(session_turns_path(session_id), str.concat(event_line, "\n"))
+    append_line(session_turns_path(session_id), event_line)
     write_session_index(session_id, state)
     return 0
 }
@@ -204,59 +261,77 @@ fn load_session_json() -> str {
     return load_session_json_for(default_session_id())
 }
 
+fn session_state_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "state")
+}
+
+fn session_last_run_id_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_run_id")
+}
+
+fn session_last_request_id_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_request_id")
+}
+
+fn session_last_user_message_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_user_message")
+}
+
+fn session_last_assistant_message_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_assistant_message")
+}
+
+fn session_turn_count_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "turn_count")
+}
+
+fn sync_session_summary(session_id: str, state: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str) -> i32 {
+    ensure_session(session_id)
+    let current_turn_count = session_turn_count(session_id)
+    let payload = session_doc_for(session_id, state, current_turn_count, last_run_id, last_user_message, last_assistant_message, last_request_id, session_tool_count(session_id))
+    return save_session_for(session_id, payload)
+}
+
 fn update_session_summary(session_id: str, state: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str) -> i32 {
     ensure_session(session_id)
-    let current = load_session_json_for(session_id)
-    let parsed = json.parse(current)
-    let current_turn_count = json.get_str(parsed, "turn_count")
+    let current_turn_count = session_turn_count(session_id)
     let payload = session_doc_for(session_id, state, current_turn_count, last_run_id, last_user_message, last_assistant_message, last_request_id, tool_count)
     return save_session_for(session_id, payload)
 }
 
+fn save_session_event_current(session_id: str, event: str, state: str) -> i32 {
+    return save_session_event(session_id, event, state, session_turn_count(session_id))
+}
+
 fn mark_session_turn(session_id: str) -> i32 {
     ensure_session(session_id)
-    append_line(session_turns_path(session_id), "turn\n")
-    let count = "tracked"
+    append_line(session_turns_path(session_id), "turn")
     let current = load_session_json_for(session_id)
     let parsed = json.parse(current)
     let payload = session_doc_for(
         session_id,
-        json.get_str(parsed, "state"),
-        count,
-        json.get_str(parsed, "last_run_id"),
-        json.get_str(parsed, "last_user_message"),
-        json.get_str(parsed, "last_assistant_message"),
-        json.get_str(parsed, "last_request_id"),
-        json.get_str(parsed, "tool_count"),
+        session_state_value(parsed),
+        session_turn_count(session_id),
+        session_last_run_id_value(parsed),
+        session_last_user_message_value(parsed),
+        session_last_assistant_message_value(parsed),
+        session_last_request_id_value(parsed),
+        session_tool_count(session_id),
     )
     return save_session_for(session_id, payload)
 }
 
 fn append_message(session_id: str, role: str, kind: str, content: str, run_id: str, request_id: str) -> i32 {
     ensure_session(session_id)
-    let entry_payload = map.new()
-    discard map.set(entry_payload, "session_id", json.str(normalize_session_id(session_id)))
-    discard map.set(entry_payload, "role", json.str(role))
-    discard map.set(entry_payload, "kind", json.str(kind))
-    discard map.set(entry_payload, "content", json.str(content))
-    discard map.set(entry_payload, "run_id", json.str(run_id))
-    discard map.set(entry_payload, "request_id", json.str(request_id))
-    discard map.set(entry_payload, "recorded_at", json.str(now_label()))
-    let entry = json.object(entry_payload)
-    append_line(session_messages_path(session_id), str.concat(entry, "\n"))
+    let entry = model.types.session_message_entry_json(normalize_session_id(session_id), role, kind, content, run_id, request_id, now_label())
+    append_line(session_messages_path(session_id), entry)
     return 0
 }
 
 fn append_run_link(session_id: str, run_id: str, tool_id: str, status: str) -> i32 {
     ensure_session(session_id)
-    let entry_payload = map.new()
-    discard map.set(entry_payload, "session_id", json.str(normalize_session_id(session_id)))
-    discard map.set(entry_payload, "run_id", json.str(run_id))
-    discard map.set(entry_payload, "tool_id", json.str(tool_id))
-    discard map.set(entry_payload, "status", json.str(status))
-    discard map.set(entry_payload, "recorded_at", json.str(now_label()))
-    let entry = json.object(entry_payload)
-    append_line(session_runs_path(session_id), str.concat(entry, "\n"))
+    let entry = model.types.session_run_link_json(normalize_session_id(session_id), run_id, tool_id, status, now_label())
+    append_line(session_runs_path(session_id), entry)
     return 0
 }
 
@@ -287,11 +362,11 @@ fn load_run_json(run_id: str) -> str {
     ensure_state()
     let path = run_path(run_id)
     if fs.exists(path) == 0 {
-        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("missing"), "updated_at", json.str(now_label()))
+        return model.types.run_state_error_json(run_id, "missing", now_label())
     }
     let payload = fs.read_file(path)
     if payload == "" {
-        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("empty"), "updated_at", json.str(now_label()))
+        return model.types.run_state_error_json(run_id, "empty", now_label())
     }
     return payload
 }

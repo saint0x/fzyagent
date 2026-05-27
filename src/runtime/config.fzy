@@ -53,13 +53,7 @@ fn apply_server_config() -> i32 {
     let host = env_or("AGENT_HOST", "127.0.0.1")
     let port = env_or("AGENT_PORT", "8787")
     let workers = env_or("AGENT_WORKERS", "4")
-    let payload = util.json_obj5(
-        "host", json.str(host),
-        "port", json.str(port),
-        "workers", json.str(workers),
-        "background_mode", json.str(background_mode()),
-        "observability_mode", json.str(observability_mode()),
-    )
+    let payload = model.types.runtime_config_json(host, port, workers, background_mode(), observability_mode())
     fs.write_file(config_path(), payload)
     return 0
 }

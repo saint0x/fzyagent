@@ -9,24 +9,38 @@ fn supervisor_path() -> str {
     return "/tmp/fzyagent/runtime.supervisor.json"
 }
 
+fn supervisor_state_path() -> str {
+    return supervisor_path()
+}
+
 fn supervisor_state_json(phase: str, shutdown: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str("ok"))
-    discard map.set(payload, "phase", json.str(phase))
-    discard map.set(payload, "shutdown_requested", json.str(shutdown))
-    discard map.set(payload, "limits", json.raw(runtime.limits.limits_json()))
-    discard map.set(payload, "sandbox", json.raw(fs.read_file(runtime.sandbox.sandbox_path())))
-    discard map.set(payload, "queue", json.raw(services.tools.queue_summary_json()))
-    return json.object(payload)
+    return model.types.supervisor_state_payload_json(
+        model.types.control_ok_label(),
+        phase,
+        shutdown,
+        runtime.limits.limits_json(),
+        fs.read_file(runtime.sandbox.sandbox_path()),
+        services.tools.queue_summary_json(),
+    )
+}
+
+fn refresh_state() -> i32 {
+    let phase = if shutdown_requested() == 1 { model.types.supervisor_shutdown_label() } else { model.types.supervisor_running_label() }
+    let shutdown = if shutdown_requested() == 1 { "true" } else { "false" }
+    fs.write_file(supervisor_path(), supervisor_state_json(phase, shutdown))
+    return 0
 }
 
 fn configure_limits() -> i32 {
     log.info("runtime.supervisor configure_limits", util.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
     fs.mkdir("/tmp/fzyagent")
+    if fs.exists(shutdown_signal_path()) == 1 {
+        discard fs.remove_file(shutdown_signal_path())
+    }
     runtime.limits.apply_limits()
     runtime.sandbox.apply_default_policy()
     runtime.sandbox.allow_tool_scope()
-    fs.write_file(supervisor_path(), supervisor_state_json("configured", "false"))
+    fs.write_file(supervisor_path(), supervisor_state_json(model.types.supervisor_configured_label(), "false"))
     return 0
 }
 
@@ -36,7 +50,7 @@ fn begin_shutdown() -> i32 {
     runtime.sandbox.deny_tool_scope()
     services.http.graceful_stop()
     runtime.recovery.recover_inflight_jobs()
-    fs.write_file(supervisor_path(), supervisor_state_json("shutdown", "true"))
+    fs.write_file(supervisor_path(), supervisor_state_json(model.types.supervisor_shutdown_label(), "true"))
     return 0
 }
 
@@ -51,7 +65,7 @@ fn run_forever() -> i32 {
     log.info("runtime.supervisor started", util.log_fields2("component", "runtime.supervisor", "phase", "loop_start"))
     loop {
         runtime.events.emit_health_tick()
-        fs.write_file(supervisor_path(), supervisor_state_json("running", if shutdown_requested() == 1 { "true" } else { "false" }))
+        discard refresh_state()
         checkpoint()
     }
 }

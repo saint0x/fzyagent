@@ -34,6 +34,7 @@ fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
         let agent_handle = spawn_ctx(agent.run_loop, 102)
         detach(agent_handle)
     }
+    discard supervisor.refresh_state()
     if log_enabled == 1 {
         log.info("runtime.start complete", util.log_fields2("component", "runtime", "phase", "start_complete"))
     }

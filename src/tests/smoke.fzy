@@ -70,6 +70,11 @@ test "det_registry" {
 
 test "det_parallel_tools" {
     services.tools.init_tool_queue();
+    services.tools.enqueue_tool_named("bash", "queue_bash_latest");
+    services.tools.process_background();
+    services.tools.monitor_background();
+    services.tools.cancel_tool_run();
+    services.tools.kill_background();
     services.tools.run_parallel();
     services.tools.pipe_stdout_events();
     services.tools.pipe_stderr_events();
@@ -82,9 +87,6 @@ test "det_http_routes" {
     services.web.boot();
     services.web.configure_listener();
     services.web.start_listener();
-    services.web.parse_request_line();
-    services.web.parse_headers();
-    services.web.parse_body();
     services.http.configure_server();
     services.http.accept_once();
     services.http.accept_and_dispatch();

@@ -48,48 +48,44 @@ fn default_input_schema() -> str {
     return json.object(schema)
 }
 
+fn schema_string_json() -> str {
+    return util.json_obj1("type", json.str("string"))
+}
+
+fn schema_object_json() -> str {
+    return util.json_obj1("type", json.str("object"))
+}
+
+fn schema_array_items_json(items_json: str) -> str {
+    return util.json_obj2("type", json.str("array"), "items", json.raw(items_json))
+}
+
+fn required1(a: str) -> ListHandle {
+    let required = list.new()
+    discard list.push(required, json.str(a))
+    return required
+}
+
+fn object_schema_json(properties: MapHandle, required: ListHandle) -> str {
+    let schema = map.new()
+    discard map.set(schema, "type", json.str("object"))
+    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    if list.len(required) > 0 {
+        discard map.set(schema, "required", json.raw(json.array(required)))
+    }
+    return json.object(schema)
+}
+
 fn built_tool_json(tool_id: str, description: str, kind: str, mode: str, execution_model: str, supports_sequence: str, supports_parallel: str, input_schema_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "id", json.str(tool_id))
-    discard map.set(payload, "name", json.str(tool_id))
-    discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "kind", json.str(kind))
-    discard map.set(payload, "health", json.str("ready"))
-    discard map.set(payload, "mode", json.str(mode))
-    discard map.set(payload, "origin", json.str("builtin"))
-    discard map.set(payload, "execution_model", json.str(execution_model))
-    discard map.set(payload, "supports_sequence", json.raw(supports_sequence))
-    discard map.set(payload, "supports_parallel", json.raw(supports_parallel))
-    discard map.set(payload, "rpc_protocol", json.str(api.rpc.tool_protocol_version()))
-    discard map.set(payload, "transport", json.str("http+routed-rpc"))
-    discard map.set(payload, "input_schema", json.raw(input_schema_json))
-    return json.object(payload)
+    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "builtin", execution_model, supports_sequence, supports_parallel, api.rpc.tool_protocol_version(), "http+routed-rpc", input_schema_json)
 }
 
 fn anthropic_tool_json(tool_id: str, description: str, input_schema_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "name", json.str(tool_id))
-    discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "input_schema", json.raw(input_schema_json))
-    return json.object(payload)
+    return model.types.provider_tool_json(tool_id, description, input_schema_json)
 }
 
 fn custom_tool_json(tool_id: str, description: str, kind: str, mode: str, input_schema_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "id", json.str(tool_id))
-    discard map.set(payload, "name", json.str(tool_id))
-    discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "kind", json.str(kind))
-    discard map.set(payload, "health", json.str("ready"))
-    discard map.set(payload, "mode", json.str(mode))
-    discard map.set(payload, "origin", json.str("custom"))
-    discard map.set(payload, "execution_model", json.str("single"))
-    discard map.set(payload, "supports_sequence", json.raw("true"))
-    discard map.set(payload, "supports_parallel", json.raw("true"))
-    discard map.set(payload, "rpc_protocol", json.str(api.rpc.tool_protocol_version()))
-    discard map.set(payload, "transport", json.str("http+routed-rpc"))
-    discard map.set(payload, "input_schema", json.raw(input_schema_json))
-    return json.object(payload)
+    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "custom", "single", "true", "true", api.rpc.tool_protocol_version(), "http+routed-rpc", input_schema_json)
 }
 
 fn append_tool_pair(tools: ListHandle, anthropic: ListHandle, tool_json: str, anthropic_json: str) -> i32 {
@@ -100,124 +96,96 @@ fn append_tool_pair(tools: ListHandle, anthropic: ListHandle, tool_json: str, an
 
 fn tool_schema_command() -> str {
     let properties = map.new()
-    discard map.set(properties, "command", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("command"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "command", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("command"))
 }
 
 fn tool_schema_grep() -> str {
     let properties = map.new()
-    discard map.set(properties, "pattern", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "target", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("pattern"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "pattern", json.raw(schema_string_json()))
+    discard map.set(properties, "target", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("pattern"))
+}
+
+fn tool_schema_queue_enqueue() -> str {
+    let properties = map.new()
+    discard map.set(properties, "queue_tool_id", json.raw(schema_string_json()))
+    discard map.set(properties, "queued_run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "tool_input", json.raw(schema_object_json()))
+    return object_schema_json(properties, required1("queue_tool_id"))
 }
 
 fn tool_schema_steps() -> str {
     let step_properties = map.new()
-    discard map.set(step_properties, "step_id", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(step_properties, "tool_id", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(step_properties, "tool_input", json.raw(util.json_obj1("type", json.str("object"))))
-    let step_required = list.new()
-    discard list.push(step_required, json.str("tool_id"))
-    let step_item = map.new()
-    discard map.set(step_item, "type", json.str("object"))
-    discard map.set(step_item, "properties", json.raw(json.object(step_properties)))
-    discard map.set(step_item, "required", json.raw(json.array(step_required)))
+    discard map.set(step_properties, "step_id", json.raw(schema_string_json()))
+    discard map.set(step_properties, "tool_id", json.raw(schema_string_json()))
+    discard map.set(step_properties, "tool_input", json.raw(schema_object_json()))
+    let step_item = object_schema_json(step_properties, required1("tool_id"))
     let properties = map.new()
-    discard map.set(properties, "steps", json.raw(util.json_obj2("type", json.str("array"), "items", json.raw(json.object(step_item)))))
-    let required = list.new()
-    discard list.push(required, json.str("steps"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "steps", json.raw(schema_array_items_json(step_item)))
+    return object_schema_json(properties, required1("steps"))
 }
 
 fn tool_schema_aegis() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "url", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "query", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "eval_js", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "commands_json", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("action"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "action", json.raw(schema_string_json()))
+    discard map.set(properties, "url", json.raw(schema_string_json()))
+    discard map.set(properties, "query", json.raw(schema_string_json()))
+    discard map.set(properties, "eval_js", json.raw(schema_string_json()))
+    discard map.set(properties, "commands_json", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_toolsmith() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "tool_id", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "description", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "command_template", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "input_schema_json", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "kind", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "mode", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("action"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "action", json.raw(schema_string_json()))
+    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
+    discard map.set(properties, "description", json.raw(schema_string_json()))
+    discard map.set(properties, "command_template", json.raw(schema_string_json()))
+    discard map.set(properties, "input_schema_json", json.raw(schema_string_json()))
+    discard map.set(properties, "kind", json.raw(schema_string_json()))
+    discard map.set(properties, "mode", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_promptsmith() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "content", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("action"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "action", json.raw(schema_string_json()))
+    discard map.set(properties, "content", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_fzydoc() -> str {
     let properties = map.new()
-    discard map.set(properties, "query", json.raw(util.json_obj1("type", json.str("string"))))
-    discard map.set(properties, "max_lines", json.raw(util.json_obj1("type", json.str("string"))))
-    let required = list.new()
-    discard list.push(required, json.str("query"))
-    let schema = map.new()
-    discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "required", json.raw(json.array(required)))
-    return json.object(schema)
+    discard map.set(properties, "query", json.raw(schema_string_json()))
+    discard map.set(properties, "max_lines", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("query"))
+}
+
+fn tool_schema_runtime_control() -> str {
+    return default_input_schema()
 }
 
 fn append_builtin_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
     let empty_schema = default_input_schema()
     let command_schema = tool_schema_command()
     let grep_schema = tool_schema_grep()
+    let queue_enqueue_schema = tool_schema_queue_enqueue()
     let steps_schema = tool_schema_steps()
     let aegis_schema = tool_schema_aegis()
     let toolsmith_schema = tool_schema_toolsmith()
     let promptsmith_schema = tool_schema_promptsmith()
     let fzydoc_schema = tool_schema_fzydoc()
+    let runtime_control_schema = tool_schema_runtime_control()
 
     discard append_tool_pair(tools, anthropic, built_tool_json("bash", "Run a shell command in the shared workspace.", "process", "single", "single", "true", "true", command_schema), anthropic_tool_json("bash", "Run a shell command in the shared workspace.", command_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("parallel_bash", "Run two shell commands in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_bash", "Run two shell commands in parallel.", empty_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("grep_search", "Search the workspace with grep.", "process", "search", "single", "true", "true", grep_schema), anthropic_tool_json("grep_search", "Search the workspace with grep.", grep_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("queue_status", "Inspect the background queue control-plane state.", "workflow", "control", "single", "true", "true", empty_schema), anthropic_tool_json("queue_status", "Inspect the background queue control-plane state.", empty_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("queue_enqueue", "Queue a tool request for later background execution.", "workflow", "control", "single", "true", "false", queue_enqueue_schema), anthropic_tool_json("queue_enqueue", "Queue a tool request for later background execution.", queue_enqueue_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("queue_spawn", "Spawn detached background processing for queued work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_spawn", "Spawn detached background processing for queued work.", empty_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("queue_process", "Drain queued work through the background executor.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_process", "Drain queued work through the background executor.", empty_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("queue_cancel", "Request cancellation for queued background work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_cancel", "Request cancellation for queued background work.", empty_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("parallel_grep", "Run two grep searches in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_grep", "Run two grep searches in parallel.", empty_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", "workflow", "sequence", "sequential", "true", "false", steps_schema), anthropic_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", steps_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", "workflow", "parallel", "parallel", "false", "true", steps_schema), anthropic_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", steps_schema))
@@ -230,6 +198,9 @@ fn append_builtin_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
     discard append_tool_pair(tools, anthropic, built_tool_json("toolsmith", "Create and inspect custom runtime tools.", "workflow", "authoring", "single", "true", "false", toolsmith_schema), anthropic_tool_json("toolsmith", "Create and inspect custom runtime tools.", toolsmith_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("promptsmith", "Inspect and update the agent system prompt.", "workflow", "authoring", "single", "true", "false", promptsmith_schema), anthropic_tool_json("promptsmith", "Inspect and update the agent system prompt.", promptsmith_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("fzydoc", "Search local FZY docs and showcase material.", "docs", "analysis", "single", "true", "true", fzydoc_schema), anthropic_tool_json("fzydoc", "Search local FZY docs and showcase material.", fzydoc_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", runtime_control_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", runtime_control_schema))
+    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", runtime_control_schema))
     discard append_tool_pair(tools, anthropic, built_tool_json("all", "Run the default parallel tool set.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("all", "Run the default parallel tool set.", empty_schema))
     return 0
 }
@@ -276,20 +247,12 @@ fn build_registry_payload() -> str {
         "deterministic", json.str("true"),
         "project", json.str("fzyagent"),
     )
-    let payload = map.new()
-    discard map.set(payload, "status", json.str("ok"))
-    discard map.set(payload, "tools", json.raw(json.array(tools)))
-    discard map.set(payload, "meta", json.raw(meta))
     fs.write_file(anthropic_tools_array_path(), json.array(anthropic))
-    return json.object(payload)
+    return model.types.registry_payload_json(json.array(tools), meta)
 }
 
 fn registry_status(message: str) -> str {
-    return util.json_obj3(
-        "status", json.str("ok"),
-        "updated_at", json.str(str.from_i32(time.now())),
-        "message", json.str(message),
-    )
+    return model.types.registry_status_json(message, str.from_i32(time.now()))
 }
 
 fn tool_handle(parsed: JsonHandle, idx: i32) -> JsonHandle {
@@ -413,21 +376,8 @@ fn export_index_and_summary() -> i32 {
         "builtin", json.str(str.from_i32(builtin)),
         "custom", json.str(str.from_i32(custom)),
     )
-    let summary = util.json_obj6(
-        "status", json.str("ok"),
-        "tool_count", json.str(str.from_i32(total)),
-        "healthy_count", json.str(str.from_i32(healthy_tools)),
-        "origins", json.raw(origin_counts),
-        "kinds", json.raw(mode_counts),
-        "tool_ids", json.raw(json.array(ids)),
-    )
-    let hints = util.json_obj5(
-        "status", json.str("ok"),
-        "search_and_docs", json.raw(json.array(search)),
-        "browser_ops", json.raw(json.array(browser)),
-        "authoring", json.raw(json.array(authoring)),
-        "workflows", json.raw(json.array(workflows)),
-    )
+    let summary = model.types.registry_summary_json(str.from_i32(total), str.from_i32(healthy_tools), origin_counts, mode_counts, json.array(ids))
+    let hints = model.types.registry_hints_json(json.array(search), json.array(browser), json.array(authoring), json.array(workflows))
     fs.write_file(summary_path(), summary)
     fs.write_file(tool_index_path(), json.object(index))
     fs.write_file(hints_path(), hints)
@@ -498,13 +448,13 @@ fn get_tool_json(tool_id: str) -> str {
     discard get_tool()
     let payload = fs.read_file(tool_index_path())
     if payload == "" {
-        return util.json_obj3("status", json.str("error"), "tool_id", json.str(tool_id), "message", json.str("registry_unavailable"))
+        return model.types.registry_lookup_error_json(tool_id, "registry_unavailable")
     }
     let parsed = json.parse(payload)
     let tool = json.get(parsed, tool_id)
     let raw = json.get_str(tool, "raw")
     if raw == "" {
-        return util.json_obj3("status", json.str("error"), "tool_id", json.str(tool_id), "message", json.str("tool_missing"))
+        return model.types.registry_lookup_error_json(tool_id, "tool_missing")
     }
     return raw
 }
@@ -613,12 +563,7 @@ fn audit_evict() -> i32 {
 
 fn record_audit(event: str) -> i32 {
     ensure_state_dir()
-    let line = util.json_obj4(
-        "event", json.str(event),
-        "status", json.str("ok"),
-        "clock", json.str(str.from_i32(time.now())),
-        "summary_path", json.str(summary_path()),
-    )
-    discard storage.atomic_append(audit_path(), str.concat(line, "\n"))
+    let line = model.types.audit_record_json(event, model.types.control_ok_label(), str.from_i32(time.now()), summary_path())
+    discard storage.atomic_append(audit_path(), line)
     return 0
 }

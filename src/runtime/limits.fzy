@@ -25,13 +25,7 @@ fn memory_limit() -> str {
 }
 
 fn limits_json() -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str("ok"))
-    discard map.set(payload, "thread_limit", json.str(thread_limit()))
-    discard map.set(payload, "queue_limit", json.str(queue_limit()))
-    discard map.set(payload, "memory_limit", json.str(memory_limit()))
-    discard map.set(payload, "policy", json.str("configured"))
-    return json.object(payload)
+    return model.types.runtime_limits_json(thread_limit(), queue_limit(), memory_limit(), "configured")
 }
 
 fn apply_limits() -> i32 {

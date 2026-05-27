@@ -10,12 +10,7 @@ fn emit_event(name: str, component: str) -> i32 {
         return 0
     }
     fs.mkdir("/tmp/fzyagent")
-    let payload = util.json_obj4(
-        "event", json.str(name),
-        "component", json.str(component),
-        "clock", json.str("sampled"),
-        "status", json.str("ok"),
-    )
+    let payload = model.types.runtime_event_json(name, component, "sampled", model.types.control_ok_label())
     fs.write_file(events_path(), payload)
     pulse()
     return 0

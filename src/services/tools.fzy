@@ -17,6 +17,11 @@ enum DispatchKind {
     DispatchAegis,
     DispatchBash,
     DispatchGrepSearch,
+    DispatchQueueStatus,
+    DispatchQueueEnqueue,
+    DispatchQueueSpawn,
+    DispatchQueueProcess,
+    DispatchQueueCancel,
     DispatchParallelBash,
     DispatchParallelGrep,
     DispatchReleaseAudit,
@@ -27,6 +32,9 @@ enum DispatchKind {
     DispatchToolsmith,
     DispatchPromptsmith,
     DispatchFzydoc,
+    DispatchRuntimeCheckpoint,
+    DispatchRuntimeRecover,
+    DispatchRuntimeShutdown,
     DispatchToolSequence,
     DispatchToolParallel,
     DispatchAll,
@@ -77,6 +85,53 @@ fn queue_summary_path() -> str {
 
 fn queue_cancel_path() -> str {
     return "/tmp/fzyagent/queue/cancel.signal"
+}
+
+fn queue_status_run_path() -> str {
+    return "/tmp/fzyagent/runs/queue_status.json"
+}
+
+fn queue_enqueue_run_path() -> str {
+    return "/tmp/fzyagent/runs/queue_enqueue.json"
+}
+
+fn queue_process_run_path() -> str {
+    return "/tmp/fzyagent/runs/queue_process.json"
+}
+
+fn queue_spawn_run_path() -> str {
+    return "/tmp/fzyagent/runs/queue_spawn.json"
+}
+
+fn queue_cancel_run_path() -> str {
+    return "/tmp/fzyagent/runs/queue_cancel.json"
+}
+
+fn runtime_checkpoint_run_path() -> str {
+    return "/tmp/fzyagent/runs/runtime_checkpoint.json"
+}
+
+fn runtime_recover_run_path() -> str {
+    return "/tmp/fzyagent/runs/runtime_recover.json"
+}
+
+fn runtime_shutdown_run_path() -> str {
+    return "/tmp/fzyagent/runs/runtime_shutdown.json"
+}
+
+fn queue_request_dir() -> str {
+    return "/tmp/fzyagent/queue/requests"
+}
+
+fn queue_request_path(run_id: str) -> str {
+    return str.concat3("/tmp/fzyagent/queue/requests/", run_id, ".json")
+}
+
+fn clear_queue_cancel_signal() -> i32 {
+    if fs.exists(queue_cancel_path()) == 1 {
+        discard fs.remove_file(queue_cancel_path())
+    }
+    return 0
 }
 
 fn parallel_step_limit() -> i32 {
@@ -322,6 +377,21 @@ fn dispatch_kind(tool_id: str) -> DispatchKind {
     if tool_id == "grep_search" {
         return DispatchKind::DispatchGrepSearch
     }
+    if tool_id == "queue_status" {
+        return DispatchKind::DispatchQueueStatus
+    }
+    if tool_id == "queue_enqueue" {
+        return DispatchKind::DispatchQueueEnqueue
+    }
+    if tool_id == "queue_spawn" {
+        return DispatchKind::DispatchQueueSpawn
+    }
+    if tool_id == "queue_process" {
+        return DispatchKind::DispatchQueueProcess
+    }
+    if tool_id == "queue_cancel" {
+        return DispatchKind::DispatchQueueCancel
+    }
     if tool_id == "parallel_bash" {
         return DispatchKind::DispatchParallelBash
     }
@@ -351,6 +421,15 @@ fn dispatch_kind(tool_id: str) -> DispatchKind {
     }
     if tool_id == "fzydoc" {
         return DispatchKind::DispatchFzydoc
+    }
+    if tool_id == "runtime_checkpoint" {
+        return DispatchKind::DispatchRuntimeCheckpoint
+    }
+    if tool_id == "runtime_recover" {
+        return DispatchKind::DispatchRuntimeRecover
+    }
+    if tool_id == "runtime_shutdown" {
+        return DispatchKind::DispatchRuntimeShutdown
     }
     if tool_id == "tool_sequence" {
         return DispatchKind::DispatchToolSequence
@@ -465,6 +544,30 @@ fn last_run_path_for(tool_id: str) -> str {
     if normalized == "grep_search" {
         return "/tmp/fzyagent/runs/grep_search.json"
     }
+    if normalized == "queue_status" {
+        return queue_status_run_path()
+    }
+    if normalized == "queue_enqueue" {
+        return queue_enqueue_run_path()
+    }
+    if normalized == "queue_process" {
+        return queue_process_run_path()
+    }
+    if normalized == "queue_spawn" {
+        return queue_spawn_run_path()
+    }
+    if normalized == "queue_cancel" {
+        return queue_cancel_run_path()
+    }
+    if normalized == "runtime_checkpoint" {
+        return runtime_checkpoint_run_path()
+    }
+    if normalized == "runtime_recover" {
+        return runtime_recover_run_path()
+    }
+    if normalized == "runtime_shutdown" {
+        return runtime_shutdown_run_path()
+    }
     if normalized == "timeout_probe" {
         return "/tmp/fzyagent/runs/timeout_probe.json"
     }
@@ -517,6 +620,30 @@ fn run_id_for_tool(tool_id: str) -> str {
     }
     if normalized == "grep_search" {
         return "grep_search_latest"
+    }
+    if normalized == "queue_status" {
+        return "queue_status_latest"
+    }
+    if normalized == "queue_enqueue" {
+        return "queue_enqueue_latest"
+    }
+    if normalized == "queue_process" {
+        return "queue_process_latest"
+    }
+    if normalized == "queue_spawn" {
+        return "queue_spawn_latest"
+    }
+    if normalized == "queue_cancel" {
+        return "queue_cancel_latest"
+    }
+    if normalized == "runtime_checkpoint" {
+        return "runtime_checkpoint_latest"
+    }
+    if normalized == "runtime_recover" {
+        return "runtime_recover_latest"
+    }
+    if normalized == "runtime_shutdown" {
+        return "runtime_shutdown_latest"
     }
     if normalized == "timeout_probe" {
         return "timeout_probe_latest"
@@ -1096,27 +1223,53 @@ fn boot_runner() -> i32 {
     return 0
 }
 
+fn first_line(text_value: str) -> str {
+    if text_value == "" {
+        return ""
+    }
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            return str.slice(text_value, 0, idx)
+        }
+        idx += 1
+    }
+    return text_value
+}
+
+fn drop_first_line(text_value: str) -> str {
+    if text_value == "" {
+        return ""
+    }
+    let mut idx: i32 = 0
+    while idx < str.len(text_value) {
+        if str.slice(text_value, idx, idx + 1) == "\n" {
+            return str.slice(text_value, idx + 1, str.len(text_value))
+        }
+        idx += 1
+    }
+    return ""
+}
+
 fn queue_summary_doc(pending_count: i32, active_count: i32, completed_count: i32, cancelled_count: i32, last_tool_id: str, last_status: str) -> str {
-    return util.json_obj6(
-        "pending_count", json.str(str.from_i32(pending_count)),
-        "active_count", json.str(str.from_i32(active_count)),
-        "completed_count", json.str(str.from_i32(completed_count)),
-        "cancelled_count", json.str(str.from_i32(cancelled_count)),
-        "last_tool_id", json.str(last_tool_id),
-        "last_status", json.str(last_status),
-    )
+    return model.types.queue_summary_doc_json(pending_count, active_count, completed_count, cancelled_count, last_tool_id, last_status)
 }
 
 fn queue_summary_json() -> str {
     let payload = safe_read(queue_summary_path())
     if payload == "{}" {
-        return queue_summary_doc(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "", "idle")
+        return queue_summary_doc(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "", model.types.queue_idle_label())
     }
     return payload
 }
 
+fn queue_status_payload(status: str, phase: str) -> str {
+    return model.types.queue_tool_payload_json("queue_status", status, "", queue_summary_json(), "", "", "", "", phase, "")
+}
+
 fn write_queue_summary(pending_count: i32, active_count: i32, completed_count: i32, cancelled_count: i32, last_tool_id: str, last_status: str) -> i32 {
     fs.write_file(queue_summary_path(), queue_summary_doc(pending_count, active_count, completed_count, cancelled_count, last_tool_id, last_status))
+    discard runtime.supervisor.refresh_state()
     return 0
 }
 
@@ -1132,6 +1285,9 @@ fn queue_event(tool_id: str, run_id: str, state: str, status: str) -> str {
 
 fn init_tool_queue() -> i32 {
     ensure_dirs()
+    let ok_status = model.types.control_ok_label()
+    let boot_phase = model.types.queue_boot_label()
+    fs.mkdir(queue_request_dir())
     if fs.exists(queue_pending_path()) == 0 {
         fs.write_file(queue_pending_path(), "")
     }
@@ -1139,20 +1295,27 @@ fn init_tool_queue() -> i32 {
         fs.write_file(queue_active_path(), "")
     }
     if fs.exists(queue_summary_path()) == 0 {
-        discard write_queue_summary(0, 0, 0, 0, "", "idle")
+        discard write_queue_summary(0, 0, 0, 0, "", model.types.queue_idle_label())
     }
     if fs.exists(queue_monitor_path()) == 0 {
-        fs.write_file(queue_monitor_path(), util.json_obj3("status", json.str("ok"), "phase", json.str("boot"), "queue", json.raw(safe_read(queue_summary_path()))))
+        fs.write_file(queue_monitor_path(), model.types.queue_state_payload_json(ok_status, boot_phase, safe_read(queue_summary_path()), "", "", "", "", "", ""))
     }
     return 0
 }
 
-fn enqueue_tool_named(tool_id: str, run_id: str) -> i32 {
+fn enqueue_tool_request(tool_id: str, run_id: str, input_raw: str) -> i32 {
     discard init_tool_queue()
-    discard storage.atomic_append(queue_pending_path(), str.concat(queue_event(tool_id, run_id, "pending", "queued"), "\n"))
+    discard clear_queue_cancel_signal()
+    let queued_phase = model.types.queue_queued_label()
+    fs.write_file(queue_request_path(run_id), if input_raw == "" { "{}" } else { input_raw })
+    discard storage.atomic_append(queue_pending_path(), queue_event(tool_id, run_id, model.types.queue_record_pending_label(), queued_phase))
     QUEUE_PENDING_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, "queued")
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, queued_phase)
     return 0
+}
+
+fn enqueue_tool_named(tool_id: str, run_id: str) -> i32 {
+    return enqueue_tool_request(tool_id, run_id, "{}")
 }
 
 fn enqueue_tool() -> i32 {
@@ -1161,7 +1324,7 @@ fn enqueue_tool() -> i32 {
 
 fn dequeue_tool_named(tool_id: str, run_id: str, status: str) -> i32 {
     discard init_tool_queue()
-    discard storage.atomic_append(queue_active_path(), str.concat(queue_event(tool_id, run_id, "completed", status), "\n"))
+    discard storage.atomic_append(queue_active_path(), queue_event(tool_id, run_id, model.types.queue_record_completed_label(), status))
     if QUEUE_PENDING_COUNT > 0 {
         QUEUE_PENDING_COUNT -= 1
     }
@@ -1179,36 +1342,213 @@ fn dequeue_tool() -> i32 {
 
 fn process_background() -> i32 {
     discard init_tool_queue()
-    let payload = util.json_obj4(
-        "status", json.str("ok"),
-        "phase", json.str("process_background"),
-        "queue", json.raw(queue_summary_json()),
-        "updated_at", json.str(str.from_i32(time.now())),
-    )
+    let ok_status = model.types.control_ok_label()
+    let cancelled_phase = model.types.queue_cancelled_label()
+    let idle_phase = model.types.queue_idle_label()
+    let running_phase = model.types.queue_running_label()
+    let processed_phase = model.types.queue_processed_label()
+    if fs.exists(queue_cancel_path()) == 1 {
+        let payload = model.types.queue_state_payload_json(ok_status, cancelled_phase, queue_summary_json(), str.from_i32(time.now()), "", "", "", "", "")
+        fs.write_file(queue_monitor_path(), payload)
+        return 0
+    }
+    let pending = fs.read_file(queue_pending_path())
+    let line = first_line(pending)
+    if line == "" {
+        let idle_payload = model.types.queue_state_payload_json(ok_status, idle_phase, queue_summary_json(), str.from_i32(time.now()), "", "", "", "", "")
+        fs.write_file(queue_monitor_path(), idle_payload)
+        return 0
+    }
+    let event = json.parse(line)
+    let tool_id = json.get_str(event, "tool_id")
+    let run_id = json.get_str(event, "run_id")
+    fs.write_file(queue_pending_path(), drop_first_line(pending))
+    if QUEUE_PENDING_COUNT > 0 {
+        QUEUE_PENDING_COUNT -= 1
+    }
+    QUEUE_ACTIVE_COUNT += 1
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, running_phase)
+    let input_raw = safe_read(queue_request_path(run_id))
+    let status_code = dispatch_tool_request(tool_id, input_raw)
+    let final_status = status_from_exit_code(status_code)
+    discard dequeue_tool_named(tool_id, run_id, final_status)
+    let result = last_run_json(tool_id)
+    let response = api.rpc.tool_response_json("", tool_id, run_id, status_code, last_run_artifact_path(tool_id), result)
+    discard persistence.save_named_run(run_id, response)
+    let payload = model.types.queue_state_payload_json(ok_status, processed_phase, queue_summary_json(), str.from_i32(time.now()), "", tool_id, run_id, final_status, "")
     fs.write_file(queue_monitor_path(), payload)
-    return 0
+    return 1
+}
+
+fn process_background_worker() -> i32 {
+    let mut processed_count: i32 = 0
+    let ok_status = model.types.control_ok_label()
+    loop {
+        let outcome = process_background()
+        if fs.exists(queue_cancel_path()) == 1 {
+            return 0
+        }
+        if outcome == 0 {
+            return 0
+        }
+        processed_count += 1
+        if processed_count >= 64 {
+            let payload = model.types.queue_state_payload_json(ok_status, model.types.queue_worker_limit_label(), queue_summary_json(), "", "", "", "", "", str.from_i32(processed_count))
+            fs.write_file(queue_monitor_path(), payload)
+            return 0
+        }
+        checkpoint()
+    }
 }
 
 fn spawn_background() -> i32 {
     discard init_tool_queue()
-    QUEUE_ACTIVE_COUNT += QUEUE_PENDING_COUNT
-    QUEUE_PENDING_COUNT = 0
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", "spawned")
-    discard process_background()
+    let spawned_phase = model.types.queue_spawned_label()
+    if fs.read_file(queue_pending_path()) == "" {
+        discard monitor_background()
+        return 0
+    }
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", spawned_phase)
+    let handle = spawn(process_background_worker)
+    detach(handle)
     return 0
 }
 
 fn monitor_background() -> i32 {
     discard init_tool_queue()
-    let payload = util.json_obj5(
-        "status", json.str("ok"),
-        "phase", json.str("monitor_background"),
-        "queue", json.raw(queue_summary_json()),
-        "cancel_signal", json.str(if fs.exists(queue_cancel_path()) == 1 { "present" } else { "absent" }),
-        "updated_at", json.str(str.from_i32(time.now())),
-    )
+    let ok_status = model.types.control_ok_label()
+    let monitor_phase = model.types.queue_monitor_label()
+    let cancel_signal = if fs.exists(queue_cancel_path()) == 1 { "present" } else { "absent" }
+    let payload = model.types.queue_state_payload_json(ok_status, monitor_phase, queue_summary_json(), str.from_i32(time.now()), cancel_signal, "", "", "", "")
     fs.write_file(queue_monitor_path(), payload)
     return 0
+}
+
+fn run_queue_status() -> i32 {
+    discard init_tool_queue()
+    let ok_status = model.types.control_ok_label()
+    let status_phase = model.types.queue_status_view_label()
+    let payload = queue_status_payload(ok_status, status_phase)
+    fs.write_file(queue_status_run_path(), payload)
+    return 0
+}
+
+fn run_queue_enqueue(queue_tool_id: str, run_id: str, input_raw: str) -> i32 {
+    discard init_tool_queue()
+    let ok_status = model.types.control_ok_label()
+    let error_status = model.types.control_error_label()
+    if queue_tool_id == "" {
+        let payload = model.types.queue_tool_payload_json("queue_enqueue", error_status, "queue_tool_id is required", queue_summary_json(), "", "", "", "", "", "")
+        fs.write_file(queue_enqueue_run_path(), payload)
+        return 13
+    }
+    let effective_run_id = if run_id == "" { str.concat(queue_tool_id, "_queued_latest") } else { run_id }
+    discard enqueue_tool_request(queue_tool_id, effective_run_id, input_raw)
+    let payload = model.types.queue_tool_payload_json("queue_enqueue", ok_status, "", queue_summary_json(), "", "", queue_tool_id, effective_run_id, "", "")
+    fs.write_file(queue_enqueue_run_path(), payload)
+    return 0
+}
+
+fn run_queue_process() -> i32 {
+    discard init_tool_queue()
+    let before = queue_summary_json()
+    let worker_status = process_background_worker()
+    let status_label = if worker_status == 0 {
+        model.types.control_ok_label()
+    } else {
+        model.types.control_error_label()
+    }
+    let payload = model.types.queue_tool_payload_json("queue_process", status_label, "", "", before, queue_summary_json(), "", "", "", "")
+    fs.write_file(queue_process_run_path(), payload)
+    return worker_status
+}
+
+fn run_queue_spawn() -> i32 {
+    discard init_tool_queue()
+    let before = queue_summary_json()
+    let status_code = spawn_background()
+    let status_label = if status_code == 0 {
+        model.types.control_ok_label()
+    } else {
+        model.types.control_error_label()
+    }
+    let payload = model.types.queue_tool_payload_json("queue_spawn", status_label, "", "", before, queue_summary_json(), "", "", "", "")
+    fs.write_file(queue_spawn_run_path(), payload)
+    return status_code
+}
+
+fn run_queue_cancel() -> i32 {
+    discard init_tool_queue()
+    let cancelled_phase = model.types.queue_cancelled_label()
+    let ok_status = model.types.control_ok_label()
+    let pending = fs.read_file(queue_pending_path())
+    let mut cancelled: i32 = 0
+    let mut remaining = pending
+    while first_line(remaining) != "" {
+        cancelled += 1
+        remaining = drop_first_line(remaining)
+    }
+    fs.write_file(queue_pending_path(), "")
+    fs.write_file(queue_cancel_path(), "cancel")
+    QUEUE_PENDING_COUNT = 0
+    QUEUE_ACTIVE_COUNT = 0
+    QUEUE_CANCELLED_COUNT += cancelled
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", cancelled_phase)
+    discard monitor_background()
+    let payload = model.types.queue_tool_payload_json("queue_cancel", ok_status, "queue cancellation requested", queue_summary_json(), "", "", "", "", "", "")
+    fs.write_file(queue_cancel_run_path(), payload)
+    return 0
+}
+
+fn run_runtime_checkpoint() -> i32 {
+    discard runtime.recovery.save_checkpoint()
+    discard runtime.supervisor.refresh_state()
+    let payload = model.types.runtime_control_payload_json(
+        "runtime_checkpoint",
+        model.types.control_ok_label(),
+        "checkpoint_saved",
+        "",
+        safe_read("/tmp/fzyagent/runtime.checkpoint.json"),
+        "",
+        safe_read(runtime.supervisor.supervisor_state_path()),
+        "",
+    )
+    fs.write_file(runtime_checkpoint_run_path(), payload)
+    return 0
+}
+
+fn run_runtime_recover() -> i32 {
+    let status_code = runtime.recovery.recover_inflight_jobs()
+    let status = if status_code == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }
+    let payload = model.types.runtime_control_payload_json(
+        "runtime_recover",
+        status,
+        "recovered",
+        "",
+        safe_read("/tmp/fzyagent/runtime.checkpoint.json"),
+        safe_read("/tmp/fzyagent/runtime.recovery.json"),
+        safe_read(runtime.supervisor.supervisor_state_path()),
+        "",
+    )
+    fs.write_file(runtime_recover_run_path(), payload)
+    return status_code
+}
+
+fn run_runtime_shutdown() -> i32 {
+    let status_code = runtime.supervisor.begin_shutdown()
+    let status = if status_code == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }
+    let payload = model.types.runtime_control_payload_json(
+        "runtime_shutdown",
+        status,
+        "shutdown_requested",
+        "",
+        safe_read("/tmp/fzyagent/runtime.checkpoint.json"),
+        safe_read("/tmp/fzyagent/runtime.recovery.json"),
+        safe_read(runtime.supervisor.supervisor_state_path()),
+        safe_read("/tmp/fzyagent/http.shutdown.json"),
+    )
+    fs.write_file(runtime_shutdown_run_path(), payload)
+    return status_code
 }
 
 fn spawn_probe_worker() -> i32 {
@@ -1220,7 +1560,7 @@ fn kill_background() -> i32 {
     fs.write_file(queue_cancel_path(), "kill")
     QUEUE_ACTIVE_COUNT = 0
     QUEUE_CANCELLED_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", "killed")
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", model.types.queue_killed_label())
     discard monitor_background()
     return 0
 }
@@ -1450,6 +1790,9 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
     let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
     let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
+    let nested_queue_input_raw = json.get_str(json.get(nested_input, "tool_input"), "raw")
+    let queue_tool_id = if json.get_str(parsed, "queue_tool_id") == "" { json.get_str(nested_input, "queue_tool_id") } else { json.get_str(parsed, "queue_tool_id") }
+    let queued_run_id = if json.get_str(parsed, "queued_run_id") == "" { json.get_str(nested_input, "queued_run_id") } else { json.get_str(parsed, "queued_run_id") }
     let requested_tool_id = json.get_str(parsed, "tool_id")
     let create_tool_id = json.get_str(parsed, "create_tool_id")
     let description = json.get_str(parsed, "description")
@@ -1468,11 +1811,21 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     }
     let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
     let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
+    let queued_input_raw = if nested_queue_input_raw == "" {
+        if tool_input_raw == "" { "{}" } else { tool_input_raw }
+    } else {
+        nested_queue_input_raw
+    }
     let kind_tag = dispatch_kind(tool_id)
     match kind_tag {
         DispatchKind::DispatchAegis => return run_aegis_with_args(effective_action, url, query, eval_js, effective_commands),
         DispatchKind::DispatchBash => return run_bash_with_command(command),
         DispatchKind::DispatchGrepSearch => return run_grep_search(pattern, target),
+        DispatchKind::DispatchQueueStatus => return run_queue_status(),
+        DispatchKind::DispatchQueueEnqueue => return run_queue_enqueue(queue_tool_id, queued_run_id, queued_input_raw),
+        DispatchKind::DispatchQueueSpawn => return run_queue_spawn(),
+        DispatchKind::DispatchQueueProcess => return run_queue_process(),
+        DispatchKind::DispatchQueueCancel => return run_queue_cancel(),
         DispatchKind::DispatchParallelBash => return run_parallel_bash(),
         DispatchKind::DispatchParallelGrep => return run_parallel_grep(),
         DispatchKind::DispatchReleaseAudit => return run_release_audit(),
@@ -1483,6 +1836,9 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
         DispatchKind::DispatchToolsmith => return run_toolsmith(if effective_action == "" { "protocol" } else { effective_action }, effective_requested_tool_id, description, command_template, effective_input_schema, kind, mode),
         DispatchKind::DispatchPromptsmith => return run_promptsmith(if effective_action == "" { "get" } else { effective_action }, content),
         DispatchKind::DispatchFzydoc => return run_fzydoc(if query == "" { "spawn" } else { query }, max_lines),
+        DispatchKind::DispatchRuntimeCheckpoint => return run_runtime_checkpoint(),
+        DispatchKind::DispatchRuntimeRecover => return run_runtime_recover(),
+        DispatchKind::DispatchRuntimeShutdown => return run_runtime_shutdown(),
         DispatchKind::DispatchToolSequence => return run_tool_sequence(input_raw),
         DispatchKind::DispatchToolParallel => return run_tool_parallel(input_raw),
         DispatchKind::DispatchAll => return run_parallel(),
@@ -1506,6 +1862,9 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
     let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
     let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
+    let nested_queue_input_raw = json.get_str(json.get(nested_input, "tool_input"), "raw")
+    let queue_tool_id = if json.get_str(parsed, "queue_tool_id") == "" { json.get_str(nested_input, "queue_tool_id") } else { json.get_str(parsed, "queue_tool_id") }
+    let queued_run_id = if json.get_str(parsed, "queued_run_id") == "" { json.get_str(nested_input, "queued_run_id") } else { json.get_str(parsed, "queued_run_id") }
     let requested_tool_id = json.get_str(parsed, "tool_id")
     let create_tool_id = json.get_str(parsed, "create_tool_id")
     let description = json.get_str(parsed, "description")
@@ -1524,15 +1883,28 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     }
     let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
     let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
+    let queued_input_raw = if nested_queue_input_raw == "" {
+        if tool_input_raw == "" { "{}" } else { tool_input_raw }
+    } else {
+        nested_queue_input_raw
+    }
     let kind_tag = dispatch_kind(tool_id)
     match kind_tag {
         DispatchKind::DispatchAegis => return run_aegis_with_args_to(effective_action, url, query, eval_js, effective_commands, out_path),
         DispatchKind::DispatchBash => return run_shell_to_file("bash", if command == "" { env_or("TOOL_BASH", "echo bash-tool-default") } else { command }, 20000, out_path),
         DispatchKind::DispatchGrepSearch => return run_grep_to_file("grep_search", if pattern == "" { env_or("TOOL_GREP_PATTERN_A", "fn ") } else { pattern }, if target == "" { env_or("TOOL_GREP_TARGET_A", "src") } else { target }, 15000, out_path),
+        DispatchKind::DispatchQueueStatus => return dispatch_tool_request_copy("queue_status", input_raw, out_path),
+        DispatchKind::DispatchQueueEnqueue => return dispatch_tool_request_copy("queue_enqueue", util.json_obj3("queue_tool_id", json.str(queue_tool_id), "queued_run_id", json.str(queued_run_id), "tool_input", json.raw(queued_input_raw)), out_path),
+        DispatchKind::DispatchQueueSpawn => return dispatch_tool_request_copy("queue_spawn", input_raw, out_path),
+        DispatchKind::DispatchQueueProcess => return dispatch_tool_request_copy("queue_process", input_raw, out_path),
+        DispatchKind::DispatchQueueCancel => return dispatch_tool_request_copy("queue_cancel", input_raw, out_path),
         DispatchKind::DispatchWorkspaceDigest => return run_workspace_digest_to(out_path),
         DispatchKind::DispatchToolsmith => return run_toolsmith_to(if effective_action == "" { "protocol" } else { effective_action }, effective_requested_tool_id, description, command_template, effective_input_schema, kind, mode, out_path),
         DispatchKind::DispatchPromptsmith => return run_promptsmith_to(if effective_action == "" { "get" } else { effective_action }, content, out_path),
         DispatchKind::DispatchFzydoc => return run_fzydoc_to(if query == "" { "spawn" } else { query }, max_lines, out_path),
+        DispatchKind::DispatchRuntimeCheckpoint => return dispatch_tool_request_copy("runtime_checkpoint", input_raw, out_path),
+        DispatchKind::DispatchRuntimeRecover => return dispatch_tool_request_copy("runtime_recover", input_raw, out_path),
+        DispatchKind::DispatchRuntimeShutdown => return dispatch_tool_request_copy("runtime_shutdown", input_raw, out_path),
         DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if tool_input_raw == "" { input_raw } else { tool_input_raw }, out_path),
         _ => return dispatch_tool_request_copy(tool_id, input_raw, out_path),
     }
@@ -1550,12 +1922,7 @@ fn tool_step_result_json(step_id: str, tool_id: str, status_code: i32) -> str {
 }
 
 fn tool_step_result_from_payload_json(step_id: str, tool_id: str, status_code: i32, result_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "step_id", json.str(step_id))
-    discard map.set(payload, "tool_id", json.str(tool_id))
-    discard map.set(payload, "status", json.str(if status_code == 0 { "ok" } else { "error" }))
-    discard map.set(payload, "result", json.raw(result_json))
-    return json.object(payload)
+    return model.types.tool_step_result_payload_json(step_id, tool_id, if status_code == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }, result_json)
 }
 
 fn tool_step_skipped_json(step_id: str) -> str {
@@ -1614,7 +1981,7 @@ fn run_tool_sequence(request_json: str) -> i32 {
         }
         idx += 1
     }
-    let payload = util.json_obj3("tool", json.str("tool_sequence"), "status", json.str(if overall == 0 { "ok" } else { "error" }), "steps", json.raw(json.array(items)))
+    let payload = model.types.batch_tool_result_payload_json("tool_sequence", if overall == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }, json.array(items))
     fs.write_file("/tmp/fzyagent/runs/tool_sequence.json", payload)
     return overall
 }
@@ -1628,12 +1995,7 @@ fn run_tool_parallel(request_json: str) -> i32 {
     let step3 = json.get(steps, "3")
     let overflow = json.get_str(json.get(steps, "4"), "raw")
     if overflow != "" {
-        let payload = util.json_obj4(
-            "tool", json.str("tool_parallel"),
-            "status", json.str("error"),
-            "message", json.str("parallel step limit exceeded"),
-            "limit", json.str(str.from_i32(parallel_step_limit())),
-        )
+        let payload = model.types.queue_tool_payload_json("tool_parallel", model.types.control_error_label(), "parallel step limit exceeded", "", "", "", "", "", "", str.from_i32(parallel_step_limit()))
         fs.write_file("/tmp/fzyagent/runs/tool_parallel.json", payload)
         return 13
     }
@@ -1690,7 +2052,7 @@ fn run_tool_parallel(request_json: str) -> i32 {
             overall = status3
         }
     }
-    let payload = util.json_obj3("tool", json.str("tool_parallel"), "status", json.str(if overall == 0 { "ok" } else { "error" }), "steps", json.raw(json.array(items)))
+    let payload = model.types.batch_tool_result_payload_json("tool_parallel", if overall == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }, json.array(items))
     fs.write_file("/tmp/fzyagent/runs/tool_parallel.json", payload)
     return overall
 }
@@ -1733,7 +2095,7 @@ fn cancel_tool_run() -> i32 {
     discard init_tool_queue()
     fs.write_file(queue_cancel_path(), "cancel")
     QUEUE_CANCELLED_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "generic", "cancelled")
+    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "generic", model.types.queue_cancelled_label())
     discard monitor_background()
     return 0
 }

@@ -1,26 +1,47 @@
 use core.fs;
+use core.time;
 
 fn checkpoint_path() -> str {
     return "/tmp/fzyagent/runtime.checkpoint.json"
 }
 
+fn recovery_path() -> str {
+    return "/tmp/fzyagent/runtime.recovery.json"
+}
+
 fn save_checkpoint() -> i32 {
     fs.mkdir("/tmp/fzyagent")
-    let payload = util.json_obj2("status", json.str("saved"), "scope", json.str("runtime"))
+    let payload = model.types.recovery_checkpoint_json(
+        "saved",
+        "runtime",
+        str.from_i32(time.now()),
+        fs.read_file(runtime.config.config_path()),
+        runtime.limits.limits_json(),
+        fs.read_file(runtime.sandbox.sandbox_path()),
+        fs.read_file(runtime.supervisor.supervisor_state_path()),
+        services.tools.queue_summary_json(),
+    )
     fs.write_file(checkpoint_path(), payload)
     return 0
 }
 
 fn restore_checkpoint() -> i32 {
     if fs.exists(checkpoint_path()) == 0 {
-        save_checkpoint()
+        discard save_checkpoint()
     }
-    fs.read_file(checkpoint_path())
+    let payload = fs.read_file(checkpoint_path())
+    if payload == "" {
+        discard save_checkpoint()
+        return 0
+    }
+    fs.write_file(recovery_path(), model.types.recovery_status_json("ok", "restored", payload, str.from_i32(time.now())))
     return 0
 }
 
 fn recover_inflight_jobs() -> i32 {
-    restore_checkpoint()
+    discard restore_checkpoint()
+    discard services.tools.monitor_background()
+    discard runtime.supervisor.refresh_state()
     fs.flush()
     return 0
 }

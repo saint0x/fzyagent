@@ -21,7 +21,7 @@ fn create_session_for(session_id: str, request_id: str) -> i32 {
     boot_session(id)
     let payload = persistence.session_doc_for(id, "active", "0", "latest", "", "", request_id, "0")
     persistence.save_session_for(id, payload)
-    persistence.save_session_event(id, "create_session", "active", "0")
+    persistence.save_session_event_current(id, "create_session", "active")
     return 0
 }
 
@@ -30,7 +30,7 @@ fn reset_session_for(session_id: str, request_id: str) -> i32 {
     discard persistence.clear_session_files(id)
     let payload = persistence.session_doc_for(id, "active", "0", "latest", "", "", request_id, "0")
     persistence.save_session_for(id, payload)
-    persistence.save_session_event(id, "reset_session", "active", "0")
+    persistence.save_session_event_current(id, "reset_session", "active")
     return 0
 }
 
@@ -62,16 +62,15 @@ fn post_message_for(session_id: str, prompt: str, request_id: str, run_id: str) 
     discard persistence.mark_session_turn(id)
     let current = persistence.load_session_json_for(id)
     let parsed = json.parse(current)
-    discard persistence.update_session_summary(
+    discard persistence.sync_session_summary(
         id,
         "active",
         run_id,
         prompt,
-        json.get_str(parsed, "last_assistant_message"),
+        persistence.session_last_assistant_message_value(parsed),
         request_id,
-        json.get_str(parsed, "tool_count"),
     )
-    persistence.save_session_event(id, "post_message", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
+    persistence.save_session_event_current(id, "post_message", "active")
     telemetry.emit_turn_latency()
     return 0
 }
@@ -82,16 +81,16 @@ fn record_assistant_for(session_id: str, content: str, request_id: str, run_id: 
     discard persistence.append_message(id, "assistant", "response", content, run_id, request_id)
     let current = persistence.load_session_json_for(id)
     let parsed = json.parse(current)
-    discard persistence.update_session_summary(
+    discard persistence.sync_session_summary(
         id,
         "active",
         run_id,
-        json.get_str(parsed, "last_user_message"),
+        persistence.session_last_user_message_value(parsed),
         content,
         request_id,
-        tool_count,
     )
-    persistence.save_session_event(id, "assistant_response", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
+    discard tool_count
+    persistence.save_session_event_current(id, "assistant_response", "active")
     return 0
 }
 
@@ -101,18 +100,15 @@ fn record_tool_run_for(session_id: str, tool_id: str, run_id: str, status: str) 
     discard persistence.append_run_link(id, run_id, tool_id, status)
     let current = persistence.load_session_json_for(id)
     let parsed = json.parse(current)
-    let current_tool_count = json.get_str(parsed, "tool_count")
-    let next_tool_count = if current_tool_count == "" { "1" } else { str.from_i32(str.len(current_tool_count) + 1) }
-    discard persistence.update_session_summary(
+    discard persistence.sync_session_summary(
         id,
         "active",
         run_id,
-        json.get_str(parsed, "last_user_message"),
-        json.get_str(parsed, "last_assistant_message"),
-        json.get_str(parsed, "last_request_id"),
-        next_tool_count,
+        persistence.session_last_user_message_value(parsed),
+        persistence.session_last_assistant_message_value(parsed),
+        persistence.session_last_request_id_value(parsed),
     )
-    persistence.save_session_event(id, "tool_run", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
+    persistence.save_session_event_current(id, "tool_run", "active")
     return 0
 }
 

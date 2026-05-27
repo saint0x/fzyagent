@@ -37,6 +37,36 @@ enum RunState {
     RunFailed,
 }
 
+enum ControlStatus {
+    ControlOk,
+    ControlError,
+}
+
+enum QueuePhase {
+    QueueIdle,
+    QueueQueued,
+    QueueRunning,
+    QueueProcessed,
+    QueueSpawned,
+    QueueCancelled,
+    QueueKilled,
+    QueueStatusView,
+    QueueMonitor,
+    QueueWorkerLimit,
+    QueueBoot,
+}
+
+enum SupervisorPhase {
+    SupervisorConfigured,
+    SupervisorRunning,
+    SupervisorShutdown,
+}
+
+enum QueueRecordState {
+    QueueRecordPending,
+    QueueRecordCompleted,
+}
+
 struct SessionView {
     id: i32,
     state: SessionState,
@@ -110,6 +140,133 @@ fn completed_run_state_label() -> str {
     return run_state_label(RunState::RunCompleted)
 }
 
+fn control_status_label(status: ControlStatus) -> str {
+    match status {
+        ControlStatus::ControlOk => return "ok",
+        _ => return "error",
+    }
+    return "error"
+}
+
+fn control_ok_label() -> str {
+    return control_status_label(ControlStatus::ControlOk)
+}
+
+fn control_error_label() -> str {
+    return control_status_label(ControlStatus::ControlError)
+}
+
+fn queue_phase_label(phase: QueuePhase) -> str {
+    match phase {
+        QueuePhase::QueueIdle => return "idle",
+        QueuePhase::QueueQueued => return "queued",
+        QueuePhase::QueueRunning => return "running",
+        QueuePhase::QueueProcessed => return "processed",
+        QueuePhase::QueueSpawned => return "spawned",
+        QueuePhase::QueueCancelled => return "cancelled",
+        QueuePhase::QueueKilled => return "killed",
+        QueuePhase::QueueStatusView => return "status",
+        QueuePhase::QueueMonitor => return "monitor_background",
+        QueuePhase::QueueWorkerLimit => return "worker_limit_reached",
+        _ => return "boot",
+    }
+    return "boot"
+}
+
+fn queue_idle_label() -> str {
+    return queue_phase_label(QueuePhase::QueueIdle)
+}
+
+fn queue_queued_label() -> str {
+    return queue_phase_label(QueuePhase::QueueQueued)
+}
+
+fn queue_running_label() -> str {
+    return queue_phase_label(QueuePhase::QueueRunning)
+}
+
+fn queue_processed_label() -> str {
+    return queue_phase_label(QueuePhase::QueueProcessed)
+}
+
+fn queue_spawned_label() -> str {
+    return queue_phase_label(QueuePhase::QueueSpawned)
+}
+
+fn queue_cancelled_label() -> str {
+    return queue_phase_label(QueuePhase::QueueCancelled)
+}
+
+fn queue_killed_label() -> str {
+    return queue_phase_label(QueuePhase::QueueKilled)
+}
+
+fn queue_status_view_label() -> str {
+    return queue_phase_label(QueuePhase::QueueStatusView)
+}
+
+fn queue_monitor_label() -> str {
+    return queue_phase_label(QueuePhase::QueueMonitor)
+}
+
+fn queue_worker_limit_label() -> str {
+    return queue_phase_label(QueuePhase::QueueWorkerLimit)
+}
+
+fn queue_boot_label() -> str {
+    return queue_phase_label(QueuePhase::QueueBoot)
+}
+
+fn supervisor_phase_label(phase: SupervisorPhase) -> str {
+    match phase {
+        SupervisorPhase::SupervisorConfigured => return "configured",
+        SupervisorPhase::SupervisorRunning => return "running",
+        _ => return "shutdown",
+    }
+    return "shutdown"
+}
+
+fn supervisor_configured_label() -> str {
+    return supervisor_phase_label(SupervisorPhase::SupervisorConfigured)
+}
+
+fn supervisor_running_label() -> str {
+    return supervisor_phase_label(SupervisorPhase::SupervisorRunning)
+}
+
+fn supervisor_shutdown_label() -> str {
+    return supervisor_phase_label(SupervisorPhase::SupervisorShutdown)
+}
+
+fn queue_record_state_label(state: QueueRecordState) -> str {
+    match state {
+        QueueRecordState::QueueRecordPending => return "pending",
+        _ => return "completed",
+    }
+    return "completed"
+}
+
+fn queue_record_pending_label() -> str {
+    return queue_record_state_label(QueueRecordState::QueueRecordPending)
+}
+
+fn queue_record_completed_label() -> str {
+    return queue_record_state_label(QueueRecordState::QueueRecordCompleted)
+}
+
+fn run_state_from_status(status: str) -> RunState {
+    if status == "queued" {
+        return RunState::RunQueued
+    }
+    if status == "running" {
+        return RunState::RunRunning
+    }
+    if status == "ok" || status == "completed" {
+        return RunState::RunCompleted
+    }
+    return RunState::RunFailed
+}
+
 fn session_view(id: i32, state: SessionState) -> SessionView {
     let out = SessionView { id: id, state: state }
     return out
@@ -146,4 +303,385 @@ fn encode_run_record(view: RunView) -> RunRecord {
 
 fn schema_version() -> i32 {
     return 3
+}
+
+fn control_status_text(status: ControlStatus) -> str {
+    return control_status_label(status)
+}
+
+fn session_doc_json(session_id: str, state: str, turn_count: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str, meta_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(control_ok_label()))
+    discard map.set(payload, "session_id", json.str(session_id))
+    discard map.set(payload, "state", json.str(state))
+    discard map.set(payload, "turn_count", json.str(turn_count))
+    discard map.set(payload, "last_run_id", json.str(last_run_id))
+    discard map.set(payload, "last_request_id", json.str(last_request_id))
+    discard map.set(payload, "last_user_message", json.str(last_user_message))
+    discard map.set(payload, "last_assistant_message", json.str(last_assistant_message))
+    discard map.set(payload, "tool_count", json.str(tool_count))
+    discard map.set(payload, "meta", json.raw(meta_json))
+    return json.object(payload)
+}
+
+fn session_index_json(session_id: str, state: str, updated_at: str, session_path: str) -> str {
+    let index = map.new()
+    discard map.set(index, "status", json.str(control_ok_label()))
+    discard map.set(index, "active_session_id", json.str(session_id))
+    discard map.set(index, "state", json.str(state))
+    discard map.set(index, "updated_at", json.str(updated_at))
+    discard map.set(index, "session_path", json.str(session_path))
+    return json.object(index)
+}
+
+fn session_event_json(event: str, state: str, turn_count: str, recorded_at: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "event", json.str(event))
+    discard map.set(payload, "state", json.str(state))
+    discard map.set(payload, "turn_count", json.str(turn_count))
+    discard map.set(payload, "recorded_at", json.str(recorded_at))
+    return json.object(payload)
+}
+
+fn session_message_entry_json(session_id: str, role: str, kind: str, content: str, run_id: str, request_id: str, recorded_at: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "session_id", json.str(session_id))
+    discard map.set(payload, "role", json.str(role))
+    discard map.set(payload, "kind", json.str(kind))
+    discard map.set(payload, "content", json.str(content))
+    discard map.set(payload, "run_id", json.str(run_id))
+    discard map.set(payload, "request_id", json.str(request_id))
+    discard map.set(payload, "recorded_at", json.str(recorded_at))
+    return json.object(payload)
+}
+
+fn session_run_link_json(session_id: str, run_id: str, tool_id: str, status: str, recorded_at: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "session_id", json.str(session_id))
+    discard map.set(payload, "run_id", json.str(run_id))
+    discard map.set(payload, "tool_id", json.str(tool_id))
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "recorded_at", json.str(recorded_at))
+    return json.object(payload)
+}
+
+fn run_state_error_json(run_id: str, state: str, updated_at: str) -> str {
+    return util.json_obj4("status", json.str(control_error_label()), "run_id", json.str(run_id), "state", json.str(state), "updated_at", json.str(updated_at))
+}
+
+fn request_guard_error_json(message: str) -> str {
+    return util.json_obj2("status", json.str(control_error_label()), "message", json.str(message))
+}
+
+fn session_response_json(event: str, session_json: str) -> str {
+    return util.json_obj3("status", json.str(control_ok_label()), "event", json.str(event), "session", json.raw(session_json))
+}
+
+fn session_details_response_json(event: str, session_id: str, details_json: str) -> str {
+    return util.json_obj4("status", json.str(control_ok_label()), "event", json.str(event), "session_id", json.str(session_id), "details", json.raw(details_json))
+}
+
+fn prompt_denied_response_json(session_id: str) -> str {
+    return util.json_obj3("status", json.str(control_error_label()), "session_id", json.str(session_id), "message", json.str("prompt_denied"))
+}
+
+fn message_turn_response_json(status: ControlStatus, session_id: str, request_id: str, data_json: str) -> str {
+    return util.json_obj4("status", json.str(control_status_text(status)), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(data_json))
+}
+
+fn provider_payload_json(provider: str, assistant: str, raw_response: str, tool_events_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "provider", json.str(provider))
+    discard map.set(payload, "assistant", json.str(assistant))
+    discard map.set(payload, "raw_response", json.str(raw_response))
+    discard map.set(payload, "tool_events", json.raw(tool_events_json))
+    return json.object(payload)
+}
+
+fn turn_result_json(status: ControlStatus, provider: str, assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str, message: str, transport_error: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(control_status_text(status)))
+    discard map.set(payload, "provider", json.str(provider))
+    if http_status != "" {
+        discard map.set(payload, "http_status", json.str(http_status))
+    }
+    if assistant_text != "" {
+        discard map.set(payload, "assistant", json.str(assistant_text))
+    }
+    if raw_response != "" {
+        discard map.set(payload, "raw_response", json.str(raw_response))
+    }
+    if stop_reason != "" {
+        discard map.set(payload, "stop_reason", json.str(stop_reason))
+    }
+    if message != "" {
+        discard map.set(payload, "message", json.str(message))
+    }
+    if transport_error != "" {
+        discard map.set(payload, "transport_error", json.str(transport_error))
+    }
+    discard map.set(payload, "tool_events", json.raw(tool_events_json))
+    return json.object(payload)
+}
+
+fn health_payload_json(service: str, provider: str, model: str) -> str {
+    return util.json_obj4("status", json.str(control_ok_label()), "service", json.str(service), "provider", json.str(provider), "model", json.str(model))
+}
+
+fn queue_summary_doc_json(pending_count: i32, active_count: i32, completed_count: i32, cancelled_count: i32, last_tool_id: str, last_status: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "pending_count", json.str(str.from_i32(pending_count)))
+    discard map.set(payload, "active_count", json.str(str.from_i32(active_count)))
+    discard map.set(payload, "completed_count", json.str(str.from_i32(completed_count)))
+    discard map.set(payload, "cancelled_count", json.str(str.from_i32(cancelled_count)))
+    discard map.set(payload, "last_tool_id", json.str(last_tool_id))
+    discard map.set(payload, "last_status", json.str(last_status))
+    return json.object(payload)
+}
+
+fn queue_state_payload_json(status: str, phase: str, queue_json: str, updated_at: str, cancel_signal: str, tool_id: str, run_id: str, final_status: str, processed_count: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "phase", json.str(phase))
+    discard map.set(payload, "queue", json.raw(queue_json))
+    if updated_at != "" {
+        discard map.set(payload, "updated_at", json.str(updated_at))
+    }
+    if cancel_signal != "" {
+        discard map.set(payload, "cancel_signal", json.str(cancel_signal))
+    }
+    if tool_id != "" {
+        discard map.set(payload, "tool_id", json.str(tool_id))
+    }
+    if run_id != "" {
+        discard map.set(payload, "run_id", json.str(run_id))
+    }
+    if final_status != "" {
+        discard map.set(payload, "final_status", json.str(final_status))
+    }
+    if processed_count != "" {
+        discard map.set(payload, "processed_count", json.str(processed_count))
+    }
+    return json.object(payload)
+}
+
+fn queue_tool_payload_json(tool: str, status: str, message: str, queue_json: str, before_json: str, after_json: str, queued_tool_id: str, queued_run_id: str, phase: str, limit: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "tool", json.str(tool))
+    discard map.set(payload, "status", json.str(status))
+    if message != "" {
+        discard map.set(payload, "message", json.str(message))
+    }
+    if phase != "" {
+        discard map.set(payload, "phase", json.str(phase))
+    }
+    if queue_json != "" {
+        discard map.set(payload, "queue", json.raw(queue_json))
+    }
+    if before_json != "" {
+        discard map.set(payload, "before", json.raw(before_json))
+    }
+    if after_json != "" {
+        discard map.set(payload, "after", json.raw(after_json))
+    }
+    if queued_tool_id != "" {
+        discard map.set(payload, "queued_tool_id", json.str(queued_tool_id))
+    }
+    if queued_run_id != "" {
+        discard map.set(payload, "queued_run_id", json.str(queued_run_id))
+    }
+    if limit != "" {
+        discard map.set(payload, "limit", json.str(limit))
+    }
+    return json.object(payload)
+}
+
+fn supervisor_state_payload_json(status: str, phase: str, shutdown_requested: str, limits_json: str, sandbox_json: str, queue_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "phase", json.str(phase))
+    discard map.set(payload, "shutdown_requested", json.str(shutdown_requested))
+    discard map.set(payload, "limits", json.raw(limits_json))
+    discard map.set(payload, "sandbox", json.raw(sandbox_json))
+    discard map.set(payload, "queue", json.raw(queue_json))
+    return json.object(payload)
+}
+
+fn tool_step_result_payload_json(step_id: str, tool_id: str, status: str, result_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "step_id", json.str(step_id))
+    discard map.set(payload, "tool_id", json.str(tool_id))
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "result", json.raw(result_json))
+    return json.object(payload)
+}
+
+fn batch_tool_result_payload_json(tool: str, status: str, steps_json: str) -> str {
+    return util.json_obj3("tool", json.str(tool), "status", json.str(status), "steps", json.raw(steps_json))
+}
+
+fn registry_tool_json(tool_id: str, description: str, kind: str, health: str, mode: str, origin: str, execution_model: str, supports_sequence: str, supports_parallel: str, rpc_protocol: str, transport: str, input_schema_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "id", json.str(tool_id))
+    discard map.set(payload, "name", json.str(tool_id))
+    discard map.set(payload, "description", json.str(description))
+    discard map.set(payload, "kind", json.str(kind))
+    discard map.set(payload, "health", json.str(health))
+    discard map.set(payload, "mode", json.str(mode))
+    discard map.set(payload, "origin", json.str(origin))
+    discard map.set(payload, "execution_model", json.str(execution_model))
+    discard map.set(payload, "supports_sequence", json.raw(supports_sequence))
+    discard map.set(payload, "supports_parallel", json.raw(supports_parallel))
+    discard map.set(payload, "rpc_protocol", json.str(rpc_protocol))
+    discard map.set(payload, "transport", json.str(transport))
+    discard map.set(payload, "input_schema", json.raw(input_schema_json))
+    return json.object(payload)
+}
+
+fn provider_tool_json(tool_id: str, description: str, input_schema_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "name", json.str(tool_id))
+    discard map.set(payload, "description", json.str(description))
+    discard map.set(payload, "input_schema", json.raw(input_schema_json))
+    return json.object(payload)
+}
+
+fn registry_payload_json(tools_json: str, meta_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(control_ok_label()))
+    discard map.set(payload, "tools", json.raw(tools_json))
+    discard map.set(payload, "meta", json.raw(meta_json))
+    return json.object(payload)
+}
+
+fn registry_status_json(message: str, updated_at: str) -> str {
+    return util.json_obj3("status", json.str(control_ok_label()), "updated_at", json.str(updated_at), "message", json.str(message))
+}
+
+fn registry_summary_json(tool_count: str, healthy_count: str, origins_json: str, kinds_json: str, tool_ids_json: str) -> str {
+    return util.json_obj6(
+        "status", json.str(control_ok_label()),
+        "tool_count", json.str(tool_count),
+        "healthy_count", json.str(healthy_count),
+        "origins", json.raw(origins_json),
+        "kinds", json.raw(kinds_json),
+        "tool_ids", json.raw(tool_ids_json),
+    )
+}
+
+fn registry_hints_json(search_and_docs_json: str, browser_ops_json: str, authoring_json: str, workflows_json: str) -> str {
+    return util.json_obj5(
+        "status", json.str(control_ok_label()),
+        "search_and_docs", json.raw(search_and_docs_json),
+        "browser_ops", json.raw(browser_ops_json),
+        "authoring", json.raw(authoring_json),
+        "workflows", json.raw(workflows_json),
+    )
+}
+
+fn registry_lookup_error_json(tool_id: str, message: str) -> str {
+    return util.json_obj3("status", json.str(control_error_label()), "tool_id", json.str(tool_id), "message", json.str(message))
+}
+
+fn audit_record_json(event: str, status: str, clock: str, summary_path: str) -> str {
+    return util.json_obj4("event", json.str(event), "status", json.str(status), "clock", json.str(clock), "summary_path", json.str(summary_path))
+}
+
+fn ffi_export_json(symbol: str, kind: str, mode: str) -> str {
+    return util.json_obj3("symbol", json.str(symbol), "kind", json.str(kind), "mode", json.str(mode))
+}
+
+fn ffi_manifest_json(abi: str, project: str, exports_json: str, rpc_protocol: str, rpc_schemas_json: str, runtime_schemas_json: str, manifests_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(control_ok_label()))
+    discard map.set(payload, "abi", json.str(abi))
+    discard map.set(payload, "project", json.str(project))
+    discard map.set(payload, "exports", json.raw(exports_json))
+    discard map.set(payload, "rpc_protocol", json.str(rpc_protocol))
+    discard map.set(payload, "rpc_schemas", json.raw(rpc_schemas_json))
+    discard map.set(payload, "runtime_schemas", json.raw(runtime_schemas_json))
+    discard map.set(payload, "manifests", json.raw(manifests_json))
+    return json.object(payload)
+}
+
+fn runtime_config_json(host: str, port: str, workers: str, background_mode: str, observability_mode: str) -> str {
+    return util.json_obj5(
+        "host", json.str(host),
+        "port", json.str(port),
+        "workers", json.str(workers),
+        "background_mode", json.str(background_mode),
+        "observability_mode", json.str(observability_mode),
+    )
+}
+
+fn runtime_event_json(event: str, component: str, clock: str, status: str) -> str {
+    return util.json_obj4(
+        "event", json.str(event),
+        "component", json.str(component),
+        "clock", json.str(clock),
+        "status", json.str(status),
+    )
+}
+
+fn runtime_limits_json(thread_limit: str, queue_limit: str, memory_limit: str, policy: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(control_ok_label()))
+    discard map.set(payload, "thread_limit", json.str(thread_limit))
+    discard map.set(payload, "queue_limit", json.str(queue_limit))
+    discard map.set(payload, "memory_limit", json.str(memory_limit))
+    discard map.set(payload, "policy", json.str(policy))
+    return json.object(payload)
+}
+
+fn runtime_sandbox_json(policy: str, scope: str, mode: str) -> str {
+    return util.json_obj3("policy", json.str(policy), "scope", json.str(scope), "mode", json.str(mode))
+}
+
+fn recovery_checkpoint_json(status: str, scope: str, saved_at: str, config_json: str, limits_json: str, sandbox_json: str, supervisor_json: str, queue_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "scope", json.str(scope))
+    discard map.set(payload, "saved_at", json.str(saved_at))
+    discard map.set(payload, "config", json.raw(config_json))
+    discard map.set(payload, "limits", json.raw(limits_json))
+    discard map.set(payload, "sandbox", json.raw(sandbox_json))
+    discard map.set(payload, "supervisor", json.raw(supervisor_json))
+    discard map.set(payload, "queue", json.raw(queue_json))
+    return json.object(payload)
+}
+
+fn recovery_status_json(status: str, phase: str, checkpoint_json: str, recovered_at: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "phase", json.str(phase))
+    discard map.set(payload, "checkpoint", json.raw(checkpoint_json))
+    discard map.set(payload, "recovered_at", json.str(recovered_at))
+    return json.object(payload)
+}
+
+fn http_shutdown_json(status: str, phase: str, requested_at: str) -> str {
+    return util.json_obj3("status", json.str(status), "phase", json.str(phase), "requested_at", json.str(requested_at))
+}
+
+fn runtime_control_payload_json(tool: str, status: str, phase: str, message: str, checkpoint_json: str, recovery_json: str, supervisor_json: str, shutdown_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "tool", json.str(tool))
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "phase", json.str(phase))
+    if message != "" {
+        discard map.set(payload, "message", json.str(message))
+    }
+    if checkpoint_json != "" {
+        discard map.set(payload, "checkpoint", json.raw(checkpoint_json))
+    }
+    if recovery_json != "" {
+        discard map.set(payload, "recovery", json.raw(recovery_json))
+    }
+    if supervisor_json != "" {
+        discard map.set(payload, "supervisor", json.raw(supervisor_json))
+    }
+    if shutdown_json != "" {
+        discard map.set(payload, "shutdown", json.raw(shutdown_json))
+    }
+    return json.object(payload)
 }

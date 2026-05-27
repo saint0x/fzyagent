@@ -1,6 +1,8 @@
 use core.http;
 use core.thread;
 use core.log;
+use core.fs;
+use core.time;
 
 fn configure_server() -> i32 {
     env.get("AGENT_HOST")
@@ -15,8 +17,13 @@ fn start_server() -> i32 {
     return 0
 }
 
+fn shutdown_path() -> str {
+    return "/tmp/fzyagent/http.shutdown.json"
+}
+
 fn graceful_stop() -> i32 {
-    checkpoint()
+    fs.mkdir("/tmp/fzyagent")
+    fs.write_file(shutdown_path(), model.types.http_shutdown_json(model.types.control_ok_label(), "graceful_stop", str.from_i32(time.now())))
     return 0
 }
 
@@ -166,22 +173,53 @@ fn run_id_from_path(path: str) -> str {
     return path_after_prefix(path, "/runs/")
 }
 
+fn requested_session_id(request: JsonHandle) -> str {
+    return json.get_str(request, "session_id")
+}
+
+fn session_reset_requested(request: JsonHandle) -> i32 {
+    if json.get_str(request, "reset") == "true" {
+        return 1
+    }
+    return 0
+}
+
+fn session_response_json(event: str, session_json: str) -> str {
+    return model.types.session_response_json(event, session_json)
+}
+
+fn session_details_response_json(event: str, session_id: str, details_json: str) -> str {
+    return model.types.session_details_response_json(event, session_id, details_json)
+}
+
+fn message_denied_response_json(session_id: str) -> str {
+    return model.types.prompt_denied_response_json(session_id)
+}
+
+fn message_turn_success_json(session_id: str, request_id: str, data_json: str) -> str {
+    return model.types.message_turn_response_json(model.types.ControlStatus::ControlOk, session_id, request_id, data_json)
+}
+
+fn message_turn_error_json(session_id: str, request_id: str, data_json: str) -> str {
+    return model.types.message_turn_response_json(model.types.ControlStatus::ControlError, session_id, request_id, data_json)
+}
+
 fn handle_sessions(conn: HttpHandle) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
         log.info("http.handle_sessions", util.log_fields2("component", "http", "handler", "sessions_create"))
     }
     let request = http.body_json(conn)
-    let requested = json.get_str(request, "session_id")
-    let reset = json.get_str(request, "reset")
+    let requested = requested_session_id(request)
+    let reset = session_reset_requested(request)
     let session_id = if requested == "" { sessions.default_session_id() } else { requested }
-    if reset == "true" {
+    if reset == 1 {
         discard sessions.reset_session_for(session_id, http.request_id(conn))
     } else {
         discard sessions.create_session_for(session_id, http.request_id(conn))
     }
     let session = sessions.get_session_json_for(session_id)
-    let event = if reset == "true" { "session_reset" } else { "session_created" }
-    let body = util.json_obj3("status", json.str("ok"), "event", json.str(event), "session", json.raw(session))
+    let event = if reset == 1 { "session_reset" } else { "session_created" }
+    let body = session_response_json(event, session)
     http.write_json(conn, 200, body)
     return 0
 }
@@ -194,7 +232,7 @@ fn handle_session_get(conn: HttpHandle, path: str) -> i32 {
     discard sessions.get_session_for(session_id)
     let state = model.types.active_session_state_label()
     let details = sessions.get_session_json_for(session_id)
-    let body = util.json_obj4("status", json.str("ok"), "event", json.str("session_loaded"), "session_id", json.str(session_id), "details", json.raw(details))
+    let body = session_details_response_json("session_loaded", session_id, details)
     if state == "active" {
         checkpoint()
     }
@@ -210,7 +248,7 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     let request_id = http.request_id(conn)
     let prompt = safety.filter_prompt_text(prompt_from_request(conn))
     if safety.allow_prompt(prompt) == 0 {
-        let denied = util.json_obj3("status", json.str("error"), "session_id", json.str(session_id), "message", json.str("prompt_denied"))
+        let denied = message_denied_response_json(session_id)
         http.write_json(conn, 403, denied)
         return 0
     }
@@ -218,21 +256,13 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     discard sessions.post_message_for(session_id, prompt, request_id, "anthropic_latest")
     let result = runtime.agent.run_session_turn(session_id, prompt, request_id)
     let parsed = json.parse(result)
-    let assistant = safety.filter_tool_response_text(json.get_str(parsed, "assistant"))
-    let raw_response = json.get_str(parsed, "raw_response")
-    let tool_events = json.get_str(json.get(parsed, "tool_events"), "raw")
-    let provider_payload_map = map.new()
-    discard map.set(provider_payload_map, "provider", json.str("anthropic"))
-    discard map.set(provider_payload_map, "assistant", json.str(assistant))
-    discard map.set(provider_payload_map, "raw_response", json.str(raw_response))
-    discard map.set(provider_payload_map, "tool_events", json.raw(if tool_events == "" { "[]" } else { tool_events }))
-    let provider_payload = json.object(provider_payload_map)
+    let provider_payload = message_response_payload(parsed)
     if runtime.agent.turn_response_is_ok(parsed) == 1 {
-        let body = util.json_obj4("status", json.str("ok"), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(provider_payload))
+        let body = message_turn_success_json(session_id, request_id, provider_payload)
         http.write_json(conn, 200, body)
         return 0
     }
-    let body = util.json_obj4("status", json.str("error"), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(result))
+    let body = message_turn_error_json(session_id, request_id, result)
     http.write_json(conn, 502, body)
     return 0
 }
@@ -245,6 +275,15 @@ fn prompt_from_request(conn: HttpHandle) -> str {
         return "runtime status"
     }
     return prompt
+}
+
+fn message_response_payload(parsed: JsonHandle) -> str {
+    return model.types.provider_payload_json(
+        "anthropic",
+        safety.filter_tool_response_text(runtime.agent.turn_assistant_text(parsed)),
+        runtime.agent.turn_raw_response_text(parsed),
+        runtime.agent.turn_tool_events_raw(parsed),
+    )
 }
 
 fn handle_tools_register(conn: HttpHandle) -> i32 {
@@ -333,7 +372,7 @@ fn handle_health(conn: HttpHandle) -> i32 {
         log.info("http.handle_health", util.log_fields2("component", "http", "handler", "health"))
     }
     let model_name = anthropic.default_model_name()
-    let body = util.json_obj4("status", json.str("ok"), "service", json.str("agent_runtime"), "provider", json.str("anthropic"), "model", json.str(model_name))
+    let body = model.types.health_payload_json("agent_runtime", "anthropic", model_name)
     http.write_json(conn, 200, body)
     return 0
 }

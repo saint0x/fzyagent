@@ -130,43 +130,46 @@ fn content_block_json(parsed: JsonHandle, index: str) -> str {
     return ""
 }
 
+fn maybe_push_content_block(items: ListHandle, parsed: JsonHandle, index: str) -> i32 {
+    let block = content_block_json(parsed, index)
+    if block != "" {
+        discard list.push(items, block)
+    }
+    return 0
+}
+
 fn assistant_message_json(parsed: JsonHandle) -> str {
     let items = list.new()
-    let block0 = content_block_json(parsed, "0")
-    if block0 != "" {
-        discard list.push(items, block0)
-    }
-    let block1 = content_block_json(parsed, "1")
-    if block1 != "" {
-        discard list.push(items, block1)
-    }
-    let block2 = content_block_json(parsed, "2")
-    if block2 != "" {
-        discard list.push(items, block2)
-    }
-    let block3 = content_block_json(parsed, "3")
-    if block3 != "" {
-        discard list.push(items, block3)
-    }
+    discard maybe_push_content_block(items, parsed, "0")
+    discard maybe_push_content_block(items, parsed, "1")
+    discard maybe_push_content_block(items, parsed, "2")
+    discard maybe_push_content_block(items, parsed, "3")
     return util.json_obj2("role", json.str("assistant"), "content", json.raw(json.array(items)))
 }
 
+fn content_block_text_or_empty(parsed: JsonHandle, index: str) -> str {
+    if content_block_type(parsed, index) != "text" {
+        return ""
+    }
+    return content_block_text(parsed, index)
+}
+
 fn extract_text_block(parsed: JsonHandle) -> str {
-    let content = json.get(parsed, "content")
-    let block0 = json.get(content, "0")
-    let text0 = json.get_str(block0, "text")
+    let text0 = content_block_text_or_empty(parsed, "0")
     if text0 != "" {
         return text0
     }
-    let block1 = json.get(content, "1")
-    let text1 = json.get_str(block1, "text")
+    let text1 = content_block_text_or_empty(parsed, "1")
     if text1 != "" {
         return text1
     }
-    let block2 = json.get(content, "2")
-    let text2 = json.get_str(block2, "text")
+    let text2 = content_block_text_or_empty(parsed, "2")
     if text2 != "" {
         return text2
+    }
+    let text3 = content_block_text_or_empty(parsed, "3")
+    if text3 != "" {
+        return text3
     }
     return json.get_str(parsed, "completion")
 }
@@ -202,6 +205,30 @@ fn turn_response_is_ok(parsed: JsonHandle) -> i32 {
     return 0
 }
 
+fn turn_assistant_text(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "assistant")
+}
+
+fn turn_raw_response_text(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "raw_response")
+}
+
+fn turn_tool_events_raw(parsed: JsonHandle) -> str {
+    let events = json.get_str(json.get(parsed, "tool_events"), "raw")
+    if events == "" {
+        return "[]"
+    }
+    return events
+}
+
+fn turn_error_json(message: str, raw_response: str, transport_error: str, tool_events_json: str, http_status: str) -> str {
+    return model.types.turn_result_json(model.types.ControlStatus::ControlError, "anthropic", "", raw_response, "", tool_events_json, http_status, message, transport_error)
+}
+
+fn turn_success_json(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str) -> str {
+    return model.types.turn_result_json(model.types.ControlStatus::ControlOk, "anthropic", assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
+}
+
 fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id: str) -> str {
     let normalized = api.rpc.single_request_json(request_id, tool_id, if input_raw == "" { "{}" } else { input_raw })
     let tool_status = services.tools.dispatch_tool_request(tool_id, normalized)
@@ -210,7 +237,9 @@ fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id
     let status = api.rpc.tool_result_status(tool_status)
     let run_id = services.tools.run_id_for_tool(tool_id)
     discard services.sessions.record_tool_run_for(session_id, tool_id, run_id, status)
-    return api.rpc.tool_response_json(request_id, tool_id, run_id, tool_status, services.tools.last_run_artifact_path(tool_id), result)
+    let response = api.rpc.tool_response_json(request_id, tool_id, run_id, tool_status, services.tools.last_run_artifact_path(tool_id), result)
+    discard services.persistence.save_named_run(run_id, response)
+    return response
 }
 
 fn tool_result_content(outcome_json: str) -> str {
@@ -275,12 +304,7 @@ fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str
 
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str) -> str {
     if depth >= max_agent_iterations() {
-        let exhausted = map.new()
-        discard map.set(exhausted, "status", json.str("error"))
-        discard map.set(exhausted, "provider", json.str("anthropic"))
-        discard map.set(exhausted, "message", json.str("tool_loop_exhausted"))
-        discard map.set(exhausted, "tool_events", json.raw(accumulated_events_json))
-        return json.object(exhausted)
+        return turn_error_json("tool_loop_exhausted", "", "", accumulated_events_json, "")
     }
 
     let payload = request_payload_for(messages_json, services.registry.list_tool_definitions_json())
@@ -288,14 +312,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
     let status = services.anthropic.last_status()
     if status < 200 || status >= 300 {
-        let failed = map.new()
-        discard map.set(failed, "status", json.str("error"))
-        discard map.set(failed, "provider", json.str("anthropic"))
-        discard map.set(failed, "http_status", json.str(str.from_i32(status)))
-        discard map.set(failed, "raw_response", json.str(raw))
-        discard map.set(failed, "transport_error", json.str(services.anthropic.last_error()))
-        discard map.set(failed, "tool_events", json.raw(accumulated_events_json))
-        return json.object(failed)
+        return turn_error_json("", raw, services.anthropic.last_error(), accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)
@@ -304,15 +321,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
         let response_text = extract_text_block(parsed)
         let assistant_text = if response_text == "" { raw } else { response_text }
         discard services.sessions.record_assistant_for(session_id, assistant_text, request_id, "anthropic_latest", str.from_i32(depth))
-        let done = map.new()
-        discard map.set(done, "status", json.str("ok"))
-        discard map.set(done, "provider", json.str("anthropic"))
-        discard map.set(done, "http_status", json.str(str.from_i32(status)))
-        discard map.set(done, "assistant", json.str(assistant_text))
-        discard map.set(done, "raw_response", json.str(raw))
-        discard map.set(done, "stop_reason", json.str(stop_reason))
-        discard map.set(done, "tool_events", json.raw(accumulated_events_json))
-        return json.object(done)
+        return turn_success_json(assistant_text, raw, stop_reason, accumulated_events_json, str.from_i32(status))
     }
 
     let assistant_message = assistant_message_json(parsed)

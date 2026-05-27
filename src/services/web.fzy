@@ -71,24 +71,26 @@ fn accept_and_process() -> i32 {
 
 fn read_request(conn: HttpHandle) -> i32 {
     http.read(conn)
-    parse_request_line()
-    parse_headers()
-    parse_body()
+    capture_request_artifact(conn)
     return 0
 }
 
-fn parse_request_line() -> i32 {
-    checkpoint()
-    return 0
+fn request_artifact_path(request_id: str) -> str {
+    return str.concat("/tmp/fzyagent/http.request.", str.concat(request_id, ".json"))
 }
 
-fn parse_headers() -> i32 {
-    checkpoint()
-    return 0
-}
-
-fn parse_body() -> i32 {
-    checkpoint()
+fn capture_request_artifact(conn: HttpHandle) -> i32 {
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
+    let payload = map.new()
+    discard map.set(payload, "request_id", json.str(http.request_id(conn)))
+    discard map.set(payload, "method", json.str(http.method(conn)))
+    discard map.set(payload, "path", json.str(http.path(conn)))
+    discard map.set(payload, "authorization_present", json.str(if http.header(conn, "authorization") == "" { "false" } else { "true" }))
+    discard map.set(payload, "body", json.str(http.body(conn)))
+    fs.mkdir("/tmp/fzyagent")
+    fs.write_file(request_artifact_path(http.request_id(conn)), json.object(payload))
     return 0
 }
 
@@ -110,19 +112,19 @@ fn tool_id_from_run_path(path: str) -> str {
 fn apply_middleware(conn: HttpHandle) -> i32 {
     let auth = security.auth_middleware_conn(conn)
     if auth != 0 {
-        http.write_json(conn, 401, util.json_obj2("status", json.str("error"), "message", json.str("unauthorized")))
+        http.write_json(conn, 401, model.types.request_guard_error_json("unauthorized"))
         return 1
     }
     let limited = security.rate_limit_conn(conn)
     if limited != 0 {
-        http.write_json(conn, 429, util.json_obj2("status", json.str("error"), "message", json.str("rate_limited")))
+        http.write_json(conn, 429, model.types.request_guard_error_json("rate_limited"))
         return 1
     }
     let path = http.path(conn)
     let tool_id = if str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 { tool_id_from_run_path(path) } else { "" }
     let policy = security.policy_filter_request(tool_id, http.method(conn), path)
     if policy != 0 {
-        http.write_json(conn, 403, util.json_obj2("status", json.str("error"), "message", json.str("policy_denied")))
+        http.write_json(conn, 403, model.types.request_guard_error_json("policy_denied"))
         return 1
     }
     checkpoint()

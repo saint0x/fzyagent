@@ -13,54 +13,78 @@ fn server_object(url: str, description: str) -> str {
 }
 
 fn response_object(description: str) -> str {
-    let content = util.json_obj2(
-        "application/json",
-        json.raw(util.json_obj2("schema", json.raw(util.json_obj1("$ref", json.str("#/components/schemas/Envelope"))), "examples", json.raw("{}"))),
-        "note",
-        json.str("json envelope"),
-    )
-    return util.json_obj2("description", json.str(description), "content", json.raw(content))
+    return api.rpc.response_object_json(description, "Envelope")
 }
 
-fn operation_object(summary: str, operation_id: str, tags_json: str, responses_json: str) -> str {
-    return util.json_obj4(
-        "summary", json.str(summary),
-        "operationId", json.str(operation_id),
-        "tags", json.raw(tags_json),
-        "responses", json.raw(responses_json),
-    )
+fn tools_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.tools_response_schema_name())
+}
+
+fn run_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.run_response_schema_name())
+}
+
+fn health_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.health_response_schema_name())
+}
+
+fn session_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.session_response_schema_name())
+}
+
+fn message_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.message_response_schema_name())
+}
+
+fn operation_object(summary: str, operation_id: str, tags_json: str, responses_json: str, request_body_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "summary", json.str(summary))
+    discard map.set(payload, "operationId", json.str(operation_id))
+    discard map.set(payload, "tags", json.raw(tags_json))
+    discard map.set(payload, "responses", json.raw(responses_json))
+    if request_body_json != "" {
+        discard map.set(payload, "requestBody", json.raw(request_body_json))
+    }
+    return json.object(payload)
+}
+
+fn tool_rpc_response_object(description: str) -> str {
+    return api.rpc.response_object_json(description, api.rpc.response_schema_name())
 }
 
 fn export_spec() -> i32 {
     fs.mkdir("/tmp/fzyagent")
 
-    let session_responses = util.json_obj2("200", json.raw(response_object("Session created or loaded")), "403", json.raw(response_object("Forbidden")))
-    let message_responses = util.json_obj3("200", json.raw(response_object("Assistant turn completed")), "403", json.raw(response_object("Prompt denied")), "502", json.raw(response_object("Provider failure")))
-    let tool_responses = util.json_obj3("200", json.raw(response_object("Tool finished successfully with a strict tool RPC envelope")), "500", json.raw(response_object("Tool failed with a strict tool RPC envelope")), "403", json.raw(response_object("Forbidden")))
-    let run_responses = util.json_obj2("200", json.raw(response_object("Stored run payload")), "404", json.raw(response_object("Run missing")))
-    let health_responses = util.json_obj1("200", json.raw(response_object("Health status")))
+    let session_responses = util.json_obj2("200", json.raw(session_response_object("Session created or loaded")), "403", json.raw(response_object("Forbidden")))
+    let message_responses = util.json_obj3("200", json.raw(message_response_object("Assistant turn completed")), "403", json.raw(message_response_object("Prompt denied")), "502", json.raw(message_response_object("Provider failure")))
+    let tool_responses = util.json_obj3("200", json.raw(tool_rpc_response_object("Tool finished successfully with a strict tool RPC envelope")), "500", json.raw(tool_rpc_response_object("Tool failed with a strict tool RPC envelope")), "403", json.raw(response_object("Forbidden")))
+    let run_responses = util.json_obj2("200", json.raw(run_response_object("Stored run payload")), "404", json.raw(response_object("Run missing")))
+    let health_responses = util.json_obj1("200", json.raw(health_response_object("Health status")))
+    let tool_run_request_body = api.rpc.request_body_json("Strict tool RPC envelope for single, sequence, or parallel tool execution.", api.rpc.request_schema_name(), "true")
+    let session_request_body = api.rpc.request_body_json("Session create or reset payload.", api.rpc.session_request_schema_name(), "false")
+    let message_request_body = api.rpc.request_body_json("Runtime chat message payload.", api.rpc.message_request_schema_name(), "true")
 
     let session_paths = map.new()
-    discard map.set(session_paths, "post", json.raw(operation_object("Create or reset a session", "createSession", util.json_arr1(json.str("sessions")), session_responses)))
+    discard map.set(session_paths, "post", json.raw(operation_object("Create or reset a session", "createSession", util.json_arr1(json.str("sessions")), session_responses, session_request_body)))
 
     let session_by_id_paths = map.new()
-    discard map.set(session_by_id_paths, "get", json.raw(operation_object("Load session state", "getSession", util.json_arr1(json.str("sessions")), session_responses)))
+    discard map.set(session_by_id_paths, "get", json.raw(operation_object("Load session state", "getSession", util.json_arr1(json.str("sessions")), session_responses, "")))
 
     let message_paths = map.new()
-    discard map.set(message_paths, "post", json.raw(operation_object("Send a message through the runtime brain", "postMessage", util.json_arr1(json.str("messages")), message_responses)))
+    discard map.set(message_paths, "post", json.raw(operation_object("Send a message through the runtime brain", "postMessage", util.json_arr1(json.str("messages")), message_responses, message_request_body)))
 
     let tools_paths = map.new()
-    discard map.set(tools_paths, "get", json.raw(operation_object("List registered tools", "listTools", util.json_arr1(json.str("tools")), util.json_obj1("200", json.raw(response_object("Tool inventory"))))))
-    discard map.set(tools_paths, "post", json.raw(operation_object("Refresh the tool registry", "registerTools", util.json_arr1(json.str("tools")), util.json_obj1("200", json.raw(response_object("Registry refreshed"))))))
+    discard map.set(tools_paths, "get", json.raw(operation_object("List registered tools", "listTools", util.json_arr1(json.str("tools")), util.json_obj1("200", json.raw(tools_response_object("Tool inventory"))), "")))
+    discard map.set(tools_paths, "post", json.raw(operation_object("Refresh the tool registry", "registerTools", util.json_arr1(json.str("tools")), util.json_obj1("200", json.raw(response_object("Registry refreshed"))), "")))
 
     let tool_run_paths = map.new()
-    discard map.set(tool_run_paths, "post", json.raw(operation_object("Execute a tool by id", "runTool", util.json_arr1(json.str("tools")), tool_responses)))
+    discard map.set(tool_run_paths, "post", json.raw(operation_object("Execute a tool by id", "runTool", util.json_arr1(json.str("tools")), tool_responses, tool_run_request_body)))
 
     let run_paths = map.new()
-    discard map.set(run_paths, "get", json.raw(operation_object("Fetch a stored run envelope", "getRun", util.json_arr1(json.str("runs")), run_responses)))
+    discard map.set(run_paths, "get", json.raw(operation_object("Fetch a stored run envelope", "getRun", util.json_arr1(json.str("runs")), run_responses, "")))
 
     let health_paths = map.new()
-    discard map.set(health_paths, "get", json.raw(operation_object("Runtime health check", "getHealth", util.json_arr1(json.str("health")), health_responses)))
+    discard map.set(health_paths, "get", json.raw(operation_object("Runtime health check", "getHealth", util.json_arr1(json.str("health")), health_responses, "")))
 
     let paths = map.new()
     discard map.set(paths, "/sessions", json.raw(json.object(session_paths)))
@@ -76,9 +100,17 @@ fn export_spec() -> i32 {
     discard map.set(schemas, "SessionState", json.raw(util.json_obj3("type", json.str("object"), "description", json.str("durable session state"), "additionalProperties", json.raw("true"))))
     discard map.set(schemas, "ToolRecord", json.raw(util.json_obj3("type", json.str("object"), "description", json.str("registered tool metadata"), "additionalProperties", json.raw("true"))))
     discard map.set(schemas, "RunRecord", json.raw(util.json_obj3("type", json.str("object"), "description", json.str("tool or assistant run payload"), "additionalProperties", json.raw("true"))))
-    discard map.set(schemas, "ToolRpcSingleRequest", json.raw(api.rpc.single_request_schema_json()))
-    discard map.set(schemas, "ToolRpcBatchRequest", json.raw(api.rpc.batch_request_schema_json()))
-    discard map.set(schemas, "ToolRpcResponse", json.raw(api.rpc.response_schema_json()))
+    discard map.set(schemas, api.rpc.session_request_schema_name(), json.raw(api.rpc.session_request_schema_json()))
+    discard map.set(schemas, api.rpc.session_response_schema_name(), json.raw(api.rpc.session_response_schema_json()))
+    discard map.set(schemas, api.rpc.message_request_schema_name(), json.raw(api.rpc.message_request_schema_json()))
+    discard map.set(schemas, api.rpc.message_response_schema_name(), json.raw(api.rpc.message_response_schema_json()))
+    discard map.set(schemas, api.rpc.tools_response_schema_name(), json.raw(api.rpc.tools_response_schema_json()))
+    discard map.set(schemas, api.rpc.run_response_schema_name(), json.raw(api.rpc.run_response_schema_json()))
+    discard map.set(schemas, api.rpc.health_response_schema_name(), json.raw(api.rpc.health_response_schema_json()))
+    discard map.set(schemas, api.rpc.request_schema_name(), json.raw(api.rpc.request_schema_json()))
+    discard map.set(schemas, api.rpc.single_request_schema_name(), json.raw(api.rpc.single_request_schema_json()))
+    discard map.set(schemas, api.rpc.batch_request_schema_name(), json.raw(api.rpc.batch_request_schema_json()))
+    discard map.set(schemas, api.rpc.response_schema_name(), json.raw(api.rpc.response_schema_json()))
 
     let components = util.json_obj1("schemas", json.raw(json.object(schemas)))
     let servers = util.json_arr3(
