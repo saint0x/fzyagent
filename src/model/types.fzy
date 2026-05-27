@@ -324,6 +324,16 @@ fn session_doc_json(session_id: str, state: str, turn_count: str, last_run_id: s
     return json.object(payload)
 }
 
+fn session_meta_json(updated_at: str, provider: str, model: str, history_path: str, runs_path: str) -> str {
+    return util.json_obj5(
+        "updated_at", json.str(updated_at),
+        "provider", json.str(provider),
+        "model", json.str(model),
+        "history_path", json.str(history_path),
+        "runs_path", json.str(runs_path),
+    )
+}
+
 fn session_index_json(session_id: str, state: str, updated_at: str, session_path: str) -> str {
     let index = map.new()
     discard map.set(index, "status", json.str(control_ok_label()))
@@ -536,6 +546,38 @@ fn batch_tool_result_payload_json(tool: str, status: str, steps_json: str) -> st
     return util.json_obj3("tool", json.str(tool), "status", json.str(status), "steps", json.raw(steps_json))
 }
 
+fn process_streams_json(stdout: str, stderr: str) -> str {
+    return util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
+}
+
+fn shell_result_payload_json(status: str, exit_code: str, stdout: str, stderr: str) -> str {
+    return util.json_obj3(
+        "status", json.str(status),
+        "exit_code", json.str(exit_code),
+        "streams", json.raw(process_streams_json(stdout, stderr)),
+    )
+}
+
+fn tool_command_payload_json(tool_id: str, status: str, command: str, stdout: str, stderr: str, meta_json: str) -> str {
+    return util.json_obj5(
+        "tool", json.str(tool_id),
+        "status", json.str(status),
+        "command", json.str(command),
+        "streams", json.raw(process_streams_json(stdout, stderr)),
+        "meta", json.raw(meta_json),
+    )
+}
+
+fn tool_grep_payload_json(tool_id: str, status: str, pattern: str, target: str, stdout: str, stderr: str) -> str {
+    let meta = util.json_obj2("pattern", json.str(pattern), "target", json.str(target))
+    return util.json_obj4(
+        "tool", json.str(tool_id),
+        "status", json.str(status),
+        "meta", json.raw(meta),
+        "streams", json.raw(process_streams_json(stdout, stderr)),
+    )
+}
+
 fn registry_tool_json(tool_id: str, description: str, kind: str, health: str, mode: str, origin: str, execution_model: str, supports_sequence: str, supports_parallel: str, rpc_protocol: str, transport: str, input_schema_json: str) -> str {
     let payload = map.new()
     discard map.set(payload, "id", json.str(tool_id))
@@ -662,6 +704,25 @@ fn runtime_event_json(event: str, component: str, clock: str, status: str) -> st
         "clock", json.str(clock),
         "status", json.str(status),
     )
+}
+
+fn telemetry_runtime_json(workers: str, host: str, port: str) -> str {
+    return util.json_obj3(
+        "workers", json.str(workers),
+        "host", json.str(host),
+        "port", json.str(port),
+    )
+}
+
+fn telemetry_payload_json(event: str, status: str, clock: str, runtime_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "event", json.str(event))
+    discard map.set(payload, "status", json.str(status))
+    discard map.set(payload, "clock", json.str(clock))
+    if runtime_json != "" {
+        discard map.set(payload, "runtime", json.raw(runtime_json))
+    }
+    return json.object(payload)
 }
 
 fn runtime_limits_json(thread_limit: str, queue_limit: str, memory_limit: str, policy: str) -> str {

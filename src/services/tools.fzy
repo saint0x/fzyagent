@@ -307,9 +307,7 @@ fn shell_payload_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) ->
     let status = status_from_exit_code(exit_code)
     let stdout = proc.stdout(handle)
     let stderr = proc.stderr(handle)
-    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
-    let payload = util.json_obj3("status", json.str(status), "exit_code", json.str(str.from_i32(exit_code)), "streams", json.raw(streams))
-    return payload
+    return model.types.shell_result_payload_json(status, str.from_i32(exit_code), stdout, stderr)
 }
 
 fn is_lower_letter(ch: str) -> i32 {
@@ -771,9 +769,8 @@ fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str)
     checkpoint()
     let stdout = proc.stdout(handle)
     let stderr = proc.stderr(handle)
-    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
     let meta = util.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("bounded"))
-    let payload = util.json_obj5("tool", json.str(tool_id), "status", json.str(status), "command", json.str(command), "streams", json.raw(streams), "meta", json.raw(meta))
+    let payload = model.types.tool_command_payload_json(tool_id, status, command, stdout, stderr, meta)
     fs.write_file(out_path, payload)
     fs.write_file(last_run_path_for(tool_id), payload)
     return shell_result_code(exit_code)
@@ -789,9 +786,7 @@ fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, ou
     checkpoint()
     let stdout = proc.stdout(handle)
     let stderr = proc.stderr(handle)
-    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
-    let meta = util.json_obj2("pattern", json.str(pattern), "target", json.str(target))
-    let payload = util.json_obj4("tool", json.str(tool_id), "status", json.str(status), "meta", json.raw(meta), "streams", json.raw(streams))
+    let payload = model.types.tool_grep_payload_json(tool_id, status, pattern, target, stdout, stderr)
     fs.write_file(out_path, payload)
     fs.write_file(last_run_path_for(tool_id), payload)
     return grep_result_code(exit_code)

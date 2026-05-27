@@ -99,12 +99,12 @@ fn excerpt(text: str, max_chars: i32) -> str {
 }
 
 fn session_doc_for(session_id: str, state: str, turn_count: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str) -> str {
-    let meta = util.json_obj5(
-        "updated_at", json.str(now_label()),
-        "provider", json.str("anthropic"),
-        "model", json.str(services.anthropic.default_model_name()),
-        "history_path", json.str(session_messages_path(session_id)),
-        "runs_path", json.str(session_runs_path(session_id)),
+    let meta = model.types.session_meta_json(
+        now_label(),
+        "anthropic",
+        services.anthropic.default_model_name(),
+        session_messages_path(session_id),
+        session_runs_path(session_id),
     )
     return model.types.session_doc_json(
         normalize_session_id(session_id),

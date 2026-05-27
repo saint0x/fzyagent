@@ -8,12 +8,8 @@ fn telemetry_path() -> str {
 fn boot_metrics() -> i32 {
     fs.mkdir("/tmp/fzyagent")
     discard time.now()
-    let runtime = util.json_obj3(
-        "workers", json.str(env.get("AGENT_WORKERS")),
-        "host", json.str(env.get("AGENT_HOST")),
-        "port", json.str(env.get("AGENT_PORT")),
-    )
-    let payload = util.json_obj4("event", json.str("boot_metrics"), "status", json.str("ok"), "clock", json.str("sampled"), "runtime", json.raw(runtime))
+    let runtime = model.types.telemetry_runtime_json(env.get("AGENT_WORKERS"), env.get("AGENT_HOST"), env.get("AGENT_PORT"))
+    let payload = model.types.telemetry_payload_json("boot_metrics", "ok", "sampled", runtime)
     fs.write_file(telemetry_path(), payload)
     return 0
 }
@@ -23,7 +19,7 @@ fn emit_turn_latency() -> i32 {
         return 0
     }
     discard time.now()
-    let payload = util.json_obj3("event", json.str("emit_turn_latency"), "status", json.str("ok"), "clock", json.str("sampled"))
+    let payload = model.types.telemetry_payload_json("emit_turn_latency", "ok", "sampled", "")
     fs.write_file(telemetry_path(), payload)
     return 0
 }
