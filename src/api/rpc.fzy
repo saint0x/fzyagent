@@ -281,10 +281,64 @@ fn health_response_schema_json() -> str {
     return object_schema_json(properties, required_list4("status", "service", "provider", "model"))
 }
 
-fn protocol_doc_json() -> str {
+fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
+    return util.json_obj3(
+        "step_id", json.str(step_id),
+        "tool_id", json.str(tool_id),
+        "tool_input", json.raw(input_json),
+    )
+}
+
+fn single_example_json() -> str {
+    return util.json_obj5(
+        "protocol", json.str(tool_protocol_version()),
+        "request_id", json.str("req_example"),
+        "op", json.str("run"),
+        "tool_id", json.str("bash"),
+        "input", json.raw(util.json_obj1("command", json.str("printf hi"))),
+    )
+}
+
+fn batch_example_json() -> str {
     let batch_steps = list.new()
-    discard list.push(batch_steps, json.raw(util.json_obj3("step_id", json.str("a"), "tool_id", json.str("bash"), "tool_input", json.raw(util.json_obj1("command", json.str("printf a"))))))
-    discard list.push(batch_steps, json.raw(util.json_obj3("step_id", json.str("b"), "tool_id", json.str("grep_search"), "tool_input", json.raw(util.json_obj2("pattern", json.str("fn "), "target", json.str("src"))))))
+    discard list.push(batch_steps, json.raw(batch_step_example_json("a", "bash", util.json_obj1("command", json.str("printf a")))))
+    discard list.push(batch_steps, json.raw(batch_step_example_json("b", "grep_search", util.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
+    return util.json_obj5(
+        "protocol", json.str(tool_protocol_version()),
+        "request_id", json.str("req_batch"),
+        "op", json.str("run"),
+        "execution", json.str("parallel"),
+        "steps", json.raw(json.array(batch_steps)),
+    )
+}
+
+fn method_doc_json(name: str, path: str, verb: str, purpose: str) -> str {
+    return util.json_obj4(
+        "name", json.str(name),
+        "path", json.str(path),
+        "verb", json.str(verb),
+        "purpose", json.str(purpose),
+    )
+}
+
+fn runtime_schema_names_json() -> str {
+    return util.json_obj4(
+        "session_request", json.str(session_request_schema_name()),
+        "session_response", json.str(session_response_schema_name()),
+        "message_request", json.str(message_request_schema_name()),
+        "message_response", json.str(message_response_schema_name()),
+    )
+}
+
+fn service_schema_names_json() -> str {
+    return util.json_obj3(
+        "tools_response", json.str(tools_response_schema_name()),
+        "run_response", json.str(run_response_schema_name()),
+        "health_response", json.str(health_response_schema_name()),
+    )
+}
+
+fn protocol_doc_json() -> str {
     let payload = map.new()
     discard map.set(payload, "protocol", json.str(tool_protocol_version()))
     discard map.set(payload, "transport", json.str("http+routed-rpc"))
@@ -303,19 +357,19 @@ fn protocol_doc_json() -> str {
     discard map.set(payload, "tools_response_schema_name", json.str(tools_response_schema_name()))
     discard map.set(payload, "run_response_schema_name", json.str(run_response_schema_name()))
     discard map.set(payload, "health_response_schema_name", json.str(health_response_schema_name()))
-    discard map.set(payload, "single_example", json.raw(util.json_obj5("protocol", json.str(tool_protocol_version()), "request_id", json.str("req_example"), "op", json.str("run"), "tool_id", json.str("bash"), "input", json.raw(util.json_obj1("command", json.str("printf hi"))))))
-    discard map.set(payload, "batch_example", json.raw(util.json_obj5("protocol", json.str(tool_protocol_version()), "request_id", json.str("req_batch"), "op", json.str("run"), "execution", json.str("parallel"), "steps", json.raw(json.array(batch_steps)))))
+    discard map.set(payload, "single_example", json.raw(single_example_json()))
+    discard map.set(payload, "batch_example", json.raw(batch_example_json()))
     return json.object(payload)
 }
 
 fn rpc_touch() -> i32 {
     fs.mkdir("/tmp/fzyagent")
     let methods = list.new()
-    discard list.push(methods, json.raw(util.json_obj4("name", json.str("CreateSession"), "path", json.str("/sessions"), "verb", json.str("POST"), "purpose", json.str("allocate or reset session state"))))
-    discard list.push(methods, json.raw(util.json_obj4("name", json.str("PostMessage"), "path", json.str("/sessions/{session_id}/messages"), "verb", json.str("POST"), "purpose", json.str("run an agent turn"))))
-    discard list.push(methods, json.raw(util.json_obj4("name", json.str("ListTools"), "path", json.str("/tools"), "verb", json.str("GET"), "purpose", json.str("discover runtime tools"))))
-    discard list.push(methods, json.raw(util.json_obj4("name", json.str("RunTool"), "path", json.str("/tools/{tool_id}/run"), "verb", json.str("POST"), "purpose", json.str("execute a single tool request"))))
-    discard list.push(methods, json.raw(util.json_obj4("name", json.str("RunToolBatch"), "path", json.str("/tools/{tool_id}/run"), "verb", json.str("POST"), "purpose", json.str("execute sequence or parallel batched requests through the strict tool RPC envelope"))))
+    discard list.push(methods, json.raw(method_doc_json("CreateSession", "/sessions", "POST", "allocate or reset session state")))
+    discard list.push(methods, json.raw(method_doc_json("PostMessage", "/sessions/{session_id}/messages", "POST", "run an agent turn")))
+    discard list.push(methods, json.raw(method_doc_json("ListTools", "/tools", "GET", "discover runtime tools")))
+    discard list.push(methods, json.raw(method_doc_json("RunTool", "/tools/{tool_id}/run", "POST", "execute a single tool request")))
+    discard list.push(methods, json.raw(method_doc_json("RunToolBatch", "/tools/{tool_id}/run", "POST", "execute sequence or parallel batched requests through the strict tool RPC envelope")))
     let payload = util.json_obj5(
         "status", json.str("ok"),
         "transport", json.str("http+routed-rpc"),
@@ -330,17 +384,8 @@ fn rpc_touch() -> i32 {
     discard map.set(exported, "project", json.str(json.get_str(payload_map, "project")))
     discard map.set(exported, "methods", json.raw(json.get_str(json.get(payload_map, "methods"), "raw")))
     discard map.set(exported, "tool_protocol", json.raw(json.get_str(json.get(payload_map, "tool_protocol"), "raw")))
-    discard map.set(exported, "runtime_schemas", json.raw(util.json_obj4(
-        "session_request", json.str(session_request_schema_name()),
-        "session_response", json.str(session_response_schema_name()),
-        "message_request", json.str(message_request_schema_name()),
-        "message_response", json.str(message_response_schema_name())
-    )))
-    discard map.set(exported, "service_schemas", json.raw(util.json_obj3(
-        "tools_response", json.str(tools_response_schema_name()),
-        "run_response", json.str(run_response_schema_name()),
-        "health_response", json.str(health_response_schema_name())
-    )))
+    discard map.set(exported, "runtime_schemas", json.raw(runtime_schema_names_json()))
+    discard map.set(exported, "service_schemas", json.raw(service_schema_names_json()))
     fs.write_file(rpc_manifest_path(), json.object(exported))
     return 0
 }

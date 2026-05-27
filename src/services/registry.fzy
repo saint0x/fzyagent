@@ -241,12 +241,7 @@ fn build_registry_payload() -> str {
     let anthropic = list.new()
     discard append_builtin_tools(tools, anthropic)
     discard append_custom_tools(tools, anthropic)
-    let meta = util.json_obj4(
-        "registry_version", json.str("2026-05-27"),
-        "provider", json.str("anthropic"),
-        "deterministic", json.str("true"),
-        "project", json.str("fzyagent"),
-    )
+    let meta = model.types.registry_meta_json("2026-05-27", "anthropic", "true", "fzyagent")
     fs.write_file(anthropic_tools_array_path(), json.array(anthropic))
     return model.types.registry_payload_json(json.array(tools), meta)
 }
@@ -366,15 +361,15 @@ fn export_index_and_summary() -> i32 {
         idx += 1
     }
 
-    let mode_counts = util.json_obj4(
-        "process", json.str(str.from_i32(process_tools)),
-        "workflow", json.str(str.from_i32(workflow_tools)),
-        "browser", json.str(str.from_i32(browser_tools)),
-        "docs", json.str(str.from_i32(docs_tools)),
+    let mode_counts = model.types.registry_kind_counts_json(
+        str.from_i32(process_tools),
+        str.from_i32(workflow_tools),
+        str.from_i32(browser_tools),
+        str.from_i32(docs_tools),
     )
-    let origin_counts = util.json_obj2(
-        "builtin", json.str(str.from_i32(builtin)),
-        "custom", json.str(str.from_i32(custom)),
+    let origin_counts = model.types.registry_origin_counts_json(
+        str.from_i32(builtin),
+        str.from_i32(custom),
     )
     let summary = model.types.registry_summary_json(str.from_i32(total), str.from_i32(healthy_tools), origin_counts, mode_counts, json.array(ids))
     let hints = model.types.registry_hints_json(json.array(search), json.array(browser), json.array(authoring), json.array(workflows))

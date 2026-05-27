@@ -291,7 +291,7 @@ fn handle_tools_register(conn: HttpHandle) -> i32 {
         log.info("http.handle_tools_register", util.log_fields2("component", "http", "handler", "tools_register"))
     }
     post_tools()
-    let body = util.json_obj3("status", json.str("ok"), "event", json.str("tool_registered"), "tools", json.raw(registry.list_tools_json()))
+    let body = model.types.api_event_tools_json("tool_registered", registry.list_tools_json())
     http.write_json(conn, 200, body)
     return 0
 }
@@ -311,7 +311,7 @@ fn handle_tools_delete(conn: HttpHandle, path: str) -> i32 {
     }
     delete_tool()
     let tool_id = tool_id_from_tool_path(path)
-    let body = util.json_obj3("status", json.str("ok"), "event", json.str("tool_deleted"), "tool_id", json.str(tool_id))
+    let body = model.types.api_event_tool_id_json("tool_deleted", tool_id)
     http.write_json(conn, 200, body)
     return 0
 }

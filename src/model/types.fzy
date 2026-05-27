@@ -398,6 +398,22 @@ fn provider_payload_json(provider: str, assistant: str, raw_response: str, tool_
     return json.object(payload)
 }
 
+fn api_event_tools_json(event: str, tools_json: str) -> str {
+    return util.json_obj3(
+        "status", json.str(control_ok_label()),
+        "event", json.str(event),
+        "tools", json.raw(tools_json),
+    )
+}
+
+fn api_event_tool_id_json(event: str, tool_id: str) -> str {
+    return util.json_obj3(
+        "status", json.str(control_ok_label()),
+        "event", json.str(event),
+        "tool_id", json.str(tool_id),
+    )
+}
+
 fn turn_result_json(status: ControlStatus, provider: str, assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str, message: str, transport_error: str) -> str {
     let payload = map.new()
     discard map.set(payload, "status", json.str(control_status_text(status)))
@@ -554,8 +570,33 @@ fn registry_payload_json(tools_json: str, meta_json: str) -> str {
     return json.object(payload)
 }
 
+fn registry_meta_json(registry_version: str, provider: str, deterministic: str, project: str) -> str {
+    return util.json_obj4(
+        "registry_version", json.str(registry_version),
+        "provider", json.str(provider),
+        "deterministic", json.str(deterministic),
+        "project", json.str(project),
+    )
+}
+
 fn registry_status_json(message: str, updated_at: str) -> str {
     return util.json_obj3("status", json.str(control_ok_label()), "updated_at", json.str(updated_at), "message", json.str(message))
+}
+
+fn registry_origin_counts_json(builtin: str, custom: str) -> str {
+    return util.json_obj2(
+        "builtin", json.str(builtin),
+        "custom", json.str(custom),
+    )
+}
+
+fn registry_kind_counts_json(process_tools: str, workflow_tools: str, browser_tools: str, docs_tools: str) -> str {
+    return util.json_obj4(
+        "process", json.str(process_tools),
+        "workflow", json.str(workflow_tools),
+        "browser", json.str(browser_tools),
+        "docs", json.str(docs_tools),
+    )
 }
 
 fn registry_summary_json(tool_count: str, healthy_count: str, origins_json: str, kinds_json: str, tool_ids_json: str) -> str {
