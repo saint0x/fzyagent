@@ -3,23 +3,119 @@ fn boot() -> i32 {
     return 0
 }
 
+fn default_session_id() -> str {
+    return persistence.default_session_id()
+}
+
+fn boot_session(session_id: str) -> i32 {
+    persistence.load_session_for(session_id)
+    return 0
+}
+
 fn create_session() -> i32 {
-    model.contracts.require_active_session()
-    persistence.save_session_event("create_session", "active", "0")
+    return create_session_for(default_session_id(), "")
+}
+
+fn create_session_for(session_id: str, request_id: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    boot_session(id)
+    let payload = persistence.session_doc_for(id, "active", "0", "latest", "", "", request_id, "0")
+    persistence.save_session_for(id, payload)
+    persistence.save_session_event(id, "create_session", "active", "0")
+    return 0
+}
+
+fn reset_session_for(session_id: str, request_id: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    discard persistence.clear_session_files(id)
+    let payload = persistence.session_doc_for(id, "active", "0", "latest", "", "", request_id, "0")
+    persistence.save_session_for(id, payload)
+    persistence.save_session_event(id, "reset_session", "active", "0")
     return 0
 }
 
 fn get_session() -> i32 {
-    persistence.load_session()
+    return get_session_for(default_session_id())
+}
+
+fn get_session_for(session_id: str) -> i32 {
+    persistence.load_session_for(session_id)
     return 0
 }
 
 fn get_session_json() -> str {
-    return persistence.load_session_json()
+    return get_session_json_for(default_session_id())
+}
+
+fn get_session_json_for(session_id: str) -> str {
+    return persistence.load_session_json_for(session_id)
 }
 
 fn post_message() -> i32 {
-    persistence.save_session_event("post_message", "active", "1")
+    return post_message_for(default_session_id(), "", "", "")
+}
+
+fn post_message_for(session_id: str, prompt: str, request_id: str, run_id: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    boot_session(id)
+    discard persistence.append_message(id, "user", "prompt", prompt, run_id, request_id)
+    discard persistence.mark_session_turn(id)
+    let current = persistence.load_session_json_for(id)
+    let parsed = json.parse(current)
+    discard persistence.update_session_summary(
+        id,
+        "active",
+        run_id,
+        prompt,
+        json.get_str(parsed, "last_assistant_message"),
+        request_id,
+        json.get_str(parsed, "tool_count"),
+    )
+    persistence.save_session_event(id, "post_message", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
     telemetry.emit_turn_latency()
     return 0
+}
+
+fn record_assistant_for(session_id: str, content: str, request_id: str, run_id: str, tool_count: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    boot_session(id)
+    discard persistence.append_message(id, "assistant", "response", content, run_id, request_id)
+    let current = persistence.load_session_json_for(id)
+    let parsed = json.parse(current)
+    discard persistence.update_session_summary(
+        id,
+        "active",
+        run_id,
+        json.get_str(parsed, "last_user_message"),
+        content,
+        request_id,
+        tool_count,
+    )
+    persistence.save_session_event(id, "assistant_response", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
+    return 0
+}
+
+fn record_tool_run_for(session_id: str, tool_id: str, run_id: str, status: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    boot_session(id)
+    discard persistence.append_run_link(id, run_id, tool_id, status)
+    let current = persistence.load_session_json_for(id)
+    let parsed = json.parse(current)
+    let current_tool_count = json.get_str(parsed, "tool_count")
+    let next_tool_count = if current_tool_count == "" { "1" } else { str.from_i32(str.len(current_tool_count) + 1) }
+    discard persistence.update_session_summary(
+        id,
+        "active",
+        run_id,
+        json.get_str(parsed, "last_user_message"),
+        json.get_str(parsed, "last_assistant_message"),
+        json.get_str(parsed, "last_request_id"),
+        next_tool_count,
+    )
+    persistence.save_session_event(id, "tool_run", "active", json.get_str(json.parse(persistence.load_session_json_for(id)), "turn_count"))
+    return 0
+}
+
+fn transcript_excerpt(session_id: str) -> str {
+    return persistence.transcript_excerpt(session_id)
 }

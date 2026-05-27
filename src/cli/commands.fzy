@@ -1,8 +1,189 @@
-use core.time;
-use core.log;
+use core.fs;
+use core.process;
+use core.term;
+
+fn active_prompt_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
+}
 
 fn boot() -> i32 {
-    log.info("cli.commands boot", util.log_fields2("component", "cli", "phase", "boot"))
-    time.sleep_ms(100)
+    fs.mkdir("/Users/deepsaint/Desktop/fzyagent/config")
+    if fs.exists(active_prompt_path()) == 0 {
+        fs.write_file(active_prompt_path(), "You are the fzyagent runtime. Be concise, grounded, and tool-aware.\n")
+    }
     return 0
+}
+
+fn mode() -> str {
+    return process.argv_or(1, "serve")
+}
+
+fn arg_count() -> i32 {
+    return process.argv_count()
+}
+
+fn arg(index: i32) -> str {
+    return process.argv_or(index, "")
+}
+
+fn flag_value(flag: str, fallback: str) -> str {
+    let mut idx: i32 = 2
+    while idx < arg_count() {
+        if arg(idx) == flag {
+            return process.argv_or(idx + 1, fallback)
+        }
+        idx = idx + 1
+    }
+    return fallback
+}
+
+fn has_flag(flag: str) -> i32 {
+    if process.has_flag(flag) == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn session_name() -> str {
+    return flag_value("--session", "default")
+}
+
+fn once_prompt() -> str {
+    return flag_value("--once", "")
+}
+
+pub fn print_help() -> i32 {
+    discard render.title("fzyagent", "native chat")
+    discard render.blank()
+    discard render.print_help_section("modes")
+    discard render.print_help_row("serve", "run the HTTP agent runtime")
+    discard render.print_help_row("chat --session <name>", "run the native terminal chat client")
+    discard render.blank()
+    discard render.print_help_section("chat flags")
+    discard render.print_help_row("--session <name>", "select durable session id")
+    discard render.print_help_row("--once <prompt>", "run one turn and exit")
+    discard render.print_help_row("--reset", "clear the durable session before chat")
+    discard render.print_help_row("--help", "show this help")
+    return 0
+}
+
+fn render_tool_event(parsed: JsonHandle, index: str) -> i32 {
+    let event = json.get(parsed, index)
+    let tool_name = json.get_str(event, "tool")
+    if tool_name == "" {
+        return 0
+    }
+    let input_raw = json.get_str(json.get(event, "input"), "raw")
+    let outcome = json.get(event, "outcome")
+    let status = json.get_str(outcome, "status")
+    let result_raw = json.get_str(json.get(outcome, "result"), "raw")
+    discard render.print_tool_call(tool_name, input_raw)
+    discard render.print_tool_result(tool_name, status, result_raw)
+    return 0
+}
+
+fn render_tool_events(events_raw: str) -> i32 {
+    if events_raw == "" || events_raw == "[]" {
+        return 0
+    }
+    let parsed = json.parse(events_raw)
+    discard render_tool_event(parsed, "0")
+    discard render_tool_event(parsed, "1")
+    discard render_tool_event(parsed, "2")
+    discard render_tool_event(parsed, "3")
+    return 0
+}
+
+fn assistant_text(result: JsonHandle) -> str {
+    let assistant = json.get_str(result, "assistant")
+    if assistant != "" {
+        return assistant
+    }
+    let raw = json.get_str(result, "raw_response")
+    if raw != "" {
+        return raw
+    }
+    return "(empty response)"
+}
+
+fn run_chat_turn(session_id: str, prompt: str) -> i32 {
+    let request_id = str.concat("cli-", str.from_i32(time.now()))
+    let filtered = services.safety.filter_prompt_text(prompt)
+    if services.safety.allow_prompt(filtered) == 0 {
+        discard render.print_error("prompt denied by safety policy")
+        return 13
+    }
+    discard services.sessions.post_message_for(session_id, filtered, request_id, "anthropic_latest")
+    let raw = runtime.agent.run_session_turn(session_id, filtered, request_id)
+    let parsed = json.parse(raw)
+    let status = json.get_str(parsed, "status")
+    let tool_events_raw = json.get_str(json.get(parsed, "tool_events"), "raw")
+    discard render_tool_events(tool_events_raw)
+    discard render.print_assistant(services.safety.filter_tool_response_text(assistant_text(parsed)))
+    if status == "ok" {
+        return 0
+    }
+    discard render.print_error(str.concat("runtime turn failed: ", raw))
+    return 13
+}
+
+fn chat_banner() -> i32 {
+    discard render.title(
+        "fzyagent",
+        str.concat("chat | session=", session_name(), " | model=", services.anthropic.default_model_name()),
+    )
+    discard render.print_info("type /exit to quit, /reset to clear saved history")
+    return 0
+}
+
+fn chat_once() -> i32 {
+    let session_id = session_name()
+    if has_flag("--reset") == 1 {
+        discard services.sessions.reset_session_for(session_id, str.concat("cli-reset-", str.from_i32(time.now())))
+    } else {
+        discard services.sessions.create_session_for(session_id, str.concat("cli-open-", str.from_i32(time.now())))
+    }
+    return run_chat_turn(session_id, once_prompt())
+}
+
+fn chat_repl() -> i32 {
+    let session_id = session_name()
+    if has_flag("--reset") == 1 {
+        discard services.sessions.reset_session_for(session_id, str.concat("cli-reset-", str.from_i32(time.now())))
+    } else {
+        discard services.sessions.create_session_for(session_id, str.concat("cli-open-", str.from_i32(time.now())))
+    }
+    discard chat_banner()
+    loop {
+        let line = term.prompt_line(str.concat(render.user_prompt(), " "))
+        if line == "" {
+            if term.stdin_eof() == 1 {
+                discard render.blank()
+                return 0
+            }
+            continue
+        }
+        if line == "/exit" {
+            return 0
+        }
+        if line == "/reset" {
+            discard services.sessions.reset_session_for(session_id, str.concat("cli-reset-", str.from_i32(time.now())))
+            discard render.print_ok("session reset")
+            continue
+        }
+        let code = run_chat_turn(session_id, line)
+        if code != 0 {
+            return code
+        }
+    }
+}
+
+pub fn run_chat() -> i32 {
+    if has_flag("--help") == 1 {
+        return print_help()
+    }
+    if once_prompt() != "" {
+        return chat_once()
+    }
+    return chat_repl()
 }

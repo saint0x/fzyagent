@@ -1,0 +1,106 @@
+fn indent_block(text: str, prefix: str) -> str {
+    if text == "" {
+        return prefix
+    }
+    return logger.indent(text, prefix)
+}
+
+fn soft_wrap(text: str) -> str {
+    return text
+}
+
+fn normalize_inline_json(text: str) -> str {
+    let spaced = str.replace(text, ",\"", ", \"")
+    let with_open = str.replace(spaced, "{", "{ ")
+    let with_close = str.replace(with_open, "}", " }")
+    let with_array_open = str.replace(with_close, "[", "[ ")
+    return str.replace(with_array_open, "]", " ]")
+}
+
+fn block_label(text: str) -> str {
+    return logger.muted(text)
+}
+
+pub fn blank() -> i32 {
+    return logger.blank()
+}
+
+pub fn title(label: str, value: str) -> i32 {
+    return logger.print_line(str.concat(logger.accent(label), " ", value))
+}
+
+pub fn help_label(label: str) -> str {
+    return logger.muted(label)
+}
+
+pub fn help_command(label: str) -> str {
+    return logger.command(label)
+}
+
+pub fn user_prompt() -> str {
+    return logger.user_tag()
+}
+
+pub fn print_help_row(left: str, right: str) -> i32 {
+    return logger.print_line(str.concat("  ", logger.pad_command(help_command(left), 24), help_label(right)))
+}
+
+pub fn print_help_section(title_text: str) -> i32 {
+    return logger.print_line(logger.muted(title_text))
+}
+
+pub fn print_info(text: str) -> i32 {
+    return logger.print_info(text)
+}
+
+pub fn print_ok(text: str) -> i32 {
+    return logger.print_ok(text)
+}
+
+pub fn print_warn(text: str) -> i32 {
+    return logger.print_warn(text)
+}
+
+pub fn print_error(text: str) -> i32 {
+    return logger.print_error(text)
+}
+
+pub fn print_assistant(text: str) -> i32 {
+    discard logger.blank()
+    discard logger.print_line(str.concat(logger.assistant_tag(), ">"))
+    discard logger.print_line(indent_block(soft_wrap(text), "  "))
+    discard logger.blank()
+    return 0
+}
+
+fn print_payload_block(label: str, payload: str) -> i32 {
+    let normalized = normalize_inline_json(payload)
+    discard logger.print_line(str.concat("  ", block_label(label)))
+    discard logger.print_line(indent_block(normalized, "    "))
+    return 0
+}
+
+pub fn print_tool_call(tool_name: str, input_raw: str) -> i32 {
+    discard logger.blank()
+    discard logger.print_line(str.concat(logger.tool_call_tag(), ": ", logger.strong(tool_name)))
+    if input_raw == "" || input_raw == "{}" {
+        return print_payload_block("input", "{}")
+    }
+    return print_payload_block("input", input_raw)
+}
+
+pub fn print_tool_result(tool_name: str, status: str, result_raw: str) -> i32 {
+    discard logger.print_line(
+        str.concat(
+            logger.tool_result_tag(status),
+            ": ",
+            logger.strong(tool_name),
+            " ",
+            logger.muted(str.concat("[", status, "]")),
+        ),
+    )
+    if result_raw == "" {
+        return print_payload_block("result", "{}")
+    }
+    return print_payload_block("result", result_raw)
+}

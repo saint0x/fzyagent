@@ -6,6 +6,14 @@ fn registry_path() -> str {
     return "/tmp/fzyagent/registry.json"
 }
 
+fn tools_array_path() -> str {
+    return "/tmp/fzyagent/registry.tools.json"
+}
+
+fn anthropic_tools_array_path() -> str {
+    return "/tmp/fzyagent/registry.anthropic.tools.json"
+}
+
 fn audit_path() -> str {
     return "/tmp/fzyagent/registry.audit.log"
 }
@@ -45,8 +53,24 @@ fn rebuild_registry() -> i32 {
     return 0
 }
 
+fn write_tools_array() -> i32 {
+    let payload = fs.read_file(registry_path())
+    if payload == "" {
+        return 13
+    }
+    let parsed = json.parse(payload)
+    let tools = json.get(parsed, "tools")
+    let raw = json.get_str(tools, "raw")
+    if raw == "" {
+        return 13
+    }
+    fs.write_file(tools_array_path(), raw)
+    return 0
+}
+
 fn load_builtin() -> i32 {
     rebuild_registry()
+    write_tools_array()
     record_audit("load_builtin")
     register_tool()
     return 0
@@ -54,18 +78,21 @@ fn load_builtin() -> i32 {
 
 fn register_tool() -> i32 {
     rebuild_registry()
+    write_tools_array()
     record_audit("register_tool")
     return 0
 }
 
 fn unregister_tool() -> i32 {
     rebuild_registry()
+    write_tools_array()
     record_audit("unregister_tool")
     return 0
 }
 
 fn update_tool() -> i32 {
     rebuild_registry()
+    write_tools_array()
     record_audit("update_tool")
     return 0
 }
@@ -77,6 +104,7 @@ fn get_tool() -> i32 {
 
 fn list_tools() -> i32 {
     rebuild_registry()
+    write_tools_array()
     return 0
 }
 
@@ -99,7 +127,18 @@ fn refresh_runtime() -> i32 {
 
 fn hot_reload() -> i32 {
     rebuild_registry()
+    write_tools_array()
     return 0
+}
+
+fn list_tool_definitions_json() -> str {
+    list_tools()
+    let payload = fs.read_file(anthropic_tools_array_path())
+    if payload == "" {
+        write_tools_array()
+        return fs.read_file(anthropic_tools_array_path())
+    }
+    return payload
 }
 
 fn evict_stale() -> i32 {

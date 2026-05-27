@@ -1,8 +1,13 @@
 use core.fs;
+use core.storage;
 use core.time;
 
 fn state_dir() -> str {
     return "/tmp/fzyagent"
+}
+
+fn sessions_dir() -> str {
+    return "/tmp/fzyagent/sessions"
 }
 
 fn sessions_path() -> str {
@@ -11,6 +16,41 @@ fn sessions_path() -> str {
 
 fn runs_dir() -> str {
     return "/tmp/fzyagent/runs"
+}
+
+fn transcript_excerpt_limit() -> i32 {
+    return 12000
+}
+
+fn default_session_id() -> str {
+    return "demo"
+}
+
+fn normalize_session_id(session_id: str) -> str {
+    if session_id == "" {
+        return default_session_id()
+    }
+    return session_id
+}
+
+fn session_dir(session_id: str) -> str {
+    return str.concat("/tmp/fzyagent/sessions/", normalize_session_id(session_id))
+}
+
+fn session_state_path(session_id: str) -> str {
+    return str.concat(session_dir(session_id), "/session.json")
+}
+
+fn session_messages_path(session_id: str) -> str {
+    return str.concat(session_dir(session_id), "/messages.jsonl")
+}
+
+fn session_turns_path(session_id: str) -> str {
+    return str.concat(session_dir(session_id), "/turns.log")
+}
+
+fn session_runs_path(session_id: str) -> str {
+    return str.concat(session_dir(session_id), "/runs.jsonl")
 }
 
 fn run_path(run_id: str) -> str {
@@ -61,56 +101,211 @@ fn run_path(run_id: str) -> str {
 
 fn ensure_state() -> i32 {
     fs.mkdir(state_dir())
+    fs.mkdir(sessions_dir())
     fs.mkdir(runs_dir())
     return 0
 }
 
-fn session_doc(event: str, state: str, turn_count: str, last_run_id: str) -> str {
-    discard time.now()
-    let meta = util.json_obj4(
-        "event", json.str(event),
-        "updated_at", json.str("sampled"),
-        "provider", json.str("anthropic"),
-        "model", json.str(services.anthropic.default_model_name()),
-    )
-    return util.json_obj5(
-        "status", json.str("ok"),
-        "session_id", json.str("demo"),
-        "state", json.str(state),
-        "turn_count", json.str(turn_count),
-        "meta", json.raw(meta),
-    )
-}
-
-fn save_session() -> i32 {
+fn ensure_session(session_id: str) -> i32 {
     ensure_state()
-    let payload = session_doc("save_session", "active", "0", "latest")
-    fs.write_file(sessions_path(), payload)
+    fs.mkdir(session_dir(session_id))
     return 0
 }
 
-fn save_session_event(event: str, state: str, turn_count: str) -> i32 {
-    ensure_state()
-    let payload = session_doc(event, state, turn_count, "latest")
-    fs.write_file(sessions_path(), payload)
+fn clear_session_files(session_id: str) -> i32 {
+    ensure_session(session_id)
+    discard fs.remove_file(session_state_path(session_id))
+    discard fs.remove_file(session_messages_path(session_id))
+    discard fs.remove_file(session_turns_path(session_id))
+    discard fs.remove_file(session_runs_path(session_id))
+    return 0
+}
+
+fn static_index_path() -> str {
+    return "/tmp/fzyagent/sessions.json"
+}
+
+fn now_label() -> str {
+    return str.from_i32(time.now())
+}
+
+fn excerpt(text: str, max_chars: i32) -> str {
+    let size = str.len(text)
+    if size <= max_chars {
+        return text
+    }
+    return str.slice(text, size - max_chars, size)
+}
+
+fn session_doc_for(session_id: str, state: str, turn_count: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str) -> str {
+    let meta = util.json_obj5(
+        "updated_at", json.str(now_label()),
+        "provider", json.str("anthropic"),
+        "model", json.str(services.anthropic.default_model_name()),
+        "history_path", json.str(session_messages_path(session_id)),
+        "runs_path", json.str(session_runs_path(session_id)),
+    )
+    let payload = map.new()
+    discard map.set(payload, "status", json.str("ok"))
+    discard map.set(payload, "session_id", json.str(normalize_session_id(session_id)))
+    discard map.set(payload, "state", json.str(state))
+    discard map.set(payload, "turn_count", json.str(turn_count))
+    discard map.set(payload, "last_run_id", json.str(last_run_id))
+    discard map.set(payload, "last_request_id", json.str(last_request_id))
+    discard map.set(payload, "last_user_message", json.str(last_user_message))
+    discard map.set(payload, "last_assistant_message", json.str(last_assistant_message))
+    discard map.set(payload, "tool_count", json.str(tool_count))
+    discard map.set(payload, "meta", json.raw(meta))
+    return json.object(payload)
+}
+
+fn default_session_doc_for(session_id: str) -> str {
+    return session_doc_for(session_id, "active", "0", "latest", "", "", "", "0")
+}
+
+fn write_session_index(session_id: str, state: str) -> i32 {
+    let index = map.new()
+    discard map.set(index, "status", json.str("ok"))
+    discard map.set(index, "active_session_id", json.str(normalize_session_id(session_id)))
+    discard map.set(index, "state", json.str(state))
+    discard map.set(index, "updated_at", json.str(now_label()))
+    discard map.set(index, "session_path", json.str(session_state_path(session_id)))
+    let payload = json.object(index)
+    fs.write_file(static_index_path(), payload)
+    return 0
+}
+
+fn save_session_for(session_id: str, payload: str) -> i32 {
+    ensure_session(session_id)
+    fs.write_file(session_state_path(session_id), payload)
+    write_session_index(session_id, json.get_str(json.parse(payload), "state"))
+    return 0
+}
+
+fn save_session() -> i32 {
+    let payload = default_session_doc_for(default_session_id())
+    return save_session_for(default_session_id(), payload)
+}
+
+fn append_line(path: str, line: str) -> i32 {
+    discard storage.atomic_append(path, line)
+    return 0
+}
+
+fn save_session_event(session_id: str, event: str, state: str, turn_count: str) -> i32 {
+    ensure_session(session_id)
+    let current = load_session_json_for(session_id)
+    let parsed = json.parse(current)
+    let last_run_id = json.get_str(parsed, "last_run_id")
+    let last_request_id = json.get_str(parsed, "last_request_id")
+    let last_user = json.get_str(parsed, "last_user_message")
+    let last_assistant = json.get_str(parsed, "last_assistant_message")
+    let tool_count = json.get_str(parsed, "tool_count")
+    let payload = session_doc_for(session_id, state, turn_count, last_run_id, last_user, last_assistant, last_request_id, tool_count)
+    let event_payload = map.new()
+    discard map.set(event_payload, "event", json.str(event))
+    discard map.set(event_payload, "state", json.str(state))
+    discard map.set(event_payload, "turn_count", json.str(turn_count))
+    discard map.set(event_payload, "recorded_at", json.str(now_label()))
+    let event_line = json.object(event_payload)
+    fs.write_file(session_state_path(session_id), payload)
+    append_line(session_turns_path(session_id), str.concat(event_line, "\n"))
+    write_session_index(session_id, state)
+    return 0
+}
+
+fn save_session_event_legacy(event: str, state: str, turn_count: str) -> i32 {
+    return save_session_event(default_session_id(), event, state, turn_count)
+}
+
+fn load_session_for(session_id: str) -> i32 {
+    ensure_session(session_id)
+    if fs.exists(session_state_path(session_id)) == 0 {
+        save_session_for(session_id, default_session_doc_for(session_id))
+    }
     return 0
 }
 
 fn load_session() -> i32 {
-    ensure_state()
-    if fs.exists(sessions_path()) == 0 {
-        save_session()
+    return load_session_for(default_session_id())
+}
+
+fn load_session_json_for(session_id: str) -> str {
+    load_session_for(session_id)
+    let payload = fs.read_file(session_state_path(session_id))
+    if payload == "" {
+        return default_session_doc_for(session_id)
     }
-    return 0
+    return payload
 }
 
 fn load_session_json() -> str {
-    load_session()
-    let payload = fs.read_file(sessions_path())
+    return load_session_json_for(default_session_id())
+}
+
+fn update_session_summary(session_id: str, state: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str) -> i32 {
+    ensure_session(session_id)
+    let current = load_session_json_for(session_id)
+    let parsed = json.parse(current)
+    let current_turn_count = json.get_str(parsed, "turn_count")
+    let payload = session_doc_for(session_id, state, current_turn_count, last_run_id, last_user_message, last_assistant_message, last_request_id, tool_count)
+    return save_session_for(session_id, payload)
+}
+
+fn mark_session_turn(session_id: str) -> i32 {
+    ensure_session(session_id)
+    append_line(session_turns_path(session_id), "turn\n")
+    let count = "tracked"
+    let current = load_session_json_for(session_id)
+    let parsed = json.parse(current)
+    let payload = session_doc_for(
+        session_id,
+        json.get_str(parsed, "state"),
+        count,
+        json.get_str(parsed, "last_run_id"),
+        json.get_str(parsed, "last_user_message"),
+        json.get_str(parsed, "last_assistant_message"),
+        json.get_str(parsed, "last_request_id"),
+        json.get_str(parsed, "tool_count"),
+    )
+    return save_session_for(session_id, payload)
+}
+
+fn append_message(session_id: str, role: str, kind: str, content: str, run_id: str, request_id: str) -> i32 {
+    ensure_session(session_id)
+    let entry_payload = map.new()
+    discard map.set(entry_payload, "session_id", json.str(normalize_session_id(session_id)))
+    discard map.set(entry_payload, "role", json.str(role))
+    discard map.set(entry_payload, "kind", json.str(kind))
+    discard map.set(entry_payload, "content", json.str(content))
+    discard map.set(entry_payload, "run_id", json.str(run_id))
+    discard map.set(entry_payload, "request_id", json.str(request_id))
+    discard map.set(entry_payload, "recorded_at", json.str(now_label()))
+    let entry = json.object(entry_payload)
+    append_line(session_messages_path(session_id), str.concat(entry, "\n"))
+    return 0
+}
+
+fn append_run_link(session_id: str, run_id: str, tool_id: str, status: str) -> i32 {
+    ensure_session(session_id)
+    let entry_payload = map.new()
+    discard map.set(entry_payload, "session_id", json.str(normalize_session_id(session_id)))
+    discard map.set(entry_payload, "run_id", json.str(run_id))
+    discard map.set(entry_payload, "tool_id", json.str(tool_id))
+    discard map.set(entry_payload, "status", json.str(status))
+    discard map.set(entry_payload, "recorded_at", json.str(now_label()))
+    let entry = json.object(entry_payload)
+    append_line(session_runs_path(session_id), str.concat(entry, "\n"))
+    return 0
+}
+
+fn transcript_excerpt(session_id: str) -> str {
+    ensure_session(session_id)
+    let payload = fs.read_file(session_messages_path(session_id))
     if payload == "" {
-        return session_doc("load_session_empty", "active", "0", "latest")
+        return ""
     }
-    return payload
+    return excerpt(payload, transcript_excerpt_limit())
 }
 
 fn save_tool_run() -> i32 {
@@ -131,13 +326,11 @@ fn load_run_json(run_id: str) -> str {
     ensure_state()
     let path = run_path(run_id)
     if fs.exists(path) == 0 {
-        discard time.now()
-        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("missing"), "updated_at", json.str("sampled"))
+        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("missing"), "updated_at", json.str(now_label()))
     }
     let payload = fs.read_file(path)
     if payload == "" {
-        discard time.now()
-        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("empty"), "updated_at", json.str("sampled"))
+        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("empty"), "updated_at", json.str(now_label()))
     }
     return payload
 }

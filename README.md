@@ -56,6 +56,22 @@ fozzy ci artifacts/fzyagent.det.trace.fozzy --json
 
 Default listen address is `127.0.0.1:8787`.
 
+## Native chat
+
+The runtime includes a native fzy chat client. It uses the same runtime/session brain as the service path, including tool execution and durable session state.
+
+```bash
+./agent.sh --session mywork
+./agent.sh --session mywork --once "Use the bash tool to run printf hello and tell me the exact stdout."
+./agent.sh --session mywork --reset
+```
+
+Direct binary form:
+
+```bash
+./.fz/build/fzyagent chat --session mywork
+```
+
 ## Notes
 
 - Secrets are env-driven (`ANTHROPIC_API_KEY`) and `.env` is gitignored.

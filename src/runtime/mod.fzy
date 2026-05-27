@@ -11,8 +11,10 @@ mod sandbox;
 mod config;
 use core.log;
 
-fn start() -> i32 {
-    log.info("runtime.start begin", util.log_fields2("component", "runtime", "phase", "start_begin"))
+fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
+    if log_enabled == 1 {
+        log.info("runtime.start begin", util.log_fields2("component", "runtime", "phase", "start_begin"))
+    }
     events.boot_bus()
     config.apply_server_config()
     supervisor.configure_limits()
@@ -22,19 +24,37 @@ fn start() -> i32 {
     sandbox.apply_default_policy()
     sandbox.allow_tool_scope()
     recovery.save_checkpoint()
-    if config.enable_background_runtime() == 1 {
+    if background_enabled == 1 {
         let worker_handle = spawn_ctx(worker.run, 100)
         let scheduler_handle = spawn_ctx(scheduler.tick, 101)
-        log.info("runtime workers spawned", util.log_fields2("component", "runtime", "phase", "spawned"))
+        if log_enabled == 1 {
+            log.info("runtime workers spawned", util.log_fields2("component", "runtime", "phase", "spawned"))
+        }
         detach(worker_handle)
         detach(scheduler_handle)
-    } else {
+    } else if log_enabled == 1 {
         log.info("runtime workers skipped", util.log_fields2("component", "runtime", "phase", "http_mode"))
     }
-    if config.enable_agent_loop() == 1 {
+    if background_enabled == 1 && config.enable_agent_loop() == 1 {
         let agent_handle = spawn_ctx(agent.run_loop, 102)
         detach(agent_handle)
     }
-    log.info("runtime.start complete", util.log_fields2("component", "runtime", "phase", "start_complete"))
+    if log_enabled == 1 {
+        log.info("runtime.start complete", util.log_fields2("component", "runtime", "phase", "start_complete"))
+    }
     return 0
+}
+
+fn start() -> i32 {
+    return start_common(1, config.enable_background_runtime())
+}
+
+fn start_chat() -> i32 {
+    events.boot_bus()
+    recovery.save_checkpoint()
+    return 0
+}
+
+fn start_server() -> i32 {
+    return start()
 }

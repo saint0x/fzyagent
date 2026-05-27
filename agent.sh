@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /Users/deepsaint/Desktop/fzyagent
-python3 /Users/deepsaint/Desktop/fzyagent/scripts/agent_cli.py "$@"
+if [[ "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+  exec /Users/deepsaint/Desktop/fzyagent/.fz/build/fzyagent help
+fi
+/Users/deepsaint/Desktop/fzyagent/.fz/build/fzyagent chat "$@"

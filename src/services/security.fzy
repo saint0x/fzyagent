@@ -1,37 +1,135 @@
 use core.fs;
+use core.http;
+
+static mut REQUEST_COUNT: i32 = 0;
 
 fn security_path() -> str {
     return "/tmp/fzyagent/security.last.json"
 }
 
-fn auth_middleware() -> i32 {
+fn security_auth_mode() -> str {
+    let mode = env.get("AGENT_AUTH_MODE")
+    if mode == "" {
+        return "env"
+    }
+    return mode
+}
+
+fn security_auth_secret() -> str {
+    return env.get("AGENT_AUTH_TOKEN")
+}
+
+fn security_rate_bucket() -> str {
+    let bucket = env.get("AGENT_RATE_BUCKET")
+    if bucket == "" {
+        return "default"
+    }
+    return bucket
+}
+
+fn security_policy_mode() -> str {
+    let policy = env.get("AGENT_POLICY")
+    if policy == "" {
+        return "standard"
+    }
+    return policy
+}
+
+fn request_limit() -> i32 {
+    let bucket = security_rate_bucket()
+    if bucket == "test" {
+        return 10000
+    }
+    if bucket == "strict" {
+        return 500
+    }
+    return 2500
+}
+
+fn request_counter() -> i32 {
+    REQUEST_COUNT += 1
+    return REQUEST_COUNT
+}
+
+fn record(stage: str, status: str, details: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 0 {
         return 0
     }
     fs.mkdir("/tmp/fzyagent")
-    let mode = env.get("AGENT_AUTH_MODE")
-    let status = "ok"
-    let payload = util.json_obj3("stage", json.str("auth"), "mode", json.str(mode), "status", json.str(status))
+    let payload = json.object(#{
+        "stage": json.str(stage),
+        "mode": json.str(security_auth_mode()),
+        "bucket": json.str(security_rate_bucket()),
+        "policy": json.str(security_policy_mode()),
+        "status": json.str(status),
+        "details": json.str(details),
+    })
     fs.write_file(security_path(), payload)
     return 0
 }
 
-fn rate_limit() -> i32 {
-    if runtime.config.persist_request_artifacts() == 0 {
+fn auth_middleware() -> i32 {
+    record("auth", "ok", "bootstrap")
+    return 0
+}
+
+fn auth_middleware_conn(conn: HttpHandle) -> i32 {
+    let mode = security_auth_mode()
+    if mode == "off" {
+        record("auth", "ok", "off")
         return 0
     }
-    let bucket = env.get("AGENT_RATE_BUCKET")
-    let payload = util.json_obj3("stage", json.str("rate_limit"), "bucket", json.str(bucket), "status", json.str("ok"))
-    fs.write_file(security_path(), payload)
+    let configured = security_auth_secret()
+    if configured == "" {
+        record("auth", "error", "missing_secret")
+        return 23
+    }
+    let provided = http.header(conn, "authorization")
+    let expected = str.concat("Bearer ", configured)
+    if provided == expected {
+        record("auth", "ok", http.request_id(conn))
+        return 0
+    }
+    record("auth", "denied", provided)
+    return 23
+}
+
+fn rate_limit() -> i32 {
+    record("rate_limit", "ok", "bootstrap")
+    return 0
+}
+
+fn rate_limit_conn(conn: HttpHandle) -> i32 {
+    let count = request_counter()
+    let limit = request_limit()
+    let label = str.concat("request_id=", http.request_id(conn), " count=", str.from_i32(count))
+    if count > limit {
+        record("rate_limit", "denied", label)
+        return 29
+    }
+    record("rate_limit", "ok", label)
     return 0
 }
 
 fn policy_filter() -> i32 {
-    if runtime.config.persist_request_artifacts() == 0 {
-        return 0
+    record("policy_filter", "ok", "bootstrap")
+    return 0
+}
+
+fn policy_filter_request(tool_id: str, method: str, path: str) -> i32 {
+    let policy = security_policy_mode()
+    if policy == "readonly" {
+        if method == "DELETE" || tool_id == "toolsmith" || tool_id == "promptsmith" {
+            record("policy_filter", "denied", str.concat("readonly ", path))
+            return 41
+        }
     }
-    let policy = env.get("AGENT_POLICY")
-    let payload = util.json_obj3("stage", json.str("policy_filter"), "policy", json.str(policy), "status", json.str("ok"))
-    fs.write_file(security_path(), payload)
+    if policy == "locked" {
+        if path != "/healthz" && path != "/tools" {
+            record("policy_filter", "denied", str.concat("locked ", path))
+            return 41
+        }
+    }
+    record("policy_filter", "ok", path)
     return 0
 }

@@ -22,34 +22,29 @@ fn boot_all() -> i32 {
     web.boot()
     sessions.boot()
     registry.load_builtin()
-    registry.update_tool()
-    registry.get_tool()
-    registry.list_tools()
     registry.refresh_runtime()
     registry.heartbeat()
-    registry.evict_stale()
     registry.planner_hints()
-    registry.record_invocation_decision()
     runtime.events.emit_registry_update()
 
     tools.boot_runner()
     telemetry.boot_metrics()
     runtime.events.emit_health_tick()
 
-    security.auth_middleware()
-    security.rate_limit()
-    safety.filter_prompt()
-    safety.filter_tool_response()
-    safety.decide_policy()
-
     openapi.export_spec()
     openapi.validate_schema()
 
     persistence.load_session()
-
-    chaos.inject_slow_tool()
-    chaos.inject_malformed_payload()
-    chaos.inject_provider_latency()
     log.info("services.boot_all complete", util.log_fields2("component", "services", "phase", "boot_complete"))
+    return 0
+}
+
+fn boot_chat() -> i32 {
+    store.init()
+    sessions.boot()
+    registry.load_builtin()
+    registry.refresh_runtime()
+    tools.boot_runner()
+    persistence.load_session()
     return 0
 }

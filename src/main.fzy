@@ -5,6 +5,7 @@ use core.proc;
 use core.mem;
 use core.thread;
 use core.log;
+use core.process;
 
 mod api;
 mod model;
@@ -17,6 +18,21 @@ mod util;
 fn main() -> i32 {
     requires true
 
+    let mode = process.argv_or(1, "serve")
+    if mode == "--help" || mode == "help" {
+        log.quiet()
+        cli.boot()
+        return cli.print_help()
+    }
+    if mode == "chat" {
+        log.quiet()
+        model.preflight()
+        cli.boot()
+        services.boot_chat()
+        runtime.start_chat()
+        api.touch()
+        return cli.run_chat()
+    }
     log.info("fzyagent main starting", util.log_fields2("component", "main", "phase", "boot"))
     model.preflight()
     log.info("fzyagent model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))

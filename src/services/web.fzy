@@ -61,8 +61,10 @@ fn accept_and_process() -> i32 {
         log.info("web accepted connection", util.log_fields2("component", "web", "phase", "accept"))
     }
     read_request(conn)
-    apply_middleware(conn)
-    dispatch(conn)
+    let allow = apply_middleware(conn)
+    if allow == 0 {
+        dispatch(conn)
+    }
     close(conn)
     return 0
 }
@@ -90,12 +92,40 @@ fn parse_body() -> i32 {
     return 0
 }
 
+fn tool_id_from_run_path(path: str) -> str {
+    let prefix_len = str.len("/tools/")
+    let path_len = str.len(path)
+    if path_len <= prefix_len {
+        return ""
+    }
+    let trimmed = str.slice(path, prefix_len, path_len)
+    let suffix_len = str.len("/run")
+    let trimmed_len = str.len(trimmed)
+    if trimmed_len <= suffix_len {
+        return ""
+    }
+    return str.slice(trimmed, 0, trimmed_len - suffix_len)
+}
+
 fn apply_middleware(conn: HttpHandle) -> i32 {
-    security.auth_middleware()
-    security.rate_limit()
-    security.policy_filter()
+    let auth = security.auth_middleware_conn(conn)
+    if auth != 0 {
+        http.write_json(conn, 401, util.json_obj2("status", json.str("error"), "message", json.str("unauthorized")))
+        return 1
+    }
+    let limited = security.rate_limit_conn(conn)
+    if limited != 0 {
+        http.write_json(conn, 429, util.json_obj2("status", json.str("error"), "message", json.str("rate_limited")))
+        return 1
+    }
+    let path = http.path(conn)
+    let tool_id = if str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 { tool_id_from_run_path(path) } else { "" }
+    let policy = security.policy_filter_request(tool_id, http.method(conn), path)
+    if policy != 0 {
+        http.write_json(conn, 403, util.json_obj2("status", json.str("error"), "message", json.str("policy_denied")))
+        return 1
+    }
     checkpoint()
-    discard conn
     return 0
 }
 

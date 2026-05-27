@@ -6,7 +6,6 @@ WORKSPACE_ROOT="${SCRIPT_DIR}"
 FOZZYLANG_ROOT="/Users/deepsaint/Desktop/fozzylang"
 LOCAL_BIN_DIR="${WORKSPACE_ROOT}/.local/bin"
 LOCAL_FZ="${LOCAL_BIN_DIR}/fz"
-BUILD_FZ="${FOZZYLANG_ROOT}/target/debug/fz"
 
 usage() {
   cat <<'EOF'
@@ -53,9 +52,34 @@ verify_binary() {
   "${candidate}" --version >/dev/null
 }
 
+resolve_build_fz() {
+  local target_dir
+  target_dir="$(
+    cargo metadata \
+      --format-version 1 \
+      --no-deps \
+      --manifest-path "${FOZZYLANG_ROOT}/Cargo.toml" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'
+  )"
+
+  local target_triple="${CARGO_BUILD_TARGET:-}"
+  if [[ -n "${target_triple}" && -f "${target_dir}/${target_triple}/debug/fz" ]]; then
+    printf '%s\n' "${target_dir}/${target_triple}/debug/fz"
+    return 0
+  fi
+  if [[ -f "${target_dir}/debug/fz" ]]; then
+    printf '%s\n' "${target_dir}/debug/fz"
+    return 0
+  fi
+
+  printf 'unable to locate built fz artifact under %s\n' "${target_dir}" >&2
+  exit 1
+}
+
 safe_replace_local_fz() {
+  local build_fz="$1"
   local tmp_target="${LOCAL_FZ}.tmp.$$"
-  cp "${BUILD_FZ}" "${tmp_target}"
+  cp "${build_fz}" "${tmp_target}"
   verify_binary "${tmp_target}"
   mv "${tmp_target}" "${LOCAL_FZ}"
   chmod +x "${LOCAL_FZ}"
@@ -66,16 +90,14 @@ rebuild_local_fz() {
   log "building fz from ${FOZZYLANG_ROOT}"
   cargo build -p fz --manifest-path "${FOZZYLANG_ROOT}/Cargo.toml"
 
-  if [[ ! -f "${BUILD_FZ}" ]]; then
-    printf 'build finished but compiler was not found at %s\n' "${BUILD_FZ}" >&2
-    exit 1
-  fi
+  local build_fz
+  build_fz="$(resolve_build_fz)"
 
-  log "verifying fresh compiler artifact"
-  verify_binary "${BUILD_FZ}"
+  log "verifying fresh compiler artifact at ${build_fz}"
+  verify_binary "${build_fz}"
 
   log "replacing ${LOCAL_FZ} atomically"
-  safe_replace_local_fz
+  safe_replace_local_fz "${build_fz}"
 
   log "compiler ready: $(${LOCAL_FZ} --version)"
 }

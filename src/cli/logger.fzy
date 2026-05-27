@@ -1,0 +1,121 @@
+use core.term;
+use core.text;
+
+fn ansi_enabled() -> i32 {
+    if term.is_interactive() == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn esc() -> str {
+    return "\x1b"
+}
+
+fn color(code: str, text: str) -> str {
+    if ansi_enabled() == 0 {
+        return text
+    }
+    return str.concat(esc(), "[", code, "m", text, esc(), "[0m")
+}
+
+fn line(text: str) -> i32 {
+    discard term.print_line(text)
+    return 0
+}
+
+fn err_line(text: str) -> i32 {
+    discard term.eprint_line(text)
+    return 0
+}
+
+pub fn blank() -> i32 {
+    return line("")
+}
+
+pub fn blank_err() -> i32 {
+    return err_line("")
+}
+
+pub fn accent(text: str) -> str {
+    return color("1;38;5;39", text)
+}
+
+pub fn command(text: str) -> str {
+    return color("1;38;5;118", text)
+}
+
+pub fn strong(text: str) -> str {
+    return color("1;38;5;255", text)
+}
+
+pub fn muted(text: str) -> str {
+    return color("38;5;245", text)
+}
+
+pub fn info_tag() -> str {
+    return color("1;38;5;45", "info")
+}
+
+pub fn ok_tag() -> str {
+    return color("1;38;5;118", "ok")
+}
+
+pub fn warn_tag() -> str {
+    return color("1;38;5;214", "warn")
+}
+
+pub fn error_tag() -> str {
+    return color("1;38;5;203", "error")
+}
+
+pub fn assistant_tag() -> str {
+    return color("1;38;5;214", "assistant")
+}
+
+pub fn user_tag() -> str {
+    return color("1;38;5;245", "you>")
+}
+
+pub fn tool_call_tag() -> str {
+    return color("1;38;5;81", "tool call")
+}
+
+pub fn tool_result_tag(status: str) -> str {
+    if status == "ok" {
+        return color("1;38;5;118", "tool result")
+    }
+    return color("1;38;5;203", "tool result")
+}
+
+pub fn print_line(text: str) -> i32 {
+    return line(text)
+}
+
+pub fn print_err_line(text: str) -> i32 {
+    return err_line(text)
+}
+
+pub fn print_info(text: str) -> i32 {
+    return line(str.concat(info_tag(), " ", text))
+}
+
+pub fn print_ok(text: str) -> i32 {
+    return line(str.concat(ok_tag(), " ", text))
+}
+
+pub fn print_warn(text: str) -> i32 {
+    return err_line(str.concat(warn_tag(), " ", text))
+}
+
+pub fn print_error(text: str) -> i32 {
+    return err_line(str.concat(error_tag(), " ", text))
+}
+
+pub fn indent(value: str, prefix: str) -> str {
+    return text.indent(value, prefix)
+}
+
+pub fn pad_command(value: str, width: i32) -> str {
+    return text.pad_right(value, width)
+}

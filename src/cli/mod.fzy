@@ -1,4 +1,8 @@
 mod commands;
+mod logger;
+mod render;
+pub use commands.run_chat;
+pub use commands.print_help;
 
 fn boot() -> i32 {
     commands.boot()
