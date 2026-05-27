@@ -1,19 +1,20 @@
 use core.proc;
+use core.time;
 
 fn inject_slow_tool() -> i32 {
-    proc.exec_timeout(50)
+    time.sleep_ms(50)
     discard proc.run("/bin/sh -lc 'sleep 0.02 >/dev/null 2>&1 || true'")
     return 0
 }
 
 fn inject_malformed_payload() -> i32 {
-    proc.exec_timeout(50)
+    time.sleep_ms(50)
     discard proc.run("/bin/sh -lc 'printf malformed >/dev/null 2>&1 || true'")
     return 0
 }
 
 fn inject_provider_latency() -> i32 {
-    proc.exec_timeout(50)
+    time.sleep_ms(50)
     discard proc.run("/bin/sh -lc 'sleep 0.01 >/dev/null 2>&1 || true'")
     return 0
 }

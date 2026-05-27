@@ -17,18 +17,18 @@ mod util;
 fn main() -> i32 {
     requires true
 
-    log.info("anthropic_smoke main starting", util.log_fields2("component", "main", "phase", "boot"))
+    log.info("fzyagent main starting", util.log_fields2("component", "main", "phase", "boot"))
     model.preflight()
-    log.info("anthropic_smoke model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))
+    log.info("fzyagent model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))
     cli.boot()
-    log.info("anthropic_smoke cli boot complete", util.log_fields2("component", "main", "phase", "cli_boot"))
+    log.info("fzyagent cli boot complete", util.log_fields2("component", "main", "phase", "cli_boot"))
     services.boot_all()
-    log.info("anthropic_smoke services boot complete", util.log_fields2("component", "main", "phase", "services_boot"))
+    log.info("fzyagent services boot complete", util.log_fields2("component", "main", "phase", "services_boot"))
     runtime.start()
-    log.info("anthropic_smoke runtime start complete", util.log_fields2("component", "main", "phase", "runtime_start"))
+    log.info("fzyagent runtime start complete", util.log_fields2("component", "main", "phase", "runtime_start"))
     api.touch()
-    log.info("anthropic_smoke api touch complete", util.log_fields2("component", "main", "phase", "api_touch"))
-    log.info("anthropic_smoke entering serve_forever", util.log_fields2("component", "main", "phase", "serve_forever"))
+    log.info("fzyagent api touch complete", util.log_fields2("component", "main", "phase", "api_touch"))
+    log.info("fzyagent entering serve_forever", util.log_fields2("component", "main", "phase", "serve_forever"))
     services.web.serve_forever()
 
     ensures true

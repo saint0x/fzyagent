@@ -1,10 +1,10 @@
 use core.http;
-use core.proc;
+use core.time;
 use core.log;
 
 enum ModelClass {
     ClaudeSonnet46,
-    ClaudeHaiku35,
+    ClaudeHaiku45,
 }
 
 enum ProviderClass {
@@ -24,6 +24,20 @@ fn endpoint() -> str {
     return env_or("ANTHROPIC_ENDPOINT", "https://api.anthropic.com/v1/messages")
 }
 
+fn api_key() -> str {
+    return env_or("ANTHROPIC_API_KEY", "")
+}
+
+fn request_version() -> str {
+    return env_or("ANTHROPIC_VERSION", "2023-06-01")
+}
+
+fn queue_headers() -> i32 {
+    discard http.header_set("x-api-key", api_key())
+    discard http.header_set("anthropic-version", request_version())
+    return 0
+}
+
 fn smoke_sonnet() -> i32 {
     log.info("anthropic.smoke_sonnet start", util.log_fields2("component", "anthropic", "phase", "smoke_start"))
     let model = default_model_name()
@@ -36,15 +50,26 @@ fn smoke_sonnet() -> i32 {
     provider.translate_tool_calls()
     provider.stream_completion()
 
-    http.post_json_capture(endpoint(), body)
+    queue_headers()
+    discard http.post_json_capture(endpoint(), body)
     let status = http.last_status()
     let status_text = status_label(status)
     log.info("anthropic.smoke_sonnet response", util.log_fields3("component", "anthropic", "phase", "smoke_response", "status", status_text))
 
     provider.normalize_response()
-    proc.exec_timeout(8000)
-    http.poll_next()
+    time.sleep_ms(8)
     return status
+}
+
+fn request_messages_sync(payload: str) -> str {
+    provider.anthropic_transport()
+    provider.normalize_request()
+    provider.translate_tool_calls()
+    provider.stream_completion()
+    queue_headers()
+    let out = http.post_json_capture(endpoint(), payload)
+    provider.normalize_response()
+    return out
 }
 
 async fn request_messages(payload: str) -> str {
@@ -53,6 +78,7 @@ async fn request_messages(payload: str) -> str {
     await provider.translate_tool_calls_async()
     await provider.stream_completion_async()
 
+    queue_headers()
     let out = http.post_json_capture(endpoint(), payload)
     await provider.normalize_response_async()
     return out
@@ -81,31 +107,31 @@ fn default_model() -> i32 {
 }
 
 fn default_model_class() -> ModelClass {
-    return ModelClass::ClaudeSonnet46
+    return ModelClass::ClaudeHaiku45
 }
 
 fn default_model_name() -> str {
-    return model_name(default_model_class())
+    return env_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 }
 
 fn model_code(model: ModelClass) -> i32 {
     if model == ModelClass::ClaudeSonnet46 {
         return 46
     }
-    return 35
+    return 45
 }
 
 fn model_name(model: ModelClass) -> str {
     if model == ModelClass::ClaudeSonnet46 {
         return "claude-sonnet-4-6"
     }
-    return "claude-3-5-haiku-latest"
+    return "claude-haiku-4-5-20251001"
 }
 
 fn provider_fallback() -> i32 {
     provider_class_code(resolve_provider(1))
     provider.map_provider_error()
-    proc.exec_timeout(400)
+    time.sleep_ms(4)
     return 0
 }
 

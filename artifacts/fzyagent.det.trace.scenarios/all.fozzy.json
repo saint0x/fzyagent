@@ -1,0 +1,42 @@
+{
+  "name": "language-tests-all",
+  "steps": [
+    {
+      "name": "test:det_boot",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_registry",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_parallel_tools",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_http_routes",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_provider_and_streaming",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_security_and_openapi",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_recovery_and_failures",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_chaos_paths",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_language_surface",
+      "type": "trace_event"
+    }
+  ],
+  "version": 1
+}

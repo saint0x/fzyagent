@@ -11,51 +11,145 @@ enum ToolFailureClass {
 }
 
 fn state_dir() -> str {
-    return "/tmp/anthropic_smoke"
+    return "/tmp/fzyagent"
 }
 
 fn tools_dir() -> str {
-    return "/tmp/anthropic_smoke/tools"
+    return "/tmp/fzyagent/tools"
 }
 
 fn runs_dir() -> str {
-    return "/tmp/anthropic_smoke/runs"
+    return "/tmp/fzyagent/runs"
 }
 
 fn last_parallel_path() -> str {
-    return "/tmp/anthropic_smoke/runs/parallel.last.json"
+    return "/tmp/fzyagent/runs/parallel.last.json"
 }
 
 fn bash_a_path() -> str {
-    return "/tmp/anthropic_smoke/tools/parallel_bash_a.json"
+    return "/tmp/fzyagent/tools/parallel_bash_a.json"
 }
 
 fn bash_b_path() -> str {
-    return "/tmp/anthropic_smoke/tools/parallel_bash_b.json"
+    return "/tmp/fzyagent/tools/parallel_bash_b.json"
 }
 
 fn grep_a_path() -> str {
-    return "/tmp/anthropic_smoke/tools/parallel_grep_a.json"
+    return "/tmp/fzyagent/tools/parallel_grep_a.json"
 }
 
 fn grep_b_path() -> str {
-    return "/tmp/anthropic_smoke/tools/parallel_grep_b.json"
+    return "/tmp/fzyagent/tools/parallel_grep_b.json"
+}
+
+fn inventory_path() -> str {
+    return "/tmp/fzyagent/tools/release_inventory.json"
+}
+
+fn workspace_digest_path() -> str {
+    return "/tmp/fzyagent/tools/workspace_digest.json"
+}
+
+fn aegis_path() -> str {
+    return "/tmp/fzyagent/aegis/last_response.json"
+}
+
+fn toolsmith_path() -> str {
+    return "/tmp/fzyagent/tools/toolsmith.json"
+}
+
+fn promptsmith_path() -> str {
+    return "/tmp/fzyagent/tools/promptsmith.json"
+}
+
+fn toolsmith_request_path() -> str {
+    return "/tmp/fzyagent/tools/toolsmith.request.json"
+}
+
+fn toolsmith_request_path_for(action: str, tool_id: str) -> str {
+    if tool_id == "" {
+        return str.concat3("/tmp/fzyagent/tools/toolsmith.", action, ".request.json")
+    }
+    return str.concat2(str.concat4("/tmp/fzyagent/tools/toolsmith.", action, ".", tool_id), ".request.json")
+}
+
+fn toolsmith_response_path_for(action: str, tool_id: str) -> str {
+    if tool_id == "" {
+        return str.concat3("/tmp/fzyagent/tools/toolsmith.", action, ".response.json")
+    }
+    return str.concat2(str.concat4("/tmp/fzyagent/tools/toolsmith.", action, ".", tool_id), ".response.json")
+}
+
+fn promptsmith_request_path_for(action: str) -> str {
+    return str.concat3("/tmp/fzyagent/tools/promptsmith.", action, ".request.json")
+}
+
+fn promptsmith_response_path_for(action: str) -> str {
+    return str.concat3("/tmp/fzyagent/tools/promptsmith.", action, ".response.json")
+}
+
+fn fzydoc_path() -> str {
+    return "/tmp/fzyagent/tools/fzydoc.json"
+}
+
+fn custom_tool_manifest_path(tool_id: str) -> str {
+    return str.concat3("/Users/deepsaint/Desktop/fzyagent/custom_tools/", tool_id, "/tool.json")
+}
+
+fn custom_tool_last_run_path(tool_id: str) -> str {
+    return str.concat3("/tmp/fzyagent/runs/custom_", tool_id, ".json")
+}
+
+fn custom_tool_state_path(tool_id: str) -> str {
+    return str.concat3("/tmp/fzyagent/custom_tools/", tool_id, "/last.json")
+}
+
+fn custom_tool_request_path(tool_id: str) -> str {
+    return str.concat3("/tmp/fzyagent/custom_tools/", tool_id, "/request.json")
+}
+
+fn custom_tool_state_dir(tool_id: str) -> str {
+    return str.concat2("/tmp/fzyagent/custom_tools/", tool_id)
 }
 
 fn last_run_path_for(tool_id: str) -> str {
     if tool_id == "parallel_bash" {
-        return "/tmp/anthropic_smoke/runs/parallel_bash.json"
+        return "/tmp/fzyagent/runs/parallel_bash.json"
     }
     if tool_id == "parallel_grep" {
-        return "/tmp/anthropic_smoke/runs/parallel_grep.json"
+        return "/tmp/fzyagent/runs/parallel_grep.json"
+    }
+    if tool_id == "release_audit" {
+        return "/tmp/fzyagent/runs/release_audit.json"
+    }
+    if tool_id == "workspace_digest" {
+        return workspace_digest_path()
+    }
+    if tool_id == "aegis" || tool_id == "aegis_headless" {
+        return aegis_path()
     }
     if tool_id == "bash" {
-        return "/tmp/anthropic_smoke/runs/bash.json"
+        return "/tmp/fzyagent/runs/bash.json"
+    }
+    if tool_id == "grep_search" {
+        return "/tmp/fzyagent/runs/grep_search.json"
     }
     if tool_id == "timeout_probe" {
-        return "/tmp/anthropic_smoke/runs/timeout_probe.json"
+        return "/tmp/fzyagent/runs/timeout_probe.json"
     }
-    return "/tmp/anthropic_smoke/runs/generic.json"
+    if tool_id == "toolsmith" {
+        return toolsmith_path()
+    }
+    if tool_id == "promptsmith" {
+        return promptsmith_path()
+    }
+    if tool_id == "fzydoc" {
+        return fzydoc_path()
+    }
+    if fs.exists(custom_tool_manifest_path(tool_id)) != 0 {
+        return custom_tool_last_run_path(tool_id)
+    }
+    return "/tmp/fzyagent/runs/generic.json"
 }
 
 fn ensure_dirs() -> i32 {
@@ -88,6 +182,9 @@ fn status_from_exit_code(code: i32) -> str {
     if code == 0 {
         return "ok"
     }
+    if code == 1 {
+        return "empty"
+    }
     if code == -124 {
         return "timeout"
     }
@@ -97,59 +194,85 @@ fn status_from_exit_code(code: i32) -> str {
     return "failed"
 }
 
-fn default_proc_env() -> i32 {
-    let env_map = proc.env_new()
+fn default_proc_env() -> ProcessEnv {
+    let env_map: ProcessEnv = proc.env_new()
     discard proc.env_set(env_map, "TERM", "dumb")
     return env_map
 }
 
-fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str) -> i32 {
-    proc.exec_timeout(timeout_ms)
-    let argv = proc.argv_new()
+fn shell_argv(command: str) -> ProcessArgv {
+    let argv: ProcessArgv = proc.argv_new()
     discard proc.argv_push(argv, "-lc")
     discard proc.argv_push(argv, command)
-    let env_map = default_proc_env()
-    let handle = proc.run_cmd("/bin/sh", argv, env_map, "")
-    if handle < 0 {
-        let fail = util.json_obj3("tool", json.str(tool_id), "status", json.str("spawn_failure"), "command", json.str(command))
-        fs.write_file(out_path, fail)
-        return -1
-    }
-
-    let stdout = proc.stdout(handle)
-    let stderr = proc.stderr(handle)
-    let exit_code = proc.exit_code(handle)
-    let status = status_from_exit_code(exit_code)
-    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
-    let payload = util.json_obj4("tool", json.str(tool_id), "status", json.str(status), "command", json.str(command), "streams", json.raw(streams))
-    fs.write_file(out_path, payload)
-    return 0
+    return argv
 }
 
-fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, out_path: str) -> i32 {
-    proc.exec_timeout(timeout_ms)
-    let argv = proc.argv_new()
+fn grep_argv(pattern: str, target: str) -> ProcessArgv {
+    let argv: ProcessArgv = proc.argv_new()
     discard proc.argv_push(argv, "-R")
     discard proc.argv_push(argv, "--line-number")
     discard proc.argv_push(argv, pattern)
     discard proc.argv_push(argv, target)
-    let env_map = default_proc_env()
-    let handle = proc.run_cmd("grep", argv, env_map, "")
-    if handle < 0 {
-        let fail = util.json_obj3("tool", json.str(tool_id), "status", json.str("spawn_failure"), "target", json.str(target))
-        fs.write_file(out_path, fail)
-        return -1
-    }
+    return argv
+}
 
-    let stdout = proc.stdout(handle)
-    let stderr = proc.stderr(handle)
+fn shell_result_code(exit_code: i32) -> i32 {
+    if exit_code == 0 {
+        return 0
+    }
+    if exit_code == -124 {
+        return 12
+    }
+    return 13
+}
+
+fn grep_result_code(exit_code: i32) -> i32 {
+    if exit_code == 0 {
+        return 0
+    }
+    if exit_code == 1 {
+        return 0
+    }
+    if exit_code == -124 {
+        return 12
+    }
+    return 13
+}
+
+fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str) -> i32 {
+    let env_map = default_proc_env()
+    let argv = shell_argv(command)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
+    checkpoint()
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
+    let meta = util.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("bounded"))
+    let payload = util.json_obj5("tool", json.str(tool_id), "status", json.str(status), "command", json.str(command), "streams", json.raw(streams), "meta", json.raw(meta))
+    fs.write_file(out_path, payload)
+    fs.write_file(last_run_path_for(tool_id), payload)
+    return shell_result_code(exit_code)
+}
+
+fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, out_path: str) -> i32 {
+    let env_map = default_proc_env()
+    let argv = grep_argv(pattern, target)
+    let handle = proc.spawn_cmd("grep", argv, env_map, "")
+    discard proc.wait(handle, timeout_ms)
+    let exit_code = proc.exit_code(handle)
+    let status = status_from_exit_code(exit_code)
+    checkpoint()
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
     let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
     let meta = util.json_obj2("pattern", json.str(pattern), "target", json.str(target))
     let payload = util.json_obj4("tool", json.str(tool_id), "status", json.str(status), "meta", json.raw(meta), "streams", json.raw(streams))
     fs.write_file(out_path, payload)
-    return 0
+    fs.write_file(last_run_path_for(tool_id), payload)
+    return grep_result_code(exit_code)
 }
 
 fn run_parallel_bash_slot_a() -> i32 {
@@ -172,6 +295,155 @@ fn run_parallel_grep_slot_b() -> i32 {
     let pattern = env_or("TOOL_GREP_PATTERN_B", "use ")
     let target = env_or("TOOL_GREP_TARGET_B", "src")
     return run_grep_to_file("parallel_grep_b", pattern, target, 5000, grep_b_path())
+}
+
+fn run_grep_search(pattern: str, target: str) -> i32 {
+    let grep_pattern = if pattern == "" { env_or("TOOL_GREP_PATTERN_A", "fn ") } else { pattern }
+    let grep_target = if target == "" { env_or("TOOL_GREP_TARGET_A", "src") } else { target }
+    return run_grep_to_file("grep_search", grep_pattern, grep_target, 15000, last_run_path_for("grep_search"))
+}
+
+fn run_release_inventory() -> i32 {
+    let cmd = env_or("TOOL_RELEASE_INVENTORY", "printf 'files=%s\\nfunctions=%s\\nuses=%s\\nservices=%s\\n' \"$(rg --files src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src | wc -l | tr -d ' ')\" \"$(rg -n '^use ' src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src/services | wc -l | tr -d ' ')\"")
+    return run_shell_to_file("release_inventory", cmd, 8000, inventory_path())
+}
+
+fn run_workspace_digest() -> i32 {
+    let cmd = env_or(
+        "TOOL_WORKSPACE_DIGEST",
+        "printf 'root=%s\\nfiles=%s\\nfunctions=%s\\nservices=%s\\nruntime=%s\\n\\n==files==\\n%s\\n\\n==top_http==\\n%s\\n\\n==top_tools==\\n%s\\n' \"$PWD\" \"$(rg --files src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src/services | wc -l | tr -d ' ')\" \"$(rg -n '^fn ' src/runtime | wc -l | tr -d ' ')\" \"$(rg --files src | sort | head -n 40)\" \"$(sed -n '1,220p' src/services/http.fzy)\" \"$(sed -n '1,260p' src/services/tools.fzy)\"",
+    )
+    return run_shell_to_file("workspace_digest", cmd, 12000, workspace_digest_path())
+}
+
+fn run_aegis() -> i32 {
+    return run_aegis_with_args("", "", "", "", "")
+}
+
+fn run_bash_with_command(command: str) -> i32 {
+    let cmd = if command == "" { env_or("TOOL_BASH", "echo bash-tool-default") } else { command }
+    return run_shell_to_file("bash", cmd, 20000, last_run_path_for("bash"))
+}
+
+fn run_aegis_with_args(action: str, url: str, query: str, eval_js: str, commands_json: str) -> i32 {
+    let cmd = env_or(
+        "TOOL_AEGIS",
+        "python3 /Users/deepsaint/Desktop/fzyagent/scripts/aegis_headless_tool.py",
+    )
+    let env_map = default_proc_env()
+    if action != "" {
+        discard proc.env_set(env_map, "AEGIS_ACTION", action)
+    }
+    if url != "" {
+        discard proc.env_set(env_map, "AEGIS_URL", url)
+    }
+    if query != "" {
+        discard proc.env_set(env_map, "AEGIS_QUERY", query)
+    }
+    if eval_js != "" {
+        discard proc.env_set(env_map, "AEGIS_EVAL_JS", eval_js)
+    }
+    if commands_json != "" {
+        discard proc.env_set(env_map, "AEGIS_COMMANDS_JSON", commands_json)
+    }
+    let argv = shell_argv(cmd)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 120000)
+    let exit_code = proc.exit_code(handle)
+    let status = status_from_exit_code(exit_code)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        let meta = util.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("browser"))
+        let streams = util.json_obj2("stdout", json.str(stdout), "stderr", json.str(stderr))
+        let payload = util.json_obj4("tool", json.str("aegis"), "status", json.str(status), "streams", json.raw(streams), "meta", json.raw(meta))
+        fs.write_file(aegis_path(), payload)
+    }
+    return shell_result_code(exit_code)
+}
+
+fn run_toolsmith(action: str, tool_id: str, description: str, command_template: str, input_schema_json: str, kind: str, mode: str) -> i32 {
+    let env_map = default_proc_env()
+    let request_path = toolsmith_request_path_for(action, tool_id)
+    let response_path = toolsmith_response_path_for(action, tool_id)
+    let meta = util.json_obj5(
+        "tool_id", json.str(tool_id),
+        "description", json.str(description),
+        "kind", json.str(kind),
+        "mode", json.str(mode),
+        "command_template", json.str(command_template),
+    )
+    let schema = if input_schema_json == "" { "{}" } else { input_schema_json }
+    let request = util.json_obj3("action", json.str(action), "meta", json.raw(meta), "input_schema", json.raw(schema))
+    fs.write_file(request_path, request)
+    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/toolsmith_tool.py ", request_path, " ", response_path)
+    let argv = shell_argv(cmd)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 120000)
+    let exit_code = proc.exit_code(handle)
+    let payload = safe_read(response_path)
+    if payload != "{}" {
+        fs.write_file(toolsmith_path(), payload)
+        fs.write_file(last_run_path_for("toolsmith"), payload)
+    }
+    return shell_result_code(exit_code)
+}
+
+fn run_fzydoc(query: str, max_lines: str) -> i32 {
+    let cmd = "python3 /Users/deepsaint/Desktop/fzyagent/scripts/fzydoc_tool.py"
+    let env_map = default_proc_env()
+    discard proc.env_set(env_map, "FZYDOC_QUERY", query)
+    if max_lines != "" {
+        discard proc.env_set(env_map, "FZYDOC_MAX_LINES", max_lines)
+    }
+    let argv = shell_argv(cmd)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 60000)
+    let exit_code = proc.exit_code(handle)
+    let payload = safe_read(fzydoc_path())
+    if payload != "{}" {
+        fs.write_file(last_run_path_for("fzydoc"), payload)
+    }
+    return shell_result_code(exit_code)
+}
+
+fn run_promptsmith(action: str, content: str) -> i32 {
+    let env_map = default_proc_env()
+    let request_path = promptsmith_request_path_for(action)
+    let response_path = promptsmith_response_path_for(action)
+    let request = util.json_obj2("action", json.str(action), "content", json.str(content))
+    fs.write_file(request_path, request)
+    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/promptsmith_tool.py ", request_path, " ", response_path)
+    let argv = shell_argv(cmd)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 60000)
+    let exit_code = proc.exit_code(handle)
+    let payload = safe_read(response_path)
+    if payload != "{}" {
+        fs.write_file(promptsmith_path(), payload)
+        fs.write_file(last_run_path_for("promptsmith"), payload)
+    }
+    return shell_result_code(exit_code)
+}
+
+fn run_custom_tool(tool_id: str, tool_input_json: str) -> i32 {
+    let env_map = default_proc_env()
+    let request = util.json_obj2("tool_id", json.str(tool_id), "tool_input", json.raw(tool_input_json))
+    let request_path = custom_tool_request_path(tool_id)
+    fs.mkdir("/tmp/fzyagent/custom_tools")
+    fs.mkdir(custom_tool_state_dir(tool_id))
+    fs.write_file(request_path, request)
+    let cmd = str.concat4("python3 /Users/deepsaint/Desktop/fzyagent/scripts/custom_tool_runner.py ", request_path, " ", custom_tool_state_path(tool_id))
+    let argv = shell_argv(cmd)
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 180000)
+    let exit_code = proc.exit_code(handle)
+    let payload = safe_read(custom_tool_state_path(tool_id))
+    if payload != "{}" {
+        fs.write_file(custom_tool_last_run_path(tool_id), payload)
+        fs.write_file(last_run_path_for(tool_id), payload)
+    }
+    return shell_result_code(exit_code)
 }
 
 fn assemble_pair(path_a: str, path_b: str) -> str {
@@ -215,6 +487,10 @@ fn monitor_background() -> i32 {
     return 0
 }
 
+fn spawn_probe_worker() -> i32 {
+    return 7
+}
+
 fn kill_background() -> i32 {
     return proc.exit_class()
 }
@@ -222,29 +498,47 @@ fn kill_background() -> i32 {
 fn run_parallel_bash() -> i32 {
     runtime.events.emit_tool_started()
     ensure_dirs()
-    let group = task.group_begin()
-    discard task.group_spawn(group, run_parallel_bash_slot_a)
-    discard task.group_spawn(group, run_parallel_bash_slot_b)
-    discard task.group_join_all(group)
-    discard task.group_cancel(group)
+    let probe = spawn(spawn_probe_worker)
+    let probe_result = join(probe)
+    let left = spawn(run_parallel_bash_slot_a)
+    let right = spawn(run_parallel_bash_slot_b)
+    let left_result = join(left)
+    let right_result = join(right)
     let payload = assemble_pair(bash_a_path(), bash_b_path())
-    fs.write_file(last_run_path_for("parallel_bash"), payload)
+    let probe_label = if probe_result == 7 { "ok" } else if probe_result == -1 { "neg1" } else if probe_result == -2 { "neg2" } else { "other" }
+    let left_label = if left_result == 0 { "ok" } else if left_result == -1 { "neg1" } else if left_result == -2 { "neg2" } else { "other" }
+    let right_label = if right_result == 0 { "ok" } else if right_result == -1 { "neg1" } else if right_result == -2 { "neg2" } else { "other" }
+    let meta = util.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
+    let combined = util.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
+    fs.write_file(last_run_path_for("parallel_bash"), combined)
     runtime.events.emit_tool_finished()
-    return 0
+    if probe_result == 7 && left_result == 0 && right_result == 0 {
+        return 0
+    }
+    return 13
 }
 
 fn run_parallel_grep() -> i32 {
     runtime.events.emit_tool_started()
     ensure_dirs()
-    let group = task.group_begin()
-    discard task.group_spawn(group, run_parallel_grep_slot_a)
-    discard task.group_spawn(group, run_parallel_grep_slot_b)
-    discard task.group_join_all(group)
-    discard task.group_cancel(group)
+    let probe = spawn(spawn_probe_worker)
+    let probe_result = join(probe)
+    let left = spawn(run_parallel_grep_slot_a)
+    let right = spawn(run_parallel_grep_slot_b)
+    let left_result = join(left)
+    let right_result = join(right)
     let payload = assemble_pair(grep_a_path(), grep_b_path())
-    fs.write_file(last_run_path_for("parallel_grep"), payload)
+    let probe_label = if probe_result == 7 { "ok" } else if probe_result == -1 { "neg1" } else if probe_result == -2 { "neg2" } else { "other" }
+    let left_label = if left_result == 0 { "ok" } else if left_result == -1 { "neg1" } else if left_result == -2 { "neg2" } else { "other" }
+    let right_label = if right_result == 0 { "ok" } else if right_result == -1 { "neg1" } else if right_result == -2 { "neg2" } else { "other" }
+    let meta = util.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
+    let combined = util.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
+    fs.write_file(last_run_path_for("parallel_grep"), combined)
     runtime.events.emit_tool_finished()
-    return 0
+    if probe_result == 7 && left_result == 0 && right_result == 0 {
+        return 0
+    }
+    return 13
 }
 
 fn run_parallel_bash_worker() -> i32 {
@@ -255,6 +549,18 @@ fn run_parallel_grep_worker() -> i32 {
     return run_parallel_grep()
 }
 
+fn run_release_inventory_worker() -> i32 {
+    return run_release_inventory()
+}
+
+fn run_workspace_digest_worker() -> i32 {
+    return run_workspace_digest()
+}
+
+fn run_aegis_worker() -> i32 {
+    return run_aegis()
+}
+
 fn run_parallel() -> i32 {
     log.info("tools.run_parallel start", util.log_fields2("component", "tools", "phase", "run_parallel_start"))
     runtime.events.emit_tool_started()
@@ -262,11 +568,10 @@ fn run_parallel() -> i32 {
     enqueue_tool()
     enqueue_tool()
 
-    let group = task.group_begin()
-    discard task.group_spawn(group, run_parallel_bash_worker)
-    discard task.group_spawn(group, run_parallel_grep_worker)
-    discard task.group_join_all(group)
-    discard task.group_cancel(group)
+    let bash_task = spawn(run_parallel_bash_worker)
+    let grep_task = spawn(run_parallel_grep_worker)
+    let bash_status = join(bash_task)
+    let grep_status = join(grep_task)
 
     dequeue_tool()
     dequeue_tool()
@@ -277,7 +582,108 @@ fn run_parallel() -> i32 {
     fs.write_file(last_parallel_path(), combined)
     runtime.events.emit_tool_finished()
     log.info("tools.run_parallel complete", util.log_fields2("component", "tools", "phase", "run_parallel_complete"))
-    return 0
+    if bash_status == 0 && grep_status == 0 {
+        return 0
+    }
+    return 13
+}
+
+fn run_release_audit() -> i32 {
+    log.info("tools.run_release_audit start", util.log_fields2("component", "tools", "phase", "run_release_audit_start"))
+    runtime.events.emit_tool_started()
+    ensure_dirs()
+
+    let bash_task = spawn(run_parallel_bash_worker)
+    let grep_task = spawn(run_parallel_grep_worker)
+    let inventory_task = spawn(run_release_inventory_worker)
+
+    let bash_status = join(bash_task)
+    let grep_status = join(grep_task)
+    let inventory_status = join(inventory_task)
+
+    let bash_result = safe_read(last_run_path_for("parallel_bash"))
+    let grep_result = safe_read(last_run_path_for("parallel_grep"))
+    let inventory_result = safe_read(inventory_path())
+    let meta = util.json_obj3(
+        "parallel_bash", json.str(status_from_exit_code(bash_status)),
+        "parallel_grep", json.str(status_from_exit_code(grep_status)),
+        "inventory", json.str(status_from_exit_code(inventory_status)),
+    )
+    let combined = util.json_obj4(
+        "parallel_bash", json.raw(bash_result),
+        "parallel_grep", json.raw(grep_result),
+        "inventory", json.raw(inventory_result),
+        "meta", json.raw(meta),
+    )
+    fs.write_file(last_run_path_for("release_audit"), combined)
+    runtime.events.emit_tool_finished()
+    log.info("tools.run_release_audit complete", util.log_fields2("component", "tools", "phase", "run_release_audit_complete"))
+    if bash_status == 0 && grep_status == 0 && inventory_status == 0 {
+        return 0
+    }
+    return 13
+}
+
+fn run_project_seed() -> i32 {
+    log.info("tools.run_project_seed start", util.log_fields2("component", "tools", "phase", "run_project_seed_start"))
+    runtime.events.emit_tool_started()
+    ensure_dirs()
+
+    let audit_task = spawn(run_release_audit)
+    let digest_task = spawn(run_workspace_digest_worker)
+
+    let audit_status = join(audit_task)
+    let digest_status = join(digest_task)
+
+    let audit_result = safe_read(last_run_path_for("release_audit"))
+    let digest_result = safe_read(workspace_digest_path())
+    let meta = util.json_obj2(
+        "release_audit", json.str(status_from_exit_code(audit_status)),
+        "workspace_digest", json.str(status_from_exit_code(digest_status)),
+    )
+    let combined = util.json_obj3(
+        "release_audit", json.raw(audit_result),
+        "workspace_digest", json.raw(digest_result),
+        "meta", json.raw(meta),
+    )
+    fs.write_file("/tmp/fzyagent/runs/project_seed.json", combined)
+    runtime.events.emit_tool_finished()
+    log.info("tools.run_project_seed complete", util.log_fields2("component", "tools", "phase", "run_project_seed_complete"))
+    if audit_status == 0 && digest_status == 0 {
+        return 0
+    }
+    return 13
+}
+
+fn run_browser_ops_seed() -> i32 {
+    log.info("tools.run_browser_ops_seed start", util.log_fields2("component", "tools", "phase", "run_browser_ops_seed_start"))
+    runtime.events.emit_tool_started()
+    ensure_dirs()
+
+    let digest_task = spawn(run_workspace_digest_worker)
+    let browser_task = spawn(run_aegis_worker)
+
+    let digest_status = join(digest_task)
+    let browser_status = join(browser_task)
+
+    let digest_result = safe_read(workspace_digest_path())
+    let browser_result = safe_read(aegis_path())
+    let meta = util.json_obj2(
+        "workspace_digest", json.str(status_from_exit_code(digest_status)),
+        "aegis", json.str(status_from_exit_code(browser_status)),
+    )
+    let combined = util.json_obj3(
+        "workspace_digest", json.raw(digest_result),
+        "aegis", json.raw(browser_result),
+        "meta", json.raw(meta),
+    )
+    fs.write_file("/tmp/fzyagent/runs/browser_ops_seed.json", combined)
+    runtime.events.emit_tool_finished()
+    log.info("tools.run_browser_ops_seed complete", util.log_fields2("component", "tools", "phase", "run_browser_ops_seed_complete"))
+    if digest_status == 0 && browser_status == 0 {
+        return 0
+    }
+    return 13
 }
 
 fn run_named(tool_id: str) -> i32 {
@@ -288,13 +694,76 @@ fn run_named(tool_id: str) -> i32 {
         return run_parallel_grep()
     }
     if tool_id == "bash" {
-        let cmd = env_or("TOOL_BASH", "echo bash-tool-default")
-        return run_shell_to_file("bash", cmd, 4000, last_run_path_for("bash"))
+        return run_bash_with_command("")
+    }
+    if tool_id == "grep_search" {
+        return run_grep_search("", "")
+    }
+    if tool_id == "timeout_probe" {
+        return run_with_timeout()
+    }
+    if tool_id == "release_audit" {
+        return run_release_audit()
+    }
+    if tool_id == "workspace_digest" {
+        return run_workspace_digest()
+    }
+    if tool_id == "aegis" || tool_id == "aegis_headless" {
+        return run_aegis()
+    }
+    if tool_id == "project_seed" {
+        return run_project_seed()
+    }
+    if tool_id == "browser_ops_seed" {
+        return run_browser_ops_seed()
+    }
+    if tool_id == "toolsmith" {
+        return run_toolsmith("protocol", "", "", "", "", "", "")
+    }
+    if tool_id == "promptsmith" {
+        return run_promptsmith("get", "")
+    }
+    if tool_id == "fzydoc" {
+        return run_fzydoc("spawn", "6")
     }
     if tool_id == "desktop_grep" {
         return run_parallel_grep()
     }
-    return run_parallel()
+    if tool_id == "all" {
+        return run_parallel()
+    }
+    if fs.exists(custom_tool_manifest_path(tool_id)) != 0 {
+        return run_custom_tool(tool_id, "{}")
+    }
+    return 13
+}
+
+fn run_named_browser(tool_id: str, action: str, url: str, query: str, eval_js: str, commands_json: str, command: str, pattern: str, target: str, tool_input_json: str, description: str, command_template: str, input_schema_json: str, kind: str, mode: str, max_lines: str, requested_tool_id: str, content: str) -> i32 {
+    if tool_id == "aegis" || tool_id == "aegis_headless" {
+        return run_aegis_with_args(action, url, query, eval_js, commands_json)
+    }
+    if tool_id == "bash" {
+        return run_bash_with_command(command)
+    }
+    if tool_id == "grep_search" {
+        return run_grep_search(pattern, target)
+    }
+    if tool_id == "toolsmith" {
+        let create_action = if action == "" { "protocol" } else { action }
+        return run_toolsmith(create_action, requested_tool_id, description, command_template, input_schema_json, kind, mode)
+    }
+    if tool_id == "promptsmith" {
+        let prompt_action = if action == "" { "get" } else { action }
+        return run_promptsmith(prompt_action, content)
+    }
+    if tool_id == "fzydoc" {
+        let doc_query = if query == "" { "spawn" } else { query }
+        return run_fzydoc(doc_query, max_lines)
+    }
+    if tool_id == "all" {
+        return run_parallel()
+    }
+    return run_custom_tool(tool_id, tool_input_json)
 }
 
 fn last_run_json(tool_id: str) -> str {
@@ -302,6 +771,13 @@ fn last_run_json(tool_id: str) -> str {
         return safe_read(last_parallel_path())
     }
     return safe_read(last_run_path_for(tool_id))
+}
+
+fn last_run_artifact_path(tool_id: str) -> str {
+    if tool_id == "all" {
+        return last_parallel_path()
+    }
+    return last_run_path_for(tool_id)
 }
 
 fn pipe_stdout_events() -> i32 {
@@ -330,9 +806,9 @@ fn cancel_tool_run() -> i32 {
 
 fn retry_with_backoff() -> i32 {
     run_with_timeout()
-    proc.exec_timeout(100)
+    checkpoint()
     run_with_timeout()
-    proc.exec_timeout(200)
+    checkpoint()
     run_with_timeout()
     return 0
 }

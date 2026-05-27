@@ -1,0 +1,15 @@
+{
+  "name": "language-test-det_parallel_tools",
+  "steps": [
+    {
+      "name": "test:det_parallel_tools",
+      "type": "trace_event"
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "type": "assert_eq_int"
+    }
+  ],
+  "version": 1
+}

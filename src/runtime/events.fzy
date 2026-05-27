@@ -1,41 +1,54 @@
 use core.thread;
+use core.fs;
+
+fn events_path() -> str {
+    return "/tmp/fzyagent/events.last.json"
+}
+
+fn emit_event(name: str, component: str) -> i32 {
+    if runtime.config.persist_runtime_events() == 0 {
+        return 0
+    }
+    fs.mkdir("/tmp/fzyagent")
+    let payload = util.json_obj4(
+        "event", json.str(name),
+        "component", json.str(component),
+        "clock", json.str("sampled"),
+        "status", json.str("ok"),
+    )
+    fs.write_file(events_path(), payload)
+    pulse()
+    return 0
+}
 
 fn boot_bus() -> i32 {
-    checkpoint()
-    return 0
+    return emit_event("boot_bus", "runtime.events")
 }
 
 fn emit_tool_started() -> i32 {
-    pulse()
-    return 0
+    return emit_event("tool_started", "runtime.events")
 }
 
 fn emit_tool_finished() -> i32 {
-    pulse()
-    return 0
+    return emit_event("tool_finished", "runtime.events")
 }
 
 fn emit_stdout_chunk() -> i32 {
-    pulse()
-    return 0
+    return emit_event("stdout_chunk", "runtime.events")
 }
 
 fn emit_stderr_chunk() -> i32 {
-    pulse()
-    return 0
+    return emit_event("stderr_chunk", "runtime.events")
 }
 
 fn emit_structured_event() -> i32 {
-    pulse()
-    return 0
+    return emit_event("structured_event", "runtime.events")
 }
 
 fn emit_registry_update() -> i32 {
-    pulse()
-    return 0
+    return emit_event("registry_update", "runtime.events")
 }
 
 fn emit_health_tick() -> i32 {
-    pulse()
-    return 0
+    return emit_event("health_tick", "runtime.events")
 }

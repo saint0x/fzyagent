@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FZL Language Showcase</title>
+  <style>
+    :root {
+      --bg: #09111a;
+      --bg2: #0f1d2b;
+      --panel: rgba(8, 16, 24, 0.8);
+      --text: #e7f1f8;
+      --muted: #8ba1b3;
+      --line: #183144;
+      --kw: #69d3ff;
+      --type: #ffd27a;
+      --fn: #9df0b6;
+      --num: #ffb084;
+      --str: #b6f7a5;
+      --char: #ffe48b;
+      --comment: #6f8a9c;
+      --attr: #ff9d9d;
+      --op: #c7d8e4;
+      --const: #9cc7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 700px at 10% -10%, #103450 0%, transparent 60%),
+        radial-gradient(900px 500px at 90% -20%, #3a2a14 0%, transparent 65%),
+        linear-gradient(160deg, var(--bg), var(--bg2));
+      color: var(--text);
+      min-height: 100vh;
+      padding: 28px;
+    }
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(6px);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 30px 90px rgba(0,0,0,.35);
+    }
+    .head {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title { font-size: 1.2rem; font-weight: 700; letter-spacing: .01em; }
+    .sub { color: var(--muted); font-size: .92rem; }
+    .code-wrap { padding: 0; }
+    pre {
+      margin: 0;
+      padding: 24px;
+      overflow: auto;
+      line-height: 1.45;
+      font-size: 13.5px;
+      tab-size: 4;
+      font-family: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
+      background: rgba(4, 9, 14, .55);
+    }
+    .comment { color: var(--comment); }
+    .keyword { color: var(--kw); font-weight: 600; }
+    .type { color: var(--type); }
+    .fn { color: var(--fn); }
+    .number { color: var(--num); }
+    .string { color: var(--str); }
+    .char { color: var(--char); }
+    .attribute { color: var(--attr); }
+    .operator { color: var(--op); }
+    .constant { color: var(--const); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="title">FZL Full Language Showcase</div>
+      <div class="sub">Large syntax-highlighted exhibition covering language surface, ADT/pattern-matching completeness, and runtime patterns</div>
+    </div>
+    <div class="code-wrap">
+      <pre><code id="fzl-code"></code></pre>
+    </div>
+  </div>
+
+  <script id="fzl-source" type="text/plain">// ============================================================
+// FZL SHOWCASE (PRODUCTION 2026 CUTOVER)
+// ============================================================
+// Highlights in this snapshot:
+// - `pubext` as the primary C export syntax
+// - `[ffi] panic_boundary` policy in fozzy.toml
+// - `core.c` ownership/view helpers
+// - canonical enum variant syntax (`Type::Variant`)
+// - async + spawn/join + deterministic scheduler hooks
+// - direct-memory native lowering contract + gate-backed parity
+// - first-class tuple/struct/enum aggregate handles in both native backends
+// - destructuring parity across locals, parameters, calls, returns, helpers, and control-flow values
+
+// ------------------------------------------------------------
+// SECTION A: project/module surface
+// ------------------------------------------------------------
+use core.time;
+use core.fs;
+use core.http;
+use core.proc;
+use core.thread;
+use core.log;
+use core.encoding;
+use core.error;
+use core.path;
+use core.collections;
+use core.c;
+
+mod api;
+mod model;
+mod runtime;
+mod services;
+mod cli;
+mod tests;
+
+const BUILD_ID: i32 = 20260227;
+static GLOBAL_SCALE: i32 = 3;
+static mut GLOBAL_COUNTER: i32 = 0;
+
+fn next_counter() -> i32 {
+    GLOBAL_COUNTER = GLOBAL_COUNTER + 1;
+    return GLOBAL_COUNTER;
+}
+
+// ------------------------------------------------------------
+// SECTION B: C boundary policy + exports
+// ------------------------------------------------------------
+// fozzy.toml policy (shown inline for reference):
+//
+// [ffi]
+// panic_boundary = "error"
+//
+// Per-symbol override is still available:
+// #[ffi_panic(abort)] pubext c fn ...
+
+ext unsafe c fn c_add(left: i32, right: i32) -> i32;
+// Compiler-generated unsafe contracts/docs include reason/invariant/owner/scope/risk_class/proof_ref.
+// Missing metadata is non-blocking by default; strict CI/release policy can make it blocking.
+unsafe fn c_add_unsafe(left: i32, right: i32) -> i32 {
+    // Compiler-generated unsafe contracts/docs include reason/invariant/owner/scope/risk_class/proof_ref.
+    unsafe {
+        return c_add(left, right);
+    }
+    return 0;
+}
+
+pubext c fn fz_add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+
+pubext async c fn fz_health(code: i32) -> i32 {
+    timeout(25);
+    checkpoint();
+    return code;
+}
+
+// Generated C ABI surface for async export:
+// typedef uint64_t fz_async_handle_t;
+// int32_t fz_health_async_start(int32_t code, fz_async_handle_t* handle_out);
+// int32_t fz_health_async_poll(fz_async_handle_t handle, int32_t* done_out);
+// int32_t fz_health_async_await(fz_async_handle_t handle, int32_t* result_out);
+// int32_t fz_health_async_drop(fz_async_handle_t handle);
+
+// ------------------------------------------------------------
+// SECTION C: repr(C) layouts + canonical enum variants
+// ------------------------------------------------------------
+#[repr(C)]
+struct Header {
+    version: u32,
+    flags: u32,
+    payload_len: usize,
+}
+
+#[repr(C)]
+enum Message {
+    Ping,
+    Pong,
+    Data(i32, i32),
+    Err(i32),
+}
+
+fn enum_demo(msg: Message) -> i32 {
+    match msg {
+        Message::Ping => 1,
+        Message::Pong => 2,
+        Message::Data(_, _) => 3,
+        Message::Err(_) => return -1,
+        _ => 0,
+    }
+    return 7;
+}
+
+// ------------------------------------------------------------
+// SECTION D: trait + impl + operators
+// ------------------------------------------------------------
+trait Codec {
+    fn encode(v: i32) -> i32;
+    fn decode(v: i32) -> i32;
+}
+
+struct XorCodec { key: i32 }
+
+impl Codec for XorCodec {
+    fn encode(v: i32) -> i32 {
+        return (v ^ 0x5A5A) + 7;
+    }
+    fn decode(v: i32) -> i32 {
+        return (v - 7) ^ 0x5A5A;
+    }
+}
+
+// ------------------------------------------------------------
+// SECTION D2: production trait/generic + macro contract addendum
+// ------------------------------------------------------------
+// Production v1 additions:
+// - function generics are supported with common call-site inference
+// - explicit specialization remains available when inference needs help
+// - trait impl targets must be concrete types
+// - canonical trait method dispatch form is `Type.method(...)`
+// - macro/attribute surface remains constrained to `#[repr(...)]` and `#[ffi_panic(...)]`
+fn keep_codec<T: Codec>(v: T) -> T {
+    return v;
+}
+
+fn trait_generic_addendum(seed: i32) -> i32 {
+    let codec = keep_codec(XorCodec { key: 7 });
+    discard codec;
+    return XorCodec.decode(XorCodec.encode(seed));
+}
+
+// ------------------------------------------------------------
+// SECTION D3: production type-system expansion
+// ------------------------------------------------------------
+trait Transport {
+    type Endpoint;
+    const DEFAULT_TIMEOUT_MS: i32;
+    fn connect(target: Url) -> i32;
+}
+
+struct HttpTransport {}
+
+impl Transport for HttpTransport {
+    type Endpoint = Url;
+    const DEFAULT_TIMEOUT_MS: i32 = 5000;
+    fn connect(target: Url) -> i32 {
+        discard target;
+        return 0;
+    }
+}
+
+type UserId = Uuid;
+newtype TenantId(Uuid);
+#[repr(transparent)]
+newtype JobId(i64);
+
+fn type_surface_demo(endpoint: Url) -> i32 {
+    let _bytes: bytes = "ok";
+    let _pair: (i32, bool) = (1, true);
+    let _future: Future<i32> = async_worker(1);
+    let _map: Map<Uuid, Decimal128> = map.new();
+    let _set: Set<str> = set.new();
+    let _deque: Deque<i32> = deque.new();
+    let _ring: Ring<i32> = ring.new();
+    let _decimal: Decimal = decimal.parse("12.50");
+    let _date: DateTimeTz = datetime.now_tz("UTC");
+    let _dyn_like: dyn Codec = XorCodec { key: 9 };
+    discard _bytes;
+    discard _pair;
+    discard _future;
+    discard _map;
+    discard _set;
+    discard _deque;
+    discard _ring;
+    discard _decimal;
+    discard _date;
+    discard _dyn_like;
+    return HttpTransport.connect(endpoint);
+}
+
+fn signed_ops(a: i32, b: i32) -> i32 {
+    let x: i32 = a + b;
+    let y: i32 = a - b;
+    let z: i32 = (x * y) / ((b | 1) + 1);
+    let m: i32 = z % 97;
+    let sh: i32 = (m << 2) >> 1;
+    let bw: i32 = (~sh) & 0x00FF;
+    let bx: i32 = bw ^ 0x0033;
+    if bx > 0 && true || false {
+        return bx;
+    }
+    return 0 - bx;
+}
+
+// ------------------------------------------------------------
+// SECTION E: loops + arrays + function values
+// ------------------------------------------------------------
+fn loops_demo(limit: i32) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i32 = 0;
+
+    while i < limit {
+        i = i + 1;
+        if i % 2 == 0 {
+            continue;
+        }
+        total = total + i;
+        if total > 50 {
+            break;
+        }
+    }
+
+    for ; i < limit + 10; i = i + 1 {
+        total = total + 1;
+        if total > 64 {
+            break;
+        }
+    }
+
+    for n in 0..8 {
+        if n == 3 {
+            continue;
+        }
+        total = total + n;
+    }
+
+    discard loop {
+        total = total + 1;
+        if total > 80 {
+            break total;
+        }
+    };
+    return total;
+}
+
+fn arrays_and_indexing() -> i32 {
+    let arr: [i32; 5] = [4, 8, 15, 16, 23];
+    return arr[0] + arr[4];
+}
+
+fn higher_order(cb: fn(i32) -> i32, v: i32) -> i32 {
+    discard cb;
+    return v;
+}
+
+fn id(v: i32) -> i32 { return v; }
+
+fn closure_demo(seed: i32) -> i32 {
+    let idx: i32 = 1;
+    let values = [seed, seed + 1, seed + 2, seed + 3, seed + 4];
+    let pick = |x: i32| x + values[idx % 5];
+    return pick(BUILD_ID % 11) + next_counter() + GLOBAL_SCALE;
+}
+
+// ------------------------------------------------------------
+// SECTION F: async/runtime/concurrency + core.c helpers
+// ------------------------------------------------------------
+async fn async_worker(id: i32) -> i32 {
+    requires id >= 0;
+    timeout(250);
+    checkpoint();
+    yield();
+    pulse();
+    if recv() != 0 {
+        return -1;
+    }
+    ensures true;
+    return id + 100;
+}
+
+async fn async_orchestrator() -> i32 {
+    let handle = spawn(runtime.worker.run);
+    let code = await async_worker(7);
+    let _joined = join(handle);
+    return code;
+}
+
+fn c_view_demo() -> i32 {
+    let ptr = mem.alloc(16);
+    let _owned_label = c.ownership_label("owned");
+    let _borrowed = c.borrowed_view(ptr, 16);
+    let _out = c.out_view(ptr, 16);
+    let _cb = c.bind_callback(0, 99);
+    mem.free(ptr);
+    return 0;
+}
+
+// ------------------------------------------------------------
+// SECTION G: IO/process/http + explicit unsafe island metadata
+// ------------------------------------------------------------
+fn host_and_io_showcase() -> i32 {
+    let root = path.join("tmp", "showcase");
+    let _ = fs.mkdir(root);
+    log.set_json(1);
+    let fields_start = map.new();
+    map.set(fields_start, "component", "showcase");
+    map.set(fields_start, "phase", "host_io");
+    log.info("showcase.start", log.fields(fields_start));
+
+    let payload = encoding.json_encode("{\"ok\":true}");
+    let file = path.join(root, "data.json");
+    fs.write(file, payload);
+    let raw = fs.read(file);
+
+    let listener = http.bind();
+    if listener >= 0 {
+        http.listen(listener);
+        let fields_listen = map.new();
+        map.set(fields_listen, "transport", "http");
+        log.info("showcase.listen", log.fields(fields_listen));
+    } else {
+        let fields_bind = map.new();
+        map.set(fields_bind, "component", "showcase");
+        log.warn("showcase.bind_failed", log.fields(fields_bind));
+    }
+
+    let proc_id = proc.spawn("echo", ["fzl", "showcase"]);
+    let _exit = proc.wait(proc_id);
+
+    // Compiler-generated unsafe contracts/docs include reason/invariant/owner/scope/risk_class/proof_ref.
+    unsafe {
+        discard c_add_unsafe(listener, 7);
+    }
+
+    if str.contains(raw, "ok") == 1 {
+        let fields_done_ok = map.new();
+        map.set(fields_done_ok, "result", "ok");
+        map.set(fields_done_ok, "error_policy", "core.error.enabled");
+        log.info("showcase.done", log.fields(fields_done_ok));
+        return 0;
+    }
+    let fields_done_err = map.new();
+    map.set(fields_done_err, "result", "missing_ok");
+    map.set(fields_done_err, "error_policy", "core.error.enabled");
+    log.error("showcase.done", log.fields(fields_done_err));
+    return 1;
+}
+
+// ------------------------------------------------------------
+// SECTION H: composed pipeline
+// ------------------------------------------------------------
+fn full_pipeline(seed: i32) -> i32 {
+    let tg = trait_generic_addendum(seed);
+    let ts = type_surface_demo(url.parse("https://example.test"));
+    let ops = signed_ops(seed, 11);
+    let mixed = loops_demo(14);
+    let em = enum_demo(Message::Ping);
+    let idx = arrays_and_indexing();
+    let ho = higher_order(id, seed);
+    let lam = closure_demo(seed);
+    let io = host_and_io_showcase();
+    let cv = c_view_demo();
+    let out = ops + mixed + em + idx + ho + lam + io + cv + tg + ts;
+    if out > 0 {
+        return out;
+    }
+    return 0;
+}
+
+fn main() -> i32 {
+    model.preflight();
+    cli.boot();
+    services.boot_all();
+    runtime.start();
+    api.touch();
+
+    let now: i32 = time.now();
+    let piped = full_pipeline(now & 255);
+    let exit_code = match piped {
+        0 => 2,
+        1 => 3,
+        _ => {
+            discard async_orchestrator;
+            let async_code = 0;
+            if async_code < 0 {
+                9
+            } else {
+                piped % 127
+            }
+        }
+    };
+    return exit_code;
+}
+
+test "syntax-showcase-operators" {
+    let out = signed_ops(13, 5);
+    assert.eq_i32(out != 0, true);
+}
+
+test "syntax-showcase-match" {
+    let out = enum_demo(Message::Ping);
+    assert.eq_i32(out, 1);
+}
+
+// ============================================================
+// End of showcase
+// ============================================================
+</script>
+
+  <script>
+    const KEYWORDS = new Set([
+      "use","mod","fn","return","if","else","match","while","for","in","loop",
+      "break","continue","let","const","static","trait","impl","struct","enum","pub","pubext","ext","async",
+      "await","requires","ensures","defer","test","unsafe","type","newtype","dyn"
+    ]);
+    const TYPES = new Set([
+      "i8","i16","i32","i64","i128","isize","u8","u16","u32","u64","u128","usize",
+      "f32","f64","bool","char","str","void","bytes",
+      "BigInt","BigUint","Decimal128","Uuid","Path","PathBuf","Url","SocketAddr",
+      "Duration","Instant","Decimal","DateTimeTz","ExitStatus","Future","Map","Set","Deque","Ring"
+    ]);
+    const CONSTANTS = new Set(["true","false"]);
+
+    function esc(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function highlightFzl(src) {
+      let i = 0;
+      let out = "";
+
+      const isAlpha = c => /[A-Za-z_]/.test(c);
+      const isAlnum = c => /[A-Za-z0-9_]/.test(c);
+      const isNum = c => /[0-9]/.test(c);
+
+      while (i < src.length) {
+        const ch = src[i];
+        const nx = src[i + 1] || "";
+
+        if (ch === "/" && nx === "/") {
+          let j = i;
+          while (j < src.length && src[j] !== "\n") j++;
+          out += `<span class=\"comment\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        if (ch === "#" && nx === "[") {
+          let j = i + 2;
+          while (j < src.length && src[j] !== "]") j++;
+          if (j < src.length) j++;
+          out += `<span class=\"attribute\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        if (ch === '"') {
+          let j = i + 1;
+          while (j < src.length) {
+            if (src[j] === "\\") { j += 2; continue; }
+            if (src[j] === '"') { j++; break; }
+            j++;
+          }
+          out += `<span class=\"string\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        if (ch === "'" && src[i+2] === "'") {
+          const j = i + 3;
+          out += `<span class=\"char\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        if (isNum(ch)) {
+          let j = i;
+          while (j < src.length && /[0-9A-Fa-fx_\.]/.test(src[j])) j++;
+          out += `<span class=\"number\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        if (isAlpha(ch)) {
+          let j = i;
+          while (j < src.length && isAlnum(src[j])) j++;
+          const word = src.slice(i, j);
+          if (KEYWORDS.has(word)) {
+            out += `<span class=\"keyword\">${esc(word)}</span>`;
+          } else if (TYPES.has(word)) {
+            out += `<span class=\"type\">${esc(word)}</span>`;
+          } else if (CONSTANTS.has(word)) {
+            out += `<span class=\"constant\">${esc(word)}</span>`;
+          } else {
+            let k = j;
+            while (k < src.length && /\s/.test(src[k])) k++;
+            if (src[k] === "(") out += `<span class=\"fn\">${esc(word)}</span>`;
+            else out += esc(word);
+          }
+          i = j;
+          continue;
+        }
+
+        if (/[:=+\-*/%&|!<>^~]/.test(ch)) {
+          let j = i + 1;
+          if (j < src.length && /[=<>|&:+\-]/.test(src[j])) j++;
+          out += `<span class=\"operator\">${esc(src.slice(i, j))}</span>`;
+          i = j;
+          continue;
+        }
+
+        out += esc(ch);
+        i++;
+      }
+      return out;
+    }
+
+    const source = document.getElementById("fzl-source").textContent;
+    document.getElementById("fzl-code").innerHTML = highlightFzl(source);
+  </script>
+</body>
+</html>

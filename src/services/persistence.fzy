@@ -1,31 +1,62 @@
 use core.fs;
+use core.time;
 
 fn state_dir() -> str {
-    return "/tmp/anthropic_smoke"
+    return "/tmp/fzyagent"
 }
 
 fn sessions_path() -> str {
-    return "/tmp/anthropic_smoke/sessions.json"
+    return "/tmp/fzyagent/sessions.json"
 }
 
 fn runs_dir() -> str {
-    return "/tmp/anthropic_smoke/runs"
+    return "/tmp/fzyagent/runs"
 }
 
 fn run_path(run_id: str) -> str {
     if run_id == "latest" {
-        return "/tmp/anthropic_smoke/runs/latest.json"
+        return "/tmp/fzyagent/runs/latest.json"
     }
     if run_id == "parallel_bash_latest" {
-        return "/tmp/anthropic_smoke/runs/parallel_bash_latest.json"
+        return "/tmp/fzyagent/runs/parallel_bash_latest.json"
     }
     if run_id == "parallel_grep_latest" {
-        return "/tmp/anthropic_smoke/runs/parallel_grep_latest.json"
+        return "/tmp/fzyagent/runs/parallel_grep_latest.json"
     }
     if run_id == "bash_latest" {
-        return "/tmp/anthropic_smoke/runs/bash_latest.json"
+        return "/tmp/fzyagent/runs/bash_latest.json"
     }
-    return "/tmp/anthropic_smoke/runs/generic_latest.json"
+    if run_id == "grep_search_latest" {
+        return "/tmp/fzyagent/runs/grep_search_latest.json"
+    }
+    if run_id == "release_audit_latest" {
+        return "/tmp/fzyagent/runs/release_audit_latest.json"
+    }
+    if run_id == "timeout_probe_latest" {
+        return "/tmp/fzyagent/runs/timeout_probe_latest.json"
+    }
+    if run_id == "workspace_digest_latest" {
+        return "/tmp/fzyagent/runs/workspace_digest_latest.json"
+    }
+    if run_id == "project_seed_latest" {
+        return "/tmp/fzyagent/runs/project_seed_latest.json"
+    }
+    if run_id == "aegis_latest" {
+        return "/tmp/fzyagent/runs/aegis_latest.json"
+    }
+    if run_id == "browser_ops_seed_latest" {
+        return "/tmp/fzyagent/runs/browser_ops_seed_latest.json"
+    }
+    if run_id == "toolsmith_latest" {
+        return "/tmp/fzyagent/runs/toolsmith_latest.json"
+    }
+    if run_id == "promptsmith_latest" {
+        return "/tmp/fzyagent/runs/promptsmith_latest.json"
+    }
+    if run_id == "fzydoc_latest" {
+        return "/tmp/fzyagent/runs/fzydoc_latest.json"
+    }
+    return "/tmp/fzyagent/runs/generic_latest.json"
 }
 
 fn ensure_state() -> i32 {
@@ -34,9 +65,33 @@ fn ensure_state() -> i32 {
     return 0
 }
 
+fn session_doc(event: str, state: str, turn_count: str, last_run_id: str) -> str {
+    discard time.now()
+    let meta = util.json_obj4(
+        "event", json.str(event),
+        "updated_at", json.str("sampled"),
+        "provider", json.str("anthropic"),
+        "model", json.str(services.anthropic.default_model_name()),
+    )
+    return util.json_obj5(
+        "status", json.str("ok"),
+        "session_id", json.str("demo"),
+        "state", json.str(state),
+        "turn_count", json.str(turn_count),
+        "meta", json.raw(meta),
+    )
+}
+
 fn save_session() -> i32 {
     ensure_state()
-    let payload = util.json_obj3("status", json.str("ok"), "session_id", json.str("demo"), "state", json.str("active"))
+    let payload = session_doc("save_session", "active", "0", "latest")
+    fs.write_file(sessions_path(), payload)
+    return 0
+}
+
+fn save_session_event(event: str, state: str, turn_count: str) -> i32 {
+    ensure_state()
+    let payload = session_doc(event, state, turn_count, "latest")
     fs.write_file(sessions_path(), payload)
     return 0
 }
@@ -53,7 +108,7 @@ fn load_session_json() -> str {
     load_session()
     let payload = fs.read_file(sessions_path())
     if payload == "" {
-        return util.json_obj2("status", json.str("ok"), "session_id", json.str("demo"))
+        return session_doc("load_session_empty", "active", "0", "latest")
     }
     return payload
 }
@@ -76,11 +131,13 @@ fn load_run_json(run_id: str) -> str {
     ensure_state()
     let path = run_path(run_id)
     if fs.exists(path) == 0 {
-        return util.json_obj3("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("missing"))
+        discard time.now()
+        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("missing"), "updated_at", json.str("sampled"))
     }
     let payload = fs.read_file(path)
     if payload == "" {
-        return util.json_obj3("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("empty"))
+        discard time.now()
+        return util.json_obj4("status", json.str("error"), "run_id", json.str(run_id), "state", json.str("empty"), "updated_at", json.str("sampled"))
     }
     return payload
 }

@@ -28,7 +28,8 @@
     21,
     22,
     23,
-    24
+    24,
+    25
   ],
   "asyncSchedule": [
     0,
@@ -56,6 +57,7 @@
     22,
     23,
     24,
+    25,
     0,
     1,
     2,
@@ -203,6 +205,11 @@
       "detached": false
     },
     {
+      "event": "spawned",
+      "taskId": 25,
+      "detached": false
+    },
+    {
       "event": "started",
       "taskId": 0
     },
@@ -401,6 +408,14 @@
     {
       "event": "completed",
       "taskId": 24
+    },
+    {
+      "event": "started",
+      "taskId": 25
+    },
+    {
+      "event": "completed",
+      "taskId": 25
     }
   ],
   "runtimeEvents": [
@@ -497,62 +512,68 @@
     {
       "taskId": 15,
       "phase": "spawned",
-      "kind": "async",
-      "label": "async_fn_6"
+      "kind": "spawn",
+      "label": "spawn_0"
     },
     {
       "taskId": 16,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_0"
+      "label": "spawn_1"
     },
     {
       "taskId": 17,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_1"
+      "label": "spawn_2"
     },
     {
       "taskId": 18,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_2"
+      "label": "spawn_3"
     },
     {
       "taskId": 19,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_3"
+      "label": "spawn_4"
     },
     {
       "taskId": 20,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_4"
+      "label": "spawn_5"
     },
     {
       "taskId": 21,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_5"
+      "label": "spawn_6"
     },
     {
       "taskId": 22,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_6"
+      "label": "spawn_7"
     },
     {
       "taskId": 23,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_7"
+      "label": "spawn_8"
     },
     {
       "taskId": 24,
       "phase": "spawned",
       "kind": "spawn",
-      "label": "spawn_8"
+      "label": "spawn_9"
+    },
+    {
+      "taskId": 25,
+      "phase": "spawned",
+      "kind": "spawn",
+      "label": "spawn_10"
     },
     {
       "taskId": 0,
@@ -737,122 +758,134 @@
     {
       "taskId": 15,
       "phase": "started",
-      "kind": "async",
-      "label": "async_fn_6"
+      "kind": "spawn",
+      "label": "spawn_0"
     },
     {
       "taskId": 15,
       "phase": "terminal",
-      "kind": "async",
-      "label": "async_fn_6"
-    },
-    {
-      "taskId": 16,
-      "phase": "started",
       "kind": "spawn",
       "label": "spawn_0"
     },
     {
       "taskId": 16,
-      "phase": "terminal",
-      "kind": "spawn",
-      "label": "spawn_0"
-    },
-    {
-      "taskId": 17,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_1"
     },
     {
-      "taskId": 17,
+      "taskId": 16,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_1"
     },
     {
-      "taskId": 18,
+      "taskId": 17,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_2"
     },
     {
-      "taskId": 18,
+      "taskId": 17,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_2"
     },
     {
-      "taskId": 19,
+      "taskId": 18,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_3"
     },
     {
-      "taskId": 19,
+      "taskId": 18,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_3"
     },
     {
-      "taskId": 20,
+      "taskId": 19,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_4"
     },
     {
-      "taskId": 20,
+      "taskId": 19,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_4"
     },
     {
-      "taskId": 21,
+      "taskId": 20,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_5"
     },
     {
-      "taskId": 21,
+      "taskId": 20,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_5"
     },
     {
-      "taskId": 22,
+      "taskId": 21,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_6"
     },
     {
-      "taskId": 22,
+      "taskId": 21,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_6"
     },
     {
-      "taskId": 23,
+      "taskId": 22,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_7"
     },
     {
-      "taskId": 23,
+      "taskId": 22,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_7"
     },
     {
-      "taskId": 24,
+      "taskId": 23,
       "phase": "started",
       "kind": "spawn",
       "label": "spawn_8"
     },
     {
-      "taskId": 24,
+      "taskId": 23,
       "phase": "terminal",
       "kind": "spawn",
       "label": "spawn_8"
+    },
+    {
+      "taskId": 24,
+      "phase": "started",
+      "kind": "spawn",
+      "label": "spawn_9"
+    },
+    {
+      "taskId": 24,
+      "phase": "terminal",
+      "kind": "spawn",
+      "label": "spawn_9"
+    },
+    {
+      "taskId": 25,
+      "phase": "started",
+      "kind": "spawn",
+      "label": "spawn_10"
+    },
+    {
+      "taskId": 25,
+      "phase": "terminal",
+      "kind": "spawn",
+      "label": "spawn_10"
     }
   ],
   "causalLinks": [
@@ -974,6 +1007,11 @@
     {
       "from": 23,
       "to": 24,
+      "relation": "schedule.next"
+    },
+    {
+      "from": 24,
+      "to": 25,
       "relation": "schedule.next"
     }
   ],

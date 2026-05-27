@@ -1,11 +1,11 @@
 use core.fs;
 
 fn checkpoint_path() -> str {
-    return "/tmp/anthropic_smoke/runtime.checkpoint.json"
+    return "/tmp/fzyagent/runtime.checkpoint.json"
 }
 
 fn save_checkpoint() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    fs.mkdir("/tmp/fzyagent")
     let payload = util.json_obj2("status", json.str("saved"), "scope", json.str("runtime"))
     fs.write_file(checkpoint_path(), payload)
     return 0

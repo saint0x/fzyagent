@@ -1,0 +1,15 @@
+{
+  "name": "language-test-det_http_routes",
+  "steps": [
+    {
+      "name": "test:det_http_routes",
+      "type": "trace_event"
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "type": "assert_eq_int"
+    }
+  ],
+  "version": 1
+}

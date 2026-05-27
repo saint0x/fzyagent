@@ -5,6 +5,8 @@
 
 # Fozzy build/runtime artifacts
 .fz/
+.fozzy/runs/
+.local/
 
 # Environment and secrets
 .env

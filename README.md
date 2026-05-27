@@ -1,36 +1,39 @@
-# fzyllm
+# fzyagent
 
-`fzyllm` is a small agentic runtime written in fzy (fozzylang) as a public exhibition project.
+`fzyagent` is an agentic runtime built in fzy (fozzylang).
 
-The point is not the app itself. The point is showing what fzy (fozzylang) feels like in a real, running system.
+It is both a real runtime for tool-using agents, stateful chat, prompt management, browser automation, and custom tool creation, and a compact exhibition of how powerful fzy can be in a production-shaped system.
 
 ## Why this project exists
 
-This repo demonstrates that fzy (fozzylang) can handle production-shaped service code with clean structure, deterministic tooling, and practical networking/runtime behavior.
+This repo shows what fzy looks like in a production-shaped system. The runtime itself matters, but it also serves as a concrete example of how well the language fits systems work: service boundaries, concurrent workflows, distributed logic, long-lived runtime processes, and explicit service composition.
+
+## Why we use fzy
+
+We use fzy because it makes systems code feel direct and structured without becoming heavy.
+
+- Agent features like `toolsmith` and `promptsmith` map naturally onto fzy's module structure, runtime services, and explicit state handling.
+- Distributed and concurrent logic stays readable because the language encourages small, explicit components instead of hidden framework magic.
+- The tooling story is strong for production work: deterministic testing, trace replay, host-backed validation, and clear runtime boundaries.
+- Idioms like explicit service modules, structured tool execution, and spawn/join-oriented workflows made it straightforward to build this runtime without a lot of incidental complexity.
+
+In practice, that means we can ship real agent runtime features quickly while keeping the codebase inspectable and operationally sane.
 
 ## Language features demonstrated
 
-- Module-oriented architecture across runtime, services, model, api, and cli layers
-- Type-safe function boundaries and explicit contracts between components
-- Concurrency and scheduling primitives in a runtime context
-- Native `async`/`await` protocol paths for provider I/O orchestration
-- Trait + generic polymorphism with explicit specialization and concrete impl dispatch
-- Explicit `match`-based state/failure mapping in runtime domain models
-- Closure/lambda values with lexical capture in deterministic language-surface tests
-- Native array/index expression paths exercised in deterministic language-surface tests
-- Import metadata surface demonstrated with `use ... as alias` and `pub use ...`
-- Production loop/control primitives (`loop`, `for-in` ranges, `break`, `continue`) in runtime/test paths
-- Full statement-as-expression surface (`if`, `match`, `loop`, `break <expr>`, `discard`) in deterministic language tests
-- Deadline and cancellation markers (`timeout`, `deadline`, `cancel`) in request paths
+- Module-oriented architecture across runtime, services, model, API, and CLI layers
+- Type-safe boundaries and explicit contracts between components
+- Concurrent task orchestration for tool execution and runtime workflows
 - Native HTTP/server flows and provider integration in language-level code
-- Structured logging and operational visibility from fzy (fozzylang) code paths
+- Deterministic testing, replay, and trace validation with Fozzy-first workflows
+- Structured logging and operational visibility from fzy code paths
 
 ## How the language maps to the runtime
 
-- `src/main.fzy` wires a full boot path (config -> services -> runtime -> serve)
-- `src/services/*` shows request handling, provider calls, and tool/session plumbing
-- `src/runtime/*` demonstrates supervision, limits, failure handling, and worker orchestration
-- `src/model/*` keeps app state/contracts explicit and inspectable
+- `src/main.fzy` wires the full boot path from config to live service runtime
+- `src/services/*` handles HTTP, provider calls, tool execution, prompt control, and session plumbing
+- `src/runtime/*` covers supervision, limits, recovery, and worker orchestration
+- `src/model/*` keeps contracts and runtime state explicit and inspectable
 
 ## Local run
 
@@ -44,11 +47,11 @@ fz build . --release --backend llvm --json
 fz audit unsafe . --workspace --json
 fozzy doctor --deep --scenario .fz/det/main.det.fozzy.json --runs 5 --seed 4242 --json
 fozzy test --det --strict .fz/det/main.det.fozzy.json --json
-fz test . --det --strict-verify --seed 4242 --record artifacts/anthropic_smoke.det.trace.fozzy --json
+fz test . --det --strict-verify --seed 4242 --record artifacts/fzyagent.det.trace.fozzy --json
 fz run . --backend cranelift --json
-fozzy trace verify artifacts/anthropic_smoke.det.trace.fozzy --strict --json
-fozzy replay artifacts/anthropic_smoke.det.trace.fozzy --json
-fozzy ci artifacts/anthropic_smoke.det.trace.fozzy --json
+fozzy trace verify artifacts/fzyagent.det.trace.fozzy --strict --json
+fozzy replay artifacts/fzyagent.det.trace.fozzy --json
+fozzy ci artifacts/fzyagent.det.trace.fozzy --json
 ```
 
 Default listen address is `127.0.0.1:8787`.

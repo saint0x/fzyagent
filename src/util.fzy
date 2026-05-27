@@ -37,6 +37,16 @@ fn json_obj4(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str, k4: str, v4: 
     return json.object(obj)
 }
 
+fn json_obj5(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str, k4: str, v4: str, k5: str, v5: str) -> str {
+    let obj = map.new()
+    discard map.set(obj, k1, v1)
+    discard map.set(obj, k2, v2)
+    discard map.set(obj, k3, v3)
+    discard map.set(obj, k4, v4)
+    discard map.set(obj, k5, v5)
+    return json.object(obj)
+}
+
 fn json_arr1(v1: str) -> str {
     let items = list.new()
     discard list.push(items, v1)

@@ -1,16 +1,16 @@
-use core.proc;
 use core.fs;
+use core.time;
 
 fn limits_path() -> str {
-    return "/tmp/anthropic_smoke/runtime.limits.json"
+    return "/tmp/fzyagent/runtime.limits.json"
 }
 
 fn enforce_thread_limit() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    fs.mkdir("/tmp/fzyagent")
     let v = env.get("AGENT_THREAD_LIMIT")
     let payload = util.json_obj2("thread_limit", json.str(v), "status", json.str("ok"))
     fs.write_file(limits_path(), payload)
-    proc.exec_timeout(250)
+    time.sleep_ms(25)
     return 0
 }
 
@@ -18,7 +18,7 @@ fn enforce_queue_depth() -> i32 {
     let v = env.get("AGENT_QUEUE_LIMIT")
     let payload = util.json_obj2("queue_limit", json.str(v), "status", json.str("ok"))
     fs.write_file(limits_path(), payload)
-    proc.exec_timeout(250)
+    time.sleep_ms(25)
     return 0
 }
 
@@ -26,6 +26,6 @@ fn enforce_memory_budget() -> i32 {
     let v = env.get("AGENT_MEMORY_LIMIT")
     let payload = util.json_obj2("memory_limit", json.str(v), "status", json.str("ok"))
     fs.write_file(limits_path(), payload)
-    proc.exec_timeout(250)
+    time.sleep_ms(25)
     return 0
 }

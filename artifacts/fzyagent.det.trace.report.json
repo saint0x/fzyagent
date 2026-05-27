@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "fozzylang.report.v0",
+  "status": "pass",
+  "capabilities": [
+    "thread"
+  ],
+  "scheduler": "fifo",
+  "seed": 4242,
+  "discoveredTests": 9,
+  "deterministicTests": 9,
+  "executedTasks": 33,
+  "asyncCheckpoints": 44,
+  "rpcFrames": 0,
+  "generatedScenarios": 18,
+  "events": 99,
+  "failureClasses": [
+    {
+      "id": "async_schedule_interleaving",
+      "priority": 3,
+      "signal": "async.schedule"
+    },
+    {
+      "id": "thread_interleaving",
+      "priority": 4,
+      "signal": "thread.schedule"
+    }
+  ],
+  "findings": [],
+  "rpcValidation": [],
+  "threadFindings": [
+    {
+      "contractHash": "69812b56bcbde42d1589877c8858bfd753ea6e9111c2d9962b1e659c1e320ddd",
+      "kind": "unsafe_site_accounting",
+      "message": "unsafe enter/exit accounting: enters=2 exits=2 metadata_sites=2",
+      "metadataSites": 2,
+      "severity": "info",
+      "unsafeEnters": 2,
+      "unsafeExits": 2
+    }
+  ]
+}

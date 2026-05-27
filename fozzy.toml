@@ -1,9 +1,9 @@
 [package]
-name = "anthropic_smoke"
+name = "fzyagent"
 version = "0.1.0"
 
 [[target.bin]]
-name = "anthropic_smoke"
+name = "fzyagent"
 path = "src/main.fzy"
 
 [unsafe]

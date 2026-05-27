@@ -1,28 +1,28 @@
-use core.proc;
 use core.fs;
+use core.time;
 
 fn sandbox_path() -> str {
-    return "/tmp/anthropic_smoke/runtime.sandbox.json"
+    return "/tmp/fzyagent/runtime.sandbox.json"
 }
 
 fn apply_default_policy() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    fs.mkdir("/tmp/fzyagent")
     let payload = util.json_obj2("policy", json.str("default"), "scope", json.str("runtime"))
     fs.write_file(sandbox_path(), payload)
-    proc.exec_timeout(120)
+    time.sleep_ms(12)
     return 0
 }
 
 fn allow_tool_scope() -> i32 {
     let payload = util.json_obj2("policy", json.str("allow"), "scope", json.str("tools"))
     fs.write_file(sandbox_path(), payload)
-    proc.exec_timeout(120)
+    time.sleep_ms(12)
     return 0
 }
 
 fn deny_tool_scope() -> i32 {
     let payload = util.json_obj2("policy", json.str("deny"), "scope", json.str("tools"))
     fs.write_file(sandbox_path(), payload)
-    proc.exec_timeout(120)
+    time.sleep_ms(12)
     return 0
 }

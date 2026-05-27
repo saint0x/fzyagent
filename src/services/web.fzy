@@ -30,32 +30,44 @@ fn configure_listener() -> i32 {
 
 fn start_listener() -> i32 {
     configure_listener()
-    let listener = http.bind()
+    let listener: HttpHandle = http.bind()
     http.listen(listener)
     log.info("web listener started", util.log_fields2("component", "web", "phase", "listener_started"))
+    close(listener)
     return 0
 }
 
 fn serve_forever() -> i32 {
-    start_listener()
+    configure_listener()
+    let listener: HttpHandle = http.bind()
+    http.listen(listener)
+    log.info("web listener started", util.log_fields2("component", "web", "phase", "listener_started"))
     log.info("web serve_forever entered", util.log_fields2("component", "web", "phase", "serve_forever"))
     loop {
+        if runtime.supervisor.shutdown_requested() == 1 {
+            break
+        }
         accept_and_process()
         checkpoint()
         yield()
     }
-}
-
-fn accept_and_process() -> i32 {
-    let conn = http.accept()
-    log.info("web accepted connection", util.log_fields2("component", "web", "phase", "accept"))
-    read_request(conn)
-    apply_middleware(conn)
-    dispatch(conn)
+    close(listener)
     return 0
 }
 
-fn read_request(conn: i32) -> i32 {
+fn accept_and_process() -> i32 {
+    let conn: HttpHandle = http.accept()
+    if runtime.config.persist_request_artifacts() == 1 {
+        log.info("web accepted connection", util.log_fields2("component", "web", "phase", "accept"))
+    }
+    read_request(conn)
+    apply_middleware(conn)
+    dispatch(conn)
+    close(conn)
+    return 0
+}
+
+fn read_request(conn: HttpHandle) -> i32 {
     http.read(conn)
     parse_request_line()
     parse_headers()
@@ -78,36 +90,40 @@ fn parse_body() -> i32 {
     return 0
 }
 
-fn apply_middleware(conn: i32) -> i32 {
+fn apply_middleware(conn: HttpHandle) -> i32 {
     security.auth_middleware()
     security.rate_limit()
     security.policy_filter()
     checkpoint()
-    return conn
+    discard conn
+    return 0
 }
 
-fn dispatch(conn: i32) -> i32 {
-    let route = route_kind(conn)
-    let _route_id = route_key(conn)
-    log.info("web dispatch route", util.log_fields2("component", "web", "phase", "dispatch"))
-    if route == RouteKind::RouteHealth {
-        http.handle_health(conn)
-    } else if route == RouteKind::RouteSessionsCreate {
-        http.handle_sessions(conn)
-    } else if route == RouteKind::RouteSessionGet {
-        http.handle_session_get(conn)
-    } else if route == RouteKind::RouteToolsRegister {
-        http.handle_tools_register(conn)
-    } else if route == RouteKind::RouteToolsList {
-        http.handle_tools_list(conn)
-    } else if route == RouteKind::RouteToolsDelete {
-        http.handle_tools_delete(conn)
-    } else if route == RouteKind::RouteToolsRun {
-        http.handle_tools_run(conn)
-    } else if route == RouteKind::RouteMessagesPost {
-        http.handle_messages(conn)
-    } else if route == RouteKind::RouteRunGet {
-        http.handle_runs(conn)
+fn dispatch(conn: HttpHandle) -> i32 {
+    let method = http.method(conn)
+    let path = http.path(conn)
+    if runtime.config.persist_request_artifacts() == 1 {
+        log.info("web dispatch route", util.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
+        log.info("web dispatch method", util.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
+    }
+    if method == "GET" && path == "/healthz" {
+        services.http.handle_health(conn)
+    } else if method == "POST" && path == "/sessions" {
+        services.http.handle_sessions(conn)
+    } else if method == "GET" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 0 {
+        services.http.handle_session_get(conn, path)
+    } else if method == "POST" && path == "/tools" {
+        services.http.handle_tools_register(conn)
+    } else if method == "GET" && path == "/tools" {
+        services.http.handle_tools_list(conn)
+    } else if method == "DELETE" && str.starts_with(path, "/tools/") == 1 {
+        services.http.handle_tools_delete(conn, path)
+    } else if method == "POST" && str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 {
+        services.http.handle_tools_run(conn, path)
+    } else if method == "POST" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 1 {
+        services.http.handle_messages(conn, path)
+    } else if method == "GET" && str.starts_with(path, "/runs/") == 1 {
+        services.http.handle_runs(conn, path)
     } else {
         log.warn("web route not found", util.log_fields2("component", "web", "phase", "not_found"))
         write_not_found(conn)
@@ -115,8 +131,8 @@ fn dispatch(conn: i32) -> i32 {
     return 0
 }
 
-fn route_key(conn: i32) -> i32 {
-    let route = route_kind(conn)
+fn route_key(conn: HttpHandle) -> i32 {
+    let route = route_kind(http.method(conn), http.path(conn))
     if route == RouteKind::RouteHealth {
         return 0
     }
@@ -147,53 +163,53 @@ fn route_key(conn: i32) -> i32 {
     return 255
 }
 
-fn route_kind(conn: i32) -> RouteKind {
-    if route.match(conn, "GET", "/healthz") == 1 {
+fn route_kind(method: str, path: str) -> RouteKind {
+    if method == "GET" && path == "/healthz" {
         return RouteKind::RouteHealth
     }
-    if route.match(conn, "GET", "/sessions/:id") == 1 {
+    if method == "GET" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 0 {
         return RouteKind::RouteSessionGet
     }
-    if route.match(conn, "GET", "/tools") == 1 {
+    if method == "GET" && path == "/tools" {
         return RouteKind::RouteToolsList
     }
-    if route.match(conn, "GET", "/runs/:id") == 1 {
+    if method == "GET" && str.starts_with(path, "/runs/") == 1 {
         return RouteKind::RouteRunGet
     }
-    if route.match(conn, "POST", "/sessions") == 1 {
+    if method == "POST" && path == "/sessions" {
         return RouteKind::RouteSessionsCreate
     }
-    if route.match(conn, "POST", "/tools") == 1 {
+    if method == "POST" && path == "/tools" {
         return RouteKind::RouteToolsRegister
     }
-    if route.match(conn, "POST", "/tools/:id/run") == 1 {
+    if method == "POST" && str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 {
         return RouteKind::RouteToolsRun
     }
-    if route.match(conn, "POST", "/sessions/:id/messages") == 1 {
+    if method == "POST" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 1 {
         return RouteKind::RouteMessagesPost
     }
-    if route.match(conn, "DELETE", "/tools/:id") == 1 {
+    if method == "DELETE" && str.starts_with(path, "/tools/") == 1 {
         return RouteKind::RouteToolsDelete
     }
     return RouteKind::RouteNotFound
 }
 
-fn write_ok(conn: i32) -> i32 {
+fn write_ok(conn: HttpHandle) -> i32 {
     http.write(conn, 200, "ok")
     return 0
 }
 
-fn write_json(conn: i32) -> i32 {
+fn write_json(conn: HttpHandle) -> i32 {
     http.write_json(conn, 200, "{}")
     return 0
 }
 
-fn write_not_found(conn: i32) -> i32 {
+fn write_not_found(conn: HttpHandle) -> i32 {
     route.write_404(conn)
     return 0
 }
 
-fn write_text(conn: i32, status: i32, body: str) -> i32 {
+fn write_text(conn: HttpHandle, status: i32, body: str) -> i32 {
     http.write(conn, status, body)
     return 0
 }

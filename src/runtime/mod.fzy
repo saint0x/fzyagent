@@ -22,13 +22,19 @@ fn start() -> i32 {
     sandbox.apply_default_policy()
     sandbox.allow_tool_scope()
     recovery.save_checkpoint()
-    let worker_handle = spawn_ctx(worker.run, 100)
-    let scheduler_handle = spawn_ctx(scheduler.tick, 101)
-    let agent_handle = spawn_ctx(agent.run_loop, 102)
-    log.info("runtime workers spawned", util.log_fields2("component", "runtime", "phase", "spawned"))
-    detach(worker_handle)
-    detach(scheduler_handle)
-    detach(agent_handle)
+    if config.enable_background_runtime() == 1 {
+        let worker_handle = spawn_ctx(worker.run, 100)
+        let scheduler_handle = spawn_ctx(scheduler.tick, 101)
+        log.info("runtime workers spawned", util.log_fields2("component", "runtime", "phase", "spawned"))
+        detach(worker_handle)
+        detach(scheduler_handle)
+    } else {
+        log.info("runtime workers skipped", util.log_fields2("component", "runtime", "phase", "http_mode"))
+    }
+    if config.enable_agent_loop() == 1 {
+        let agent_handle = spawn_ctx(agent.run_loop, 102)
+        detach(agent_handle)
+    }
     log.info("runtime.start complete", util.log_fields2("component", "runtime", "phase", "start_complete"))
     return 0
 }

@@ -20,7 +20,7 @@ fn require_active_session() -> i32 {
 
 fn require_tool_schema() -> i32 {
     requires true
-    if fs.exists("/tmp/anthropic_smoke/registry.json") == 0 {
+    if fs.exists("/tmp/fzyagent/registry.json") == 0 {
         checkpoint()
     }
     ensures true

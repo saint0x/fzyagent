@@ -1,9 +1,7 @@
-use core.proc;
 use core.log;
 
 fn anthropic_transport() -> i32 {
     log.info("provider.anthropic_transport", util.log_fields2("component", "provider", "phase", "transport"))
-    proc.exec_timeout(200)
     return 0
 }
 
@@ -16,7 +14,6 @@ async fn anthropic_transport_async() -> i32 {
 
 fn normalize_request() -> i32 {
     log.info("provider.normalize_request", util.log_fields2("component", "provider", "phase", "normalize_request"))
-    proc.exec_timeout(100)
     return 0
 }
 
@@ -28,7 +25,6 @@ async fn normalize_request_async() -> i32 {
 
 fn normalize_response() -> i32 {
     log.info("provider.normalize_response", util.log_fields2("component", "provider", "phase", "normalize_response"))
-    proc.exec_timeout(100)
     return 0
 }
 
@@ -41,8 +37,9 @@ async fn normalize_response_async() -> i32 {
 fn translate_tool_calls() -> i32 {
     log.info("provider.translate_tool_calls", util.log_fields2("component", "provider", "phase", "translate_tools"))
     registry.planner_hints()
-    registry.record_invocation_decision()
-    proc.exec_timeout(120)
+    if runtime.config.persist_request_artifacts() == 1 {
+        registry.record_invocation_decision()
+    }
     return 0
 }
 
@@ -55,7 +52,6 @@ async fn translate_tool_calls_async() -> i32 {
 fn stream_completion() -> i32 {
     log.info("provider.stream_completion", util.log_fields2("component", "provider", "phase", "stream_completion"))
     runtime.events.emit_stdout_chunk()
-    proc.exec_timeout(220)
     return 0
 }
 
@@ -67,6 +63,5 @@ async fn stream_completion_async() -> i32 {
 
 fn map_provider_error() -> i32 {
     log.warn("provider.map_provider_error", util.log_fields2("component", "provider", "phase", "map_error"))
-    proc.exec_timeout(120)
     return 0
 }

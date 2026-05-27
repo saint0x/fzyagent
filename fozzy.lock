@@ -1,10 +1,10 @@
 {
-  "dependencyGraphHash": "4fbd3c8b83f9d51de6e10fa2982a79bbc47aa0efbb7e1ec1cb345dd53508021e",
+  "dependencyGraphHash": "36fd70f40d54c3b685cea8e1de89c8bc03ddca4a428e5db9d10b40000fa5cd5a",
   "graph": {
     "deps": [],
     "package": {
-      "manifestHash": "e421c30919c0fd0cdf4ea0e614d8a77557f26020ef3f9dc4b8865263bd52c3b0",
-      "name": "anthropic_smoke",
+      "manifestHash": "63d6e6bf3c24be1f22f51ec224d6613527a5f9b9f6eb9ea8ac01e05dcac8852d",
+      "name": "fzyagent",
       "version": "0.1.0"
     }
   },

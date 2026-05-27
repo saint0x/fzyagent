@@ -1,68 +1,82 @@
 use core.fs;
+use core.proc;
+use core.time;
 
 fn registry_path() -> str {
-    return "/tmp/anthropic_smoke/registry.json"
+    return "/tmp/fzyagent/registry.json"
 }
 
 fn audit_path() -> str {
-    return "/tmp/anthropic_smoke/registry.audit.log"
+    return "/tmp/fzyagent/registry.audit.log"
 }
 
 fn ensure_state_dir() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    fs.mkdir("/tmp/fzyagent")
     return 0
 }
 
-fn builtin_tools_json() -> str {
-    let bash = util.json_obj4("id", json.str("bash"), "kind", json.str("process"), "health", json.str("ready"), "mode", json.str("single"))
-    let pbash = util.json_obj4("id", json.str("parallel_bash"), "kind", json.str("process"), "health", json.str("ready"), "mode", json.str("parallel"))
-    let pgrep = util.json_obj4("id", json.str("parallel_grep"), "kind", json.str("process"), "health", json.str("ready"), "mode", json.str("parallel"))
-    let tools = util.json_arr3(bash, pbash, pgrep)
-    return util.json_obj2("status", json.str("ok"), "tools", json.raw(tools))
+fn default_proc_env() -> ProcessEnv {
+    let env_map: ProcessEnv = proc.env_new()
+    discard proc.env_set(env_map, "TERM", "dumb")
+    return env_map
+}
+
+fn shell_argv(command: str) -> ProcessArgv {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, "-lc")
+    discard proc.argv_push(argv, command)
+    return argv
+}
+
+fn rebuild_registry() -> i32 {
+    ensure_state_dir()
+    let env_map = default_proc_env()
+    let argv = shell_argv("python3 /Users/deepsaint/Desktop/fzyagent/scripts/custom_tool_registry.py")
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    discard proc.wait(handle, 15000)
+    let exit_code = proc.exit_code(handle)
+    if exit_code != 0 {
+        let stdout = proc.stdout(handle)
+        if stdout != "" {
+            fs.write_file(registry_path(), stdout)
+        }
+        return 13
+    }
+    return 0
 }
 
 fn load_builtin() -> i32 {
-    ensure_state_dir()
-    fs.write_file(registry_path(), builtin_tools_json())
+    rebuild_registry()
     record_audit("load_builtin")
     register_tool()
     return 0
 }
 
 fn register_tool() -> i32 {
-    ensure_state_dir()
-    fs.write_file(registry_path(), builtin_tools_json())
+    rebuild_registry()
     record_audit("register_tool")
     return 0
 }
 
 fn unregister_tool() -> i32 {
-    ensure_state_dir()
-    fs.write_file(registry_path(), builtin_tools_json())
+    rebuild_registry()
     record_audit("unregister_tool")
     return 0
 }
 
 fn update_tool() -> i32 {
-    ensure_state_dir()
-    fs.write_file(registry_path(), builtin_tools_json())
+    rebuild_registry()
     record_audit("update_tool")
     return 0
 }
 
 fn get_tool() -> i32 {
-    ensure_state_dir()
-    if fs.exists(registry_path()) == 0 {
-        fs.write_file(registry_path(), builtin_tools_json())
-    }
+    rebuild_registry()
     return 0
 }
 
 fn list_tools() -> i32 {
-    ensure_state_dir()
-    if fs.exists(registry_path()) == 0 {
-        fs.write_file(registry_path(), builtin_tools_json())
-    }
+    rebuild_registry()
     return 0
 }
 
@@ -70,7 +84,8 @@ fn list_tools_json() -> str {
     list_tools()
     let payload = fs.read_file(registry_path())
     if payload == "" {
-        return builtin_tools_json()
+        rebuild_registry()
+        return fs.read_file(registry_path())
     }
     return payload
 }
@@ -83,8 +98,7 @@ fn refresh_runtime() -> i32 {
 }
 
 fn hot_reload() -> i32 {
-    ensure_state_dir()
-    fs.write_file(registry_path(), list_tools_json())
+    rebuild_registry()
     return 0
 }
 
@@ -104,6 +118,7 @@ fn metadata_contract() -> i32 {
 }
 
 fn heartbeat() -> i32 {
+    record_audit("heartbeat")
     fs.flush()
     return 0
 }
@@ -135,7 +150,8 @@ fn audit_evict() -> i32 {
 
 fn record_audit(event: str) -> i32 {
     ensure_state_dir()
-    let line = util.json_obj2("event", json.str(event), "status", json.str("ok"))
+    discard time.now()
+    let line = util.json_obj3("event", json.str(event), "status", json.str("ok"), "clock", json.str("sampled"))
     fs.write_file(audit_path(), line)
     return 0
 }

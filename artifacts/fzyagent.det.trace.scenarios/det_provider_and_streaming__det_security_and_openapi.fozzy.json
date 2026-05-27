@@ -1,0 +1,19 @@
+{
+  "name": "language-test-pair-det_provider_and_streaming-det_security_and_openapi",
+  "steps": [
+    {
+      "name": "test:det_provider_and_streaming",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_security_and_openapi",
+      "type": "trace_event"
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "type": "assert_eq_int"
+    }
+  ],
+  "version": 1
+}

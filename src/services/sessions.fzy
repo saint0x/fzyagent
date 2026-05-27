@@ -5,7 +5,7 @@ fn boot() -> i32 {
 
 fn create_session() -> i32 {
     model.contracts.require_active_session()
-    persistence.save_session()
+    persistence.save_session_event("create_session", "active", "0")
     return 0
 }
 
@@ -19,7 +19,7 @@ fn get_session_json() -> str {
 }
 
 fn post_message() -> i32 {
-    persistence.save_session()
+    persistence.save_session_event("post_message", "active", "1")
     telemetry.emit_turn_latency()
     return 0
 }

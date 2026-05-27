@@ -1,0 +1,19 @@
+{
+  "name": "language-test-pair-det_recovery_and_failures-det_chaos_paths",
+  "steps": [
+    {
+      "name": "test:det_recovery_and_failures",
+      "type": "trace_event"
+    },
+    {
+      "name": "test:det_chaos_paths",
+      "type": "trace_event"
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "type": "assert_eq_int"
+    }
+  ],
+  "version": 1
+}

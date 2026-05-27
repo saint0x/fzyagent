@@ -1,6 +1,6 @@
 {
   "dependencies": [],
-  "lockHash": "4fbd3c8b83f9d51de6e10fa2982a79bbc47aa0efbb7e1ec1cb345dd53508021e",
-  "lockfile": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/fozzy.lock",
+  "lockHash": "36fd70f40d54c3b685cea8e1de89c8bc03ddca4a428e5db9d10b40000fa5cd5a",
+  "lockfile": "./fozzy.lock",
   "schemaVersion": "fozzylang.vendor.v0"
 }

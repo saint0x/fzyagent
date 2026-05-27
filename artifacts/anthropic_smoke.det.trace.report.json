@@ -8,11 +8,11 @@
   "seed": 4242,
   "discoveredTests": 9,
   "deterministicTests": 9,
-  "executedTasks": 25,
-  "asyncCheckpoints": 43,
+  "executedTasks": 26,
+  "asyncCheckpoints": 44,
   "rpcFrames": 0,
   "generatedScenarios": 18,
-  "events": 75,
+  "events": 78,
   "failureClasses": [
     {
       "id": "async_schedule_interleaving",

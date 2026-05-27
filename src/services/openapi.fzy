@@ -1,18 +1,24 @@
 use core.fs;
 
 fn openapi_path() -> str {
-    return "/tmp/anthropic_smoke/openapi.json"
+    return "/tmp/fzyagent/openapi.json"
 }
 
 fn export_spec() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    fs.mkdir("/tmp/fzyagent")
     let paths = util.json_obj4(
-        "sessions", json.str("POST /sessions, GET /sessions/:id"),
-        "messages", json.str("POST /sessions/:id/messages"),
-        "tools", json.str("GET/POST/DELETE /tools"),
-        "runs", json.str("POST /tools/:id/run, GET /runs/:id"),
+        "/sessions", json.str("POST"),
+        "/sessions/:id", json.str("GET"),
+        "/sessions/:id/messages", json.str("POST"),
+        "/tools", json.str("GET|POST|DELETE"),
     )
-    let spec = util.json_obj3("openapi", json.str("3.1.0"), "title", json.str("anthropic_smoke"), "paths", json.raw(paths))
+    let components = util.json_obj4(
+        "session", json.str("session state, turn count, provider metadata"),
+        "tool", json.str("tool inventory and execution metadata"),
+        "run", json.str("stored run result and replay envelope"),
+        "health", json.str("provider, model, and runtime status"),
+    )
+    let spec = util.json_obj4("openapi", json.str("3.1.0"), "title", json.str("fzyagent"), "paths", json.raw(paths), "components", json.raw(components))
     fs.write_file(openapi_path(), spec)
     return 0
 }

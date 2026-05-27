@@ -2,75 +2,75 @@
   "schemaVersion": "fozzylang.shrink.v0",
   "scenarioPriorities": [
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/all.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/all.fozzy.json",
       "score": 60
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_boot.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_boot.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_registry.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_registry.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_parallel_tools.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_parallel_tools.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_http_routes.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_http_routes.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_provider_and_streaming.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_provider_and_streaming.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_security_and_openapi.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_security_and_openapi.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_recovery_and_failures.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_recovery_and_failures.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_chaos_paths.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_chaos_paths.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_language_surface.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_language_surface.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_boot__det_registry.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_boot__det_registry.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_registry__det_parallel_tools.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_registry__det_parallel_tools.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_parallel_tools__det_http_routes.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_parallel_tools__det_http_routes.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_http_routes__det_provider_and_streaming.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_http_routes__det_provider_and_streaming.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_provider_and_streaming__det_security_and_openapi.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_provider_and_streaming__det_security_and_openapi.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_security_and_openapi__det_recovery_and_failures.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_security_and_openapi__det_recovery_and_failures.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_recovery_and_failures__det_chaos_paths.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_recovery_and_failures__det_chaos_paths.fozzy.json",
       "score": 90
     },
     {
-      "scenario": "/Users/deepsaint/Desktop/fzllm/anthropic_smoke/artifacts/anthropic_smoke.det.trace.scenarios/det_chaos_paths__det_language_surface.fozzy.json",
+      "scenario": "artifacts/anthropic_smoke.det.trace.scenarios/det_chaos_paths__det_language_surface.fozzy.json",
       "score": 90
     }
   ],
@@ -213,6 +213,7 @@
         22,
         23,
         24,
+        25,
         0,
         1,
         2,
@@ -260,7 +261,8 @@
         21,
         22,
         23,
-        24
+        24,
+        25
       ]
     }
   ],

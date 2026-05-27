@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "fozzylang.artifacts.v0",
+  "trace": "artifacts/fzyagent.det.trace.native.trace.json",
+  "report": "artifacts/fzyagent.det.trace.report.json",
+  "timeline": "artifacts/fzyagent.det.trace.timeline.json",
+  "explore": "artifacts/fzyagent.det.trace.explore.json",
+  "shrink": "artifacts/fzyagent.det.trace.shrink.json",
+  "scenariosIndex": "artifacts/fzyagent.det.trace.scenarios.json",
+  "primaryScenario": "artifacts/fzyagent.det.trace.scenarios/all.fozzy.json",
+  "goalTrace": "artifacts/fzyagent.det.trace.fozzy",
+  "detail": "rich"
+}

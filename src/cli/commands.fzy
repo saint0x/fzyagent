@@ -1,8 +1,8 @@
-use core.proc;
+use core.time;
 use core.log;
 
 fn boot() -> i32 {
     log.info("cli.commands boot", util.log_fields2("component", "cli", "phase", "boot"))
-    proc.exec_timeout(100)
+    time.sleep_ms(100)
     return 0
 }

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "fozzylang.scenarios.v0",
+  "primary": "artifacts/fzyagent.det.trace.scenarios/all.fozzy.json",
+  "items": [
+    "artifacts/fzyagent.det.trace.scenarios/all.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_boot.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_registry.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_parallel_tools.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_http_routes.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_provider_and_streaming.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_security_and_openapi.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_recovery_and_failures.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_chaos_paths.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_language_surface.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_boot__det_registry.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_registry__det_parallel_tools.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_parallel_tools__det_http_routes.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_http_routes__det_provider_and_streaming.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_provider_and_streaming__det_security_and_openapi.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_security_and_openapi__det_recovery_and_failures.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_recovery_and_failures__det_chaos_paths.fozzy.json",
+    "artifacts/fzyagent.det.trace.scenarios/det_chaos_paths__det_language_surface.fozzy.json"
+  ]
+}

@@ -1,32 +1,37 @@
-use core.proc;
 use core.fs;
 
 fn security_path() -> str {
-    return "/tmp/anthropic_smoke/security.last.json"
+    return "/tmp/fzyagent/security.last.json"
 }
 
 fn auth_middleware() -> i32 {
-    fs.mkdir("/tmp/anthropic_smoke")
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
+    fs.mkdir("/tmp/fzyagent")
     let mode = env.get("AGENT_AUTH_MODE")
     let status = "ok"
     let payload = util.json_obj3("stage", json.str("auth"), "mode", json.str(mode), "status", json.str(status))
     fs.write_file(security_path(), payload)
-    proc.exec_timeout(120)
     return 0
 }
 
 fn rate_limit() -> i32 {
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
     let bucket = env.get("AGENT_RATE_BUCKET")
     let payload = util.json_obj3("stage", json.str("rate_limit"), "bucket", json.str(bucket), "status", json.str("ok"))
     fs.write_file(security_path(), payload)
-    proc.exec_timeout(120)
     return 0
 }
 
 fn policy_filter() -> i32 {
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
     let policy = env.get("AGENT_POLICY")
     let payload = util.json_obj3("stage", json.str("policy_filter"), "policy", json.str(policy), "status", json.str("ok"))
     fs.write_file(security_path(), payload)
-    proc.exec_timeout(120)
     return 0
 }

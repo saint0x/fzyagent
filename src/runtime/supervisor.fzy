@@ -1,20 +1,34 @@
-use core.proc;
+use core.time;
+use core.fs;
 use core.log;
+
+fn shutdown_signal_path() -> str {
+    return "/tmp/fzyagent/shutdown.signal"
+}
 
 fn configure_limits() -> i32 {
     log.info("runtime.supervisor configure_limits", util.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
     runtime.limits.enforce_thread_limit()
     runtime.limits.enforce_queue_depth()
     runtime.limits.enforce_memory_budget()
-    proc.exec_timeout(500)
+    time.sleep_ms(50)
     return 0
 }
 
 fn begin_shutdown() -> i32 {
+    fs.mkdir("/tmp/fzyagent")
+    fs.write_file(shutdown_signal_path(), "requested")
     runtime.sandbox.deny_tool_scope()
     services.http.graceful_stop()
     runtime.recovery.recover_inflight_jobs()
-    proc.exec_timeout(500)
+    time.sleep_ms(50)
+    return 0
+}
+
+fn shutdown_requested() -> i32 {
+    if fs.exists(shutdown_signal_path()) == 1 {
+        return 1
+    }
     return 0
 }
 
@@ -22,6 +36,6 @@ fn run_forever() -> i32 {
     log.info("runtime.supervisor started", util.log_fields2("component", "runtime.supervisor", "phase", "loop_start"))
     loop {
         runtime.events.emit_health_tick()
-        proc.exec_timeout(200)
+        time.sleep_ms(20)
     }
 }

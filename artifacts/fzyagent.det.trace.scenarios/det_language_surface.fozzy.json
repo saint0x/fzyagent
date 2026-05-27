@@ -1,0 +1,15 @@
+{
+  "name": "language-test-det_language_surface",
+  "steps": [
+    {
+      "name": "test:det_language_surface",
+      "type": "trace_event"
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "type": "assert_eq_int"
+    }
+  ],
+  "version": 1
+}
