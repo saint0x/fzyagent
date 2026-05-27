@@ -1161,7 +1161,7 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     }
     let env_map = default_proc_env()
     let raw_input = if tool_input_json == "" { "{}" } else { tool_input_json }
-    let request = util.json_obj2("tool_id", json.str(tool_id), "tool_input", json.raw(raw_input))
+    let request = util.json_obj2("tool_id", json.str(tool_id), "input", json.raw(raw_input))
     let request_path = custom_tool_request_path(tool_id)
     fs.mkdir("/tmp/fzyagent/custom_tools")
     fs.mkdir(custom_tool_state_dir(tool_id))
@@ -1770,24 +1770,32 @@ fn run_browser_ops_seed() -> i32 {
     return 13
 }
 
+fn field_with_input(parsed: JsonHandle, strict_input: JsonHandle, key: str) -> str {
+    let top = json.get_str(parsed, key)
+    if top != "" {
+        return top
+    }
+    return json.get_str(strict_input, key)
+}
+
 fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
-    let nested_input = json.get(parsed, "tool_input")
+    let strict_input = json.get(parsed, "input")
     let action = json.get_str(parsed, "action")
     let op = json.get_str(parsed, "op")
     let effective_action = if op == "" { action } else { op }
-    let url = if json.get_str(parsed, "url") == "" { json.get_str(nested_input, "url") } else { json.get_str(parsed, "url") }
-    let query = if json.get_str(parsed, "query") == "" { json.get_str(nested_input, "query") } else { json.get_str(parsed, "query") }
-    let eval_js = if json.get_str(parsed, "eval_js") == "" { json.get_str(nested_input, "eval_js") } else { json.get_str(parsed, "eval_js") }
-    let commands_json = if json.get_str(parsed, "commands_json") == "" { json.get_str(nested_input, "commands_json") } else { json.get_str(parsed, "commands_json") }
+    let url = field_with_input(parsed, strict_input, "url")
+    let query = field_with_input(parsed, strict_input, "query")
+    let eval_js = field_with_input(parsed, strict_input, "eval_js")
+    let commands_json = field_with_input(parsed, strict_input, "commands_json")
     let commands_raw = json.get_str(json.get(parsed, "commands"), "raw")
-    let nested_commands_raw = json.get_str(json.get(nested_input, "commands"), "raw")
-    let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
-    let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
-    let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
-    let nested_queue_input_raw = json.get_str(json.get(nested_input, "tool_input"), "raw")
-    let queue_tool_id = if json.get_str(parsed, "queue_tool_id") == "" { json.get_str(nested_input, "queue_tool_id") } else { json.get_str(parsed, "queue_tool_id") }
-    let queued_run_id = if json.get_str(parsed, "queued_run_id") == "" { json.get_str(nested_input, "queued_run_id") } else { json.get_str(parsed, "queued_run_id") }
+    let strict_commands_raw = json.get_str(json.get(strict_input, "commands"), "raw")
+    let command = field_with_input(parsed, strict_input, "command")
+    let pattern = field_with_input(parsed, strict_input, "pattern")
+    let target = field_with_input(parsed, strict_input, "target")
+    let strict_queue_input_raw = json.get_str(json.get(strict_input, "input"), "raw")
+    let queue_tool_id = field_with_input(parsed, strict_input, "queue_tool_id")
+    let queued_run_id = field_with_input(parsed, strict_input, "queued_run_id")
     let requested_tool_id = json.get_str(parsed, "tool_id")
     let create_tool_id = json.get_str(parsed, "create_tool_id")
     let description = json.get_str(parsed, "description")
@@ -1798,19 +1806,15 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let mode = json.get_str(parsed, "mode")
     let max_lines = json.get_str(parsed, "max_lines")
     let content = json.get_str(parsed, "content")
-    let tool_input_raw = json.get_str(json.get(parsed, "tool_input"), "raw")
+    let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
-        if commands_raw == "" { nested_commands_raw } else { commands_raw }
+        if commands_raw == "" { strict_commands_raw } else { commands_raw }
     } else {
         commands_json
     }
     let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
     let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
-    let queued_input_raw = if nested_queue_input_raw == "" {
-        if tool_input_raw == "" { "{}" } else { tool_input_raw }
-    } else {
-        nested_queue_input_raw
-    }
+    let queued_input_raw = if strict_queue_input_raw == "" { "{}" } else { strict_queue_input_raw }
     let kind_tag = dispatch_kind(tool_id)
     match kind_tag {
         DispatchKind::DispatchAegis => return run_aegis_with_args(effective_action, url, query, eval_js, effective_commands),
@@ -1837,29 +1841,29 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
         DispatchKind::DispatchToolSequence => return run_tool_sequence(input_raw),
         DispatchKind::DispatchToolParallel => return run_tool_parallel(input_raw),
         DispatchKind::DispatchAll => return run_parallel(),
-        _ => return run_custom_tool(tool_id, if tool_input_raw == "" { input_raw } else { tool_input_raw }),
+        _ => return run_custom_tool(tool_id, if strict_input_raw == "" { input_raw } else { strict_input_raw }),
     }
     return 13
 }
 
 fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
-    let nested_input = json.get(parsed, "tool_input")
+    let strict_input = json.get(parsed, "input")
     let action = json.get_str(parsed, "action")
     let op = json.get_str(parsed, "op")
     let effective_action = if op == "" { action } else { op }
-    let url = if json.get_str(parsed, "url") == "" { json.get_str(nested_input, "url") } else { json.get_str(parsed, "url") }
-    let query = if json.get_str(parsed, "query") == "" { json.get_str(nested_input, "query") } else { json.get_str(parsed, "query") }
-    let eval_js = if json.get_str(parsed, "eval_js") == "" { json.get_str(nested_input, "eval_js") } else { json.get_str(parsed, "eval_js") }
-    let commands_json = if json.get_str(parsed, "commands_json") == "" { json.get_str(nested_input, "commands_json") } else { json.get_str(parsed, "commands_json") }
+    let url = field_with_input(parsed, strict_input, "url")
+    let query = field_with_input(parsed, strict_input, "query")
+    let eval_js = field_with_input(parsed, strict_input, "eval_js")
+    let commands_json = field_with_input(parsed, strict_input, "commands_json")
     let commands_raw = json.get_str(json.get(parsed, "commands"), "raw")
-    let nested_commands_raw = json.get_str(json.get(nested_input, "commands"), "raw")
-    let command = if json.get_str(parsed, "command") == "" { json.get_str(nested_input, "command") } else { json.get_str(parsed, "command") }
-    let pattern = if json.get_str(parsed, "pattern") == "" { json.get_str(nested_input, "pattern") } else { json.get_str(parsed, "pattern") }
-    let target = if json.get_str(parsed, "target") == "" { json.get_str(nested_input, "target") } else { json.get_str(parsed, "target") }
-    let nested_queue_input_raw = json.get_str(json.get(nested_input, "tool_input"), "raw")
-    let queue_tool_id = if json.get_str(parsed, "queue_tool_id") == "" { json.get_str(nested_input, "queue_tool_id") } else { json.get_str(parsed, "queue_tool_id") }
-    let queued_run_id = if json.get_str(parsed, "queued_run_id") == "" { json.get_str(nested_input, "queued_run_id") } else { json.get_str(parsed, "queued_run_id") }
+    let strict_commands_raw = json.get_str(json.get(strict_input, "commands"), "raw")
+    let command = field_with_input(parsed, strict_input, "command")
+    let pattern = field_with_input(parsed, strict_input, "pattern")
+    let target = field_with_input(parsed, strict_input, "target")
+    let strict_queue_input_raw = json.get_str(json.get(strict_input, "input"), "raw")
+    let queue_tool_id = field_with_input(parsed, strict_input, "queue_tool_id")
+    let queued_run_id = field_with_input(parsed, strict_input, "queued_run_id")
     let requested_tool_id = json.get_str(parsed, "tool_id")
     let create_tool_id = json.get_str(parsed, "create_tool_id")
     let description = json.get_str(parsed, "description")
@@ -1870,26 +1874,22 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     let mode = json.get_str(parsed, "mode")
     let max_lines = json.get_str(parsed, "max_lines")
     let content = json.get_str(parsed, "content")
-    let tool_input_raw = json.get_str(json.get(parsed, "tool_input"), "raw")
+    let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
-        if commands_raw == "" { nested_commands_raw } else { commands_raw }
+        if commands_raw == "" { strict_commands_raw } else { commands_raw }
     } else {
         commands_json
     }
     let effective_requested_tool_id = if requested_tool_id == "" { create_tool_id } else { requested_tool_id }
     let effective_input_schema = if input_schema_json == "" { input_schema_raw } else { input_schema_json }
-    let queued_input_raw = if nested_queue_input_raw == "" {
-        if tool_input_raw == "" { "{}" } else { tool_input_raw }
-    } else {
-        nested_queue_input_raw
-    }
+    let queued_input_raw = if strict_queue_input_raw == "" { "{}" } else { strict_queue_input_raw }
     let kind_tag = dispatch_kind(tool_id)
     match kind_tag {
         DispatchKind::DispatchAegis => return run_aegis_with_args_to(effective_action, url, query, eval_js, effective_commands, out_path),
         DispatchKind::DispatchBash => return run_shell_to_file("bash", if command == "" { env_or("TOOL_BASH", "echo bash-tool-default") } else { command }, 20000, out_path),
         DispatchKind::DispatchGrepSearch => return run_grep_to_file("grep_search", if pattern == "" { env_or("TOOL_GREP_PATTERN_A", "fn ") } else { pattern }, if target == "" { env_or("TOOL_GREP_TARGET_A", "src") } else { target }, 15000, out_path),
         DispatchKind::DispatchQueueStatus => return dispatch_tool_request_copy("queue_status", input_raw, out_path),
-        DispatchKind::DispatchQueueEnqueue => return dispatch_tool_request_copy("queue_enqueue", util.json_obj3("queue_tool_id", json.str(queue_tool_id), "queued_run_id", json.str(queued_run_id), "tool_input", json.raw(queued_input_raw)), out_path),
+        DispatchKind::DispatchQueueEnqueue => return dispatch_tool_request_copy("queue_enqueue", util.json_obj3("queue_tool_id", json.str(queue_tool_id), "queued_run_id", json.str(queued_run_id), "input", json.raw(queued_input_raw)), out_path),
         DispatchKind::DispatchQueueSpawn => return dispatch_tool_request_copy("queue_spawn", input_raw, out_path),
         DispatchKind::DispatchQueueProcess => return dispatch_tool_request_copy("queue_process", input_raw, out_path),
         DispatchKind::DispatchQueueCancel => return dispatch_tool_request_copy("queue_cancel", input_raw, out_path),
@@ -1900,7 +1900,7 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
         DispatchKind::DispatchRuntimeCheckpoint => return dispatch_tool_request_copy("runtime_checkpoint", input_raw, out_path),
         DispatchKind::DispatchRuntimeRecover => return dispatch_tool_request_copy("runtime_recover", input_raw, out_path),
         DispatchKind::DispatchRuntimeShutdown => return dispatch_tool_request_copy("runtime_shutdown", input_raw, out_path),
-        DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if tool_input_raw == "" { input_raw } else { tool_input_raw }, out_path),
+        DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if strict_input_raw == "" { input_raw } else { strict_input_raw }, out_path),
         _ => return dispatch_tool_request_copy(tool_id, input_raw, out_path),
     }
     return 13
@@ -1931,7 +1931,7 @@ fn tool_step_skipped_json(step_id: str) -> str {
 
 fn parallel_step_request_json(step_raw: str) -> str {
     if step_raw == "" {
-        return util.json_obj3("step_id", json.str(""), "tool_id", json.str(""), "tool_input", json.raw("{}"))
+        return util.json_obj3("step_id", json.str(""), "tool_id", json.str(""), "input", json.raw("{}"))
     }
     return step_raw
 }
@@ -1946,7 +1946,7 @@ fn run_parallel_step_ctx() -> i32 {
         fs.write_file(parallel_step_result_path(context_id), tool_step_skipped_json(step_id))
         return 0
     }
-    let tool_input = json.get_str(json.get(step, "tool_input"), "raw")
+    let tool_input = json.get_str(json.get(step, "input"), "raw")
     let payload_path = parallel_step_payload_path(context_id)
     let status = dispatch_tool_request_isolated(tool_id, if tool_input == "" { "{}" } else { tool_input }, payload_path)
     fs.write_file(parallel_step_result_path(context_id), tool_step_result_from_payload_json(if step_id == "" { str.from_i32(context_id) } else { step_id }, tool_id, status, safe_read(payload_path)))
@@ -1967,7 +1967,7 @@ fn run_tool_sequence(request_json: str) -> i32 {
         }
         let step_id = json.get_str(step, "step_id")
         let tool_id = json.get_str(step, "tool_id")
-        let tool_input = json.get_str(json.get(step, "tool_input"), "raw")
+        let tool_input = json.get_str(json.get(step, "input"), "raw")
         let status = dispatch_tool_request(tool_id, if tool_input == "" { "{}" } else { tool_input })
         discard list.push(items, json.raw(tool_step_result_json(if step_id == "" { str.from_i32(idx) } else { step_id }, tool_id, status)))
         if status != 0 && overall == 0 {

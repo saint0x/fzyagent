@@ -176,7 +176,7 @@ fn step_schema_json() -> str {
     let properties = map.new()
     discard map.set(properties, "step_id", json.raw(schema_string_json()))
     discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_input", json.raw(schema_object_json()))
+    discard map.set(properties, "input", json.raw(schema_object_json()))
     return object_schema_json(properties, required_list1("tool_id"))
 }
 
@@ -285,7 +285,7 @@ fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
     return util.json_obj3(
         "step_id", json.str(step_id),
         "tool_id", json.str(tool_id),
-        "tool_input", json.raw(input_json),
+        "input", json.raw(input_json),
     )
 }
 
@@ -426,13 +426,13 @@ fn request_kind_code(kind: ToolRequestKind) -> i32 {
     return 0
 }
 
-fn single_request_json(request_id: str, tool_id: str, tool_input_json: str) -> str {
+fn single_request_json(request_id: str, tool_id: str, input_json: str) -> str {
     return util.json_obj5(
         "protocol", json.str(tool_protocol_version()),
         "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }),
         "op", json.str("run"),
         "tool_id", json.str(tool_id),
-        "input", json.raw(if tool_input_json == "" { "{}" } else { tool_input_json }),
+        "input", json.raw(if input_json == "" { "{}" } else { input_json }),
     )
 }
 
@@ -495,7 +495,7 @@ fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
         let op = json.get_str(parsed, "op")
         let execution = json.get_str(parsed, "execution")
         let tool_id = json.get_str(parsed, "tool_id")
-        let input_raw = if json.get_str(json.get(parsed, "input"), "raw") == "" { json.get_str(json.get(parsed, "tool_input"), "raw") } else { json.get_str(json.get(parsed, "input"), "raw") }
+        let input_raw = json.get_str(json.get(parsed, "input"), "raw")
         let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
         if execution == "parallel" || execution == "sequence" {
             return util.json_obj5(
@@ -511,16 +511,10 @@ fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
             "request_id", json.str(request_id),
             "op", json.str(if op == "" { "run" } else { op }),
             "tool_id", json.str(if tool_id == "" { path_tool_id } else { tool_id }),
-            "tool_input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
+            "input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
         )
     }
-    return util.json_obj5(
-        "protocol", json.str(tool_protocol_version()),
-        "request_id", json.str(request_id),
-        "op", json.str("run"),
-        "tool_id", json.str(path_tool_id),
-        "tool_input", json.raw(if raw_body == "" { "{}" } else { raw_body }),
-    )
+    return if raw_body == "" { "{}" } else { raw_body }
 }
 
 fn validate_normalized_tool_request(normalized_json: str) -> str {

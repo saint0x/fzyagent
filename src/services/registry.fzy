@@ -111,7 +111,7 @@ fn tool_schema_queue_enqueue() -> str {
     let properties = map.new()
     discard map.set(properties, "queue_tool_id", json.raw(schema_string_json()))
     discard map.set(properties, "queued_run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_input", json.raw(schema_object_json()))
+    discard map.set(properties, "input", json.raw(schema_object_json()))
     return object_schema_json(properties, required1("queue_tool_id"))
 }
 
@@ -119,7 +119,7 @@ fn tool_schema_steps() -> str {
     let step_properties = map.new()
     discard map.set(step_properties, "step_id", json.raw(schema_string_json()))
     discard map.set(step_properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(step_properties, "tool_input", json.raw(schema_object_json()))
+    discard map.set(step_properties, "input", json.raw(schema_object_json()))
     let step_item = object_schema_json(step_properties, required1("tool_id"))
     let properties = map.new()
     discard map.set(properties, "steps", json.raw(schema_array_items_json(step_item)))
