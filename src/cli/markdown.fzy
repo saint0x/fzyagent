@@ -131,6 +131,12 @@ fn image_close_index(line: str, start: i32) -> i32 {
     return find_from(line, ")", alt_end + 2)
 }
 
+struct StreamRender {
+    in_code: i32,
+    rendered: str,
+    should_print: i32,
+}
+
 fn link_label(line: str, start: i32) -> str {
     let label_end = find_from(line, "](", start + 1)
     if label_end < 0 {
@@ -211,6 +217,54 @@ fn render_inline(line: str) -> str {
     return out
 }
 
+pub fn render_line(in_code: i32, line: str) -> StreamRender {
+    if in_code == 1 {
+        if str.starts_with(line, "```") == 1 {
+            return StreamRender { in_code: 0, rendered: "", should_print: 0 }
+        }
+        return StreamRender { in_code: 1, rendered: str.concat("    ", logger.command(line)), should_print: 1 }
+    }
+
+    if line == "" {
+        return StreamRender { in_code: 0, rendered: "", should_print: 1 }
+    }
+
+    if str.starts_with(line, "```") == 1 {
+        let lang = code_fence_lang(line)
+        if lang == "" {
+            return StreamRender { in_code: 1, rendered: logger.muted("[code]"), should_print: 1 }
+        }
+        return StreamRender { in_code: 1, rendered: logger.muted(str.concat("[code ", str.concat(lang, "]"))), should_print: 1 }
+    }
+
+    if rule_line(line) == 1 {
+        return StreamRender { in_code: 0, rendered: logger.muted("----------------------------------------"), should_print: 1 }
+    }
+
+    let level = heading_level(line)
+    if level > 0 {
+        let heading = render_inline(str.slice(line, level + 1, str.len(line)))
+        return StreamRender { in_code: 0, rendered: logger.accent(heading), should_print: 1 }
+    }
+
+    if str.starts_with(line, "> ") == 1 {
+        return StreamRender { in_code: 0, rendered: str.concat("  ", logger.muted("| "), render_inline(str.slice(line, 2, str.len(line)))), should_print: 1 }
+    }
+
+    let bullet = bullet_body(line)
+    if bullet != "" {
+        return StreamRender { in_code: 0, rendered: str.concat("  - ", render_inline(bullet)), should_print: 1 }
+    }
+
+    let number_prefix = numbered_list_prefix(line)
+    if number_prefix != "" {
+        let body = str.slice(line, str.len(number_prefix) + 2, str.len(line))
+        return StreamRender { in_code: 0, rendered: str.concat("  ", str.concat(number_prefix, str.concat(". ", render_inline(body)))), should_print: 1 }
+    }
+
+    return StreamRender { in_code: 0, rendered: render_inline(line), should_print: 1 }
+}
+
 pub fn render(text: str) -> str {
     if text == "" {
         return ""
@@ -223,70 +277,20 @@ pub fn render(text: str) -> str {
         let end = next_newline_index(text, start)
         let line = str.slice(text, start, end)
         start = if end < str.len(text) { end + 1 } else { str.len(text) }
-
-        if in_code == 1 {
-            if str.starts_with(line, "```") == 1 {
-                in_code = 0
-                previous_blank = 0
-                continue
-            }
-            doc = append_line(doc, str.concat("    ", logger.command(line)))
-            previous_blank = 0
+        let rendered = render_line(in_code, line)
+        in_code = rendered.in_code
+        if rendered.should_print == 0 {
             continue
         }
-
-        if line == "" {
+        if rendered.rendered == "" {
             if previous_blank == 0 {
                 doc = append_line(doc, "")
             }
             previous_blank = 1
             continue
         }
-
         previous_blank = 0
-
-        if str.starts_with(line, "```") == 1 {
-            in_code = 1
-            let lang = code_fence_lang(line)
-            if lang == "" {
-                doc = append_line(doc, logger.muted("[code]"))
-            } else {
-                doc = append_line(doc, logger.muted(str.concat("[code ", str.concat(lang, "]"))))
-            }
-            continue
-        }
-
-        if rule_line(line) == 1 {
-            doc = append_line(doc, logger.muted("----------------------------------------"))
-            continue
-        }
-
-        let level = heading_level(line)
-        if level > 0 {
-            let heading = render_inline(str.slice(line, level + 1, str.len(line)))
-            doc = append_line(doc, logger.accent(heading))
-            continue
-        }
-
-        if str.starts_with(line, "> ") == 1 {
-            doc = append_line(doc, str.concat("  ", logger.muted("| "), render_inline(str.slice(line, 2, str.len(line)))))
-            continue
-        }
-
-        let bullet = bullet_body(line)
-        if bullet != "" {
-            doc = append_line(doc, str.concat("  - ", render_inline(bullet)))
-            continue
-        }
-
-        let number_prefix = numbered_list_prefix(line)
-        if number_prefix != "" {
-            let body = str.slice(line, str.len(number_prefix) + 2, str.len(line))
-            doc = append_line(doc, str.concat("  ", str.concat(number_prefix, str.concat(". ", render_inline(body)))))
-            continue
-        }
-
-        doc = append_line(doc, render_inline(line))
+        doc = append_line(doc, rendered.rendered)
     }
     return doc
 }

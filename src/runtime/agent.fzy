@@ -216,6 +216,17 @@ fn stream_index_raw(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "index")
 }
 
+fn newline_index(text: str) -> i32 {
+    let mut idx: i32 = 0
+    while idx < str.len(text) {
+        if str.slice(text, idx, idx + 1) == "\n" {
+            return idx
+        }
+        idx += 1
+    }
+    return -1
+}
+
 fn stream_block_from_start(content_block: JsonHandle) -> StreamBlock {
     let block_type = json.get_str(content_block, "type")
     if block_type == "text" {
@@ -480,6 +491,9 @@ fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
     let mut block2 = empty_stream_block()
     let mut block3 = empty_stream_block()
     let mut stream_error = ""
+    let mut streamed_assistant_open: i32 = 0
+    let mut streamed_markdown_state: i32 = 0
+    let mut streamed_pending = ""
 
     loop {
         let event = http.sse_next(stream)
@@ -515,6 +529,23 @@ fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
         if event.event_type == "content_block_delta" {
             let index = stream_index_raw(event_data)
             let delta = json.get(event_data, "delta")
+            let delta_type = json.get_str(delta, "type")
+            if delta_type == "text_delta" && stream_mode == 1 {
+                if streamed_assistant_open == 0 {
+                    discard cli.render.print_assistant_stream_open()
+                    streamed_assistant_open = 1
+                }
+                streamed_pending = str.concat(streamed_pending, json.get_str(delta, "text"))
+                loop {
+                    let next_newline = newline_index(streamed_pending)
+                    if next_newline < 0 {
+                        break
+                    }
+                    let line = str.slice(streamed_pending, 0, next_newline)
+                    streamed_pending = str.slice(streamed_pending, next_newline + 1, str.len(streamed_pending))
+                    streamed_markdown_state = cli.render.print_assistant_stream_line(line, streamed_markdown_state)
+                }
+            }
             if index == "0" { block0 = stream_block_apply_delta(block0, delta) }
             if index == "1" { block1 = stream_block_apply_delta(block1, delta) }
             if index == "2" { block2 = stream_block_apply_delta(block2, delta) }
@@ -528,12 +559,17 @@ fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
 
     discard http.stream_close(stream)
     discard services.anthropic.finish_message_stream()
+    if stream_mode == 1 && streamed_assistant_open == 1 && streamed_pending != "" {
+        streamed_markdown_state = cli.render.print_assistant_stream_line(streamed_pending, streamed_markdown_state)
+        discard streamed_markdown_state
+    }
+    discard cli.render.print_assistant_stream_close(streamed_assistant_open)
 
     if stream_error != "" {
         return util.json_obj2("status", json.str("error"), "error", json.str(stream_error))
     }
     let payload = streamed_response_json(stop_reason, block0, block1, block2, block3)
-    if stream_mode == 1 {
+    if stream_mode == 1 && streamed_assistant_open == 0 {
         let parsed = json.parse(payload)
         let assistant_text = extract_text_block(parsed)
         if assistant_text != "" {
