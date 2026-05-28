@@ -1,5 +1,6 @@
 mod commands;
 mod logger;
+mod markdown;
 mod render;
 pub use commands.run_chat;
 pub use commands.print_help;

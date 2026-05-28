@@ -166,9 +166,10 @@ pub fn print_error(text: str) -> i32 {
 }
 
 pub fn print_assistant(text: str) -> i32 {
+    let rendered = markdown.render(soft_wrap(text))
     discard logger.blank()
     discard logger.print_line(str.concat(logger.assistant_tag(), ">"))
-    discard logger.print_line(indent_block(soft_wrap(text), "  "))
+    discard logger.print_line(indent_block(rendered, "  "))
     discard logger.blank()
     return 0
 }
