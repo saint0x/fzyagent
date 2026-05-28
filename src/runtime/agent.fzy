@@ -172,11 +172,19 @@ fn extract_text_block(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "completion")
 }
 
+fn request_max_tokens() -> str {
+    let configured = env.get("ANTHROPIC_MAX_TOKENS")
+    if configured == "" {
+        return "8192"
+    }
+    return configured
+}
+
 fn request_payload_for(messages_json: str, tools_json: str) -> str {
     let payload = map.new()
     discard map.set(payload, "model", json.str(services.anthropic.default_model_name()))
     discard map.set(payload, "system", json.str(load_system_prompt()))
-    discard map.set(payload, "max_tokens", json.raw("600"))
+    discard map.set(payload, "max_tokens", json.raw(request_max_tokens()))
     discard map.set(payload, "stream", json.raw("true"))
     discard map.set(payload, "messages", json.raw(messages_json))
     discard map.set(payload, "tools", json.raw(tools_json))
@@ -299,9 +307,42 @@ fn empty_streamed_response_json() -> str {
     return streamed_response_json("", empty_stream_block(), empty_stream_block(), empty_stream_block(), empty_stream_block())
 }
 
+fn parsed_message_has_content(parsed: JsonHandle) -> i32 {
+    if extract_text_block(parsed) != "" {
+        return 1
+    }
+    if content_block_type(parsed, "0") != "" {
+        return 1
+    }
+    if content_block_type(parsed, "1") != "" {
+        return 1
+    }
+    if content_block_type(parsed, "2") != "" {
+        return 1
+    }
+    if content_block_type(parsed, "3") != "" {
+        return 1
+    }
+    return 0
+}
+
 fn upstream_error_raw_response(payload: str, streamed_raw: str) -> str {
     if streamed_raw != "" && streamed_raw != empty_streamed_response_json() {
         return streamed_raw
+    }
+    let captured = services.anthropic.request_messages_sync(payload)
+    if captured != "" {
+        return captured
+    }
+    return streamed_raw
+}
+
+fn final_response_raw_response(payload: str, streamed_raw: str) -> str {
+    if streamed_raw != "" {
+        let parsed = json.parse(streamed_raw)
+        if parsed_message_has_content(parsed) == 1 {
+            return streamed_raw
+        }
     }
     let captured = services.anthropic.request_messages_sync(payload)
     if captured != "" {
@@ -538,10 +579,15 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     }
     let stop_reason = json.get_str(parsed, "stop_reason")
     if stop_reason != "tool_use" {
-        let response_text = extract_text_block(parsed)
-        let assistant_text = if response_text == "" { raw } else { response_text }
+        let final_raw = final_response_raw_response(payload, raw)
+        let final_parsed = json.parse(final_raw)
+        if parsed_message_has_content(final_parsed) == 0 {
+            return turn_error_json("empty_assistant_response", final_raw, "", accumulated_events_json, str.from_i32(status))
+        }
+        let response_text = extract_text_block(final_parsed)
+        let assistant_text = if response_text == "" { final_raw } else { response_text }
         discard services.sessions.record_assistant_for(session_id, assistant_text, request_id, "anthropic_latest", str.from_i32(depth))
-        return turn_success_json(assistant_text, raw, stop_reason, accumulated_events_json, str.from_i32(status))
+        return turn_success_json(assistant_text, final_raw, json.get_str(final_parsed, "stop_reason"), accumulated_events_json, str.from_i32(status))
     }
 
     let assistant_message = assistant_message_json(parsed)

@@ -21,6 +21,106 @@ fn block_label(text: str) -> str {
     return logger.muted(text)
 }
 
+fn tool_details_mode() -> str {
+    let mode = env.get("FZYAGENT_TOOL_DETAILS")
+    if mode == "" {
+        return "compact"
+    }
+    return mode
+}
+
+fn truncate(text: str, max_chars: i32) -> str {
+    if str.len(text) <= max_chars {
+        return text
+    }
+    if max_chars <= 3 {
+        return str.slice(text, 0, max_chars)
+    }
+    return str.concat(str.slice(text, 0, max_chars - 3), "...")
+}
+
+fn newline_count(text: str) -> i32 {
+    let mut idx: i32 = 0
+    let mut total: i32 = 0
+    while idx < str.len(text) {
+        if str.slice(text, idx, idx + 1) == "\n" {
+            total += 1
+        }
+        idx += 1
+    }
+    return total
+}
+
+fn line_count(text: str) -> i32 {
+    if text == "" {
+        return 0
+    }
+    return newline_count(text) + 1
+}
+
+fn first_lines(text: str, max_lines: i32) -> str {
+    if max_lines <= 0 || text == "" {
+        return ""
+    }
+    let mut idx: i32 = 0
+    let mut seen: i32 = 1
+    while idx < str.len(text) {
+        if str.slice(text, idx, idx + 1) == "\n" {
+            if seen >= max_lines {
+                return str.slice(text, 0, idx)
+            }
+            seen += 1
+        }
+        idx += 1
+    }
+    return text
+}
+
+fn preview_text(text: str, max_lines: i32, max_chars: i32) -> str {
+    let clipped = first_lines(text, max_lines)
+    let shortened = truncate(clipped, max_chars)
+    if str.len(shortened) < str.len(text) {
+        return str.concat(shortened, "\n...")
+    }
+    return shortened
+}
+
+fn compact_json(text: str) -> str {
+    return truncate(normalize_inline_json(text), 220)
+}
+
+fn command_from_input(input_raw: str) -> str {
+    if input_raw == "" || input_raw == "{}" {
+        return ""
+    }
+    let parsed = json.parse(input_raw)
+    return json.get_str(parsed, "command")
+}
+
+fn result_stream_stdout(result_raw: str) -> str {
+    if result_raw == "" || result_raw == "{}" {
+        return ""
+    }
+    let parsed = json.parse(result_raw)
+    return json.get_str(json.get(parsed, "streams"), "stdout")
+}
+
+fn result_stream_stderr(result_raw: str) -> str {
+    if result_raw == "" || result_raw == "{}" {
+        return ""
+    }
+    let parsed = json.parse(result_raw)
+    return json.get_str(json.get(parsed, "streams"), "stderr")
+}
+
+fn result_status_value(result_raw: str) -> str {
+    if result_raw == "" || result_raw == "{}" {
+        return ""
+    }
+    let parsed = json.parse(result_raw)
+    return json.get_str(parsed, "status")
+}
+
 pub fn blank() -> i32 {
     return logger.blank()
 }
@@ -80,13 +180,34 @@ fn print_payload_block(label: str, payload: str) -> i32 {
     return 0
 }
 
+fn print_detail_row(label: str, value: str) -> i32 {
+    discard logger.print_line(str.concat("  ", block_label(label), "  ", value))
+    return 0
+}
+
+fn print_preview_block(label: str, value: str) -> i32 {
+    discard logger.print_line(str.concat("  ", block_label(label)))
+    discard logger.print_line(indent_block(value, "    "))
+    return 0
+}
+
 pub fn print_tool_call(tool_name: str, input_raw: str) -> i32 {
     discard logger.blank()
     discard logger.print_line(str.concat(logger.tool_call_tag(), ": ", logger.strong(tool_name)))
-    if input_raw == "" || input_raw == "{}" {
-        return print_payload_block("input", "{}")
+    if tool_details_mode() == "full" {
+        if input_raw == "" || input_raw == "{}" {
+            return print_payload_block("input", "{}")
+        }
+        return print_payload_block("input", input_raw)
     }
-    return print_payload_block("input", input_raw)
+    let command = command_from_input(input_raw)
+    if command != "" {
+        return print_detail_row("run", logger.command(truncate(command, 140)))
+    }
+    if input_raw == "" || input_raw == "{}" {
+        return print_detail_row("input", logger.muted("{}"))
+    }
+    return print_detail_row("input", compact_json(input_raw))
 }
 
 pub fn print_tool_result(tool_name: str, status: str, result_raw: str) -> i32 {
@@ -99,8 +220,31 @@ pub fn print_tool_result(tool_name: str, status: str, result_raw: str) -> i32 {
             logger.muted(str.concat("[", status, "]")),
         ),
     )
-    if result_raw == "" {
-        return print_payload_block("result", "{}")
+    if tool_details_mode() == "full" {
+        if result_raw == "" {
+            return print_payload_block("result", "{}")
+        }
+        return print_payload_block("result", result_raw)
     }
-    return print_payload_block("result", result_raw)
+    if result_raw == "" {
+        return print_detail_row("result", logger.muted("{}"))
+    }
+    let outcome_status = result_status_value(result_raw)
+    let stdout = result_stream_stdout(result_raw)
+    let stderr = result_stream_stderr(result_raw)
+    if outcome_status != "" {
+        discard print_detail_row("status", outcome_status)
+    }
+    if stdout != "" {
+        discard print_detail_row("stdout", str.concat(str.from_i32(line_count(stdout)), " line(s)"))
+        discard print_preview_block("preview", preview_text(stdout, 6, 500))
+    }
+    if stderr != "" {
+        discard print_detail_row("stderr", str.concat(str.from_i32(line_count(stderr)), " line(s)"))
+        discard print_preview_block("stderr preview", preview_text(stderr, 4, 240))
+    }
+    if stdout == "" && stderr == "" {
+        return print_detail_row("result", compact_json(result_raw))
+    }
+    return 0
 }
