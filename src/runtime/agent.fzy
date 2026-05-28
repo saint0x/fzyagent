@@ -8,10 +8,6 @@ fn system_prompt_path() -> str {
     return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
 }
 
-fn max_agent_iterations() -> i32 {
-    return 4
-}
-
 fn debug_dir() -> str {
     return "/tmp/fzyagent/agent.debug"
 }
@@ -249,12 +245,14 @@ fn stream_block_apply_delta(block: StreamBlock, delta: JsonHandle) -> StreamBloc
         }
     }
     if delta_type == "input_json_delta" {
+        let partial_json = json.get_str(delta, "partial_json")
+        let next_input_raw = if block.input_raw == "" || block.input_raw == "{}" { partial_json } else { str.concat(block.input_raw, partial_json) }
         return StreamBlock {
             block_type: block.block_type,
             text: block.text,
             tool_id: block.tool_id,
             tool_name: block.tool_name,
-            input_raw: str.concat(block.input_raw, json.get_str(delta, "partial_json")),
+            input_raw: next_input_raw,
         }
     }
     return block
@@ -295,6 +293,21 @@ fn streamed_response_json(stop_reason: str, block0: StreamBlock, block1: StreamB
     discard map.set(payload, "content", json.raw(json.array(items)))
     discard map.set(payload, "stop_reason", json.str(stop_reason))
     return json.object(payload)
+}
+
+fn empty_streamed_response_json() -> str {
+    return streamed_response_json("", empty_stream_block(), empty_stream_block(), empty_stream_block(), empty_stream_block())
+}
+
+fn upstream_error_raw_response(payload: str, streamed_raw: str) -> str {
+    if streamed_raw != "" && streamed_raw != empty_streamed_response_json() {
+        return streamed_raw
+    }
+    let captured = services.anthropic.request_messages_sync(payload)
+    if captured != "" {
+        return captured
+    }
+    return streamed_raw
 }
 
 fn stream_print_assistant_start() -> i32 {
@@ -509,17 +522,14 @@ fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
 }
 
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32) -> str {
-    if depth >= max_agent_iterations() {
-        return turn_error_json("tool_loop_exhausted", "", "", accumulated_events_json, "")
-    }
-
     let payload = request_payload_for(messages_json, services.registry.list_tool_definitions_json())
     let stream = services.anthropic.open_message_stream(payload)
     let status = http.stream_status(stream)
     let raw = consume_streamed_message(stream, stream_mode)
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
     if status < 200 || status >= 300 {
-        return turn_error_json("", raw, http.stream_error(stream), accumulated_events_json, str.from_i32(status))
+        let upstream_raw = upstream_error_raw_response(payload, raw)
+        return turn_error_json("", upstream_raw, http.stream_error(stream), accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)

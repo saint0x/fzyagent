@@ -4,7 +4,6 @@ use core.thread;
 use core.log;
 
 enum ModelClass {
-    ClaudeSonnet46,
     ClaudeHaiku45,
 }
 
@@ -45,8 +44,8 @@ fn queue_stream_headers() -> i32 {
     return 0
 }
 
-fn smoke_sonnet() -> i32 {
-    log.info("anthropic.smoke_sonnet start", util.log_fields2("component", "anthropic", "phase", "smoke_start"))
+fn smoke_haiku() -> i32 {
+    log.info("anthropic.smoke_haiku start", util.log_fields2("component", "anthropic", "phase", "smoke_start"))
     let model = default_model_name()
     let message = util.json_obj2("role", json.str("user"), "content", json.str("Give a short agent runtime status update"))
     let messages = util.json_arr1(message)
@@ -61,7 +60,7 @@ fn smoke_sonnet() -> i32 {
     discard http.post_json_capture(endpoint(), body)
     let status = http.last_status()
     let status_text = status_label(status)
-    log.info("anthropic.smoke_sonnet response", util.log_fields3("component", "anthropic", "phase", "smoke_response", "status", status_text))
+    log.info("anthropic.smoke_haiku response", util.log_fields3("component", "anthropic", "phase", "smoke_response", "status", status_text))
 
     provider.normalize_response()
     time.sleep_ms(8)
@@ -132,23 +131,21 @@ fn default_model_class() -> ModelClass {
 }
 
 fn default_model_name() -> str {
-    return env_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    return env.get("ANTHROPIC_MODEL")
 }
 
 fn model_code(model: ModelClass) -> i32 {
     match model {
-        ModelClass::ClaudeSonnet46 => return 46,
-        _ => return 45,
+        ModelClass::ClaudeHaiku45 => return 45,
     }
     return 45
 }
 
 fn model_name(model: ModelClass) -> str {
     match model {
-        ModelClass::ClaudeSonnet46 => return "claude-sonnet-4-6",
-        _ => return "claude-haiku-4-5-20251001",
+        ModelClass::ClaudeHaiku45 => return env.get("ANTHROPIC_MODEL"),
     }
-    return "claude-haiku-4-5-20251001"
+    return env.get("ANTHROPIC_MODEL")
 }
 
 fn provider_fallback() -> i32 {
