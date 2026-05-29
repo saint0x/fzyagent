@@ -9,34 +9,53 @@ mod recovery;
 mod server;
 mod sandbox;
 mod config;
+
 use core.log;
+
+fn log_runtime(phase: str) -> i32 {
+    log.info("runtime.lifecycle", util.log_fields2("component", "runtime", "phase", phase))
+    return 0
+}
+
+fn spawn_background_workers(log_enabled: i32) -> i32 {
+    let worker_handle = spawn_ctx(worker.run, 100)
+    let scheduler_handle = spawn_ctx(scheduler.tick, 101)
+    if log_enabled == 1 {
+        discard log_runtime("spawned")
+    }
+    detach(worker_handle)
+    detach(scheduler_handle)
+    return 0
+}
+
+fn spawn_agent_loop(log_enabled: i32) -> i32 {
+    let agent_handle = spawn_ctx(agent.run_loop, 102)
+    if log_enabled == 1 {
+        discard log_runtime("agent_loop")
+    }
+    detach(agent_handle)
+    return 0
+}
 
 fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
     if log_enabled == 1 {
-        log.info("runtime.start begin", util.log_fields2("component", "runtime", "phase", "start_begin"))
+        discard log_runtime("start_begin")
     }
-    events.boot_bus()
-    config.apply_server_config()
-    supervisor.configure_limits()
-    recovery.save_checkpoint()
+    discard events.boot_bus()
+    discard config.apply_server_config()
+    discard supervisor.configure_limits()
+    discard recovery.save_checkpoint()
     if background_enabled == 1 {
-        let worker_handle = spawn_ctx(worker.run, 100)
-        let scheduler_handle = spawn_ctx(scheduler.tick, 101)
-        if log_enabled == 1 {
-            log.info("runtime workers spawned", util.log_fields2("component", "runtime", "phase", "spawned"))
-        }
-        detach(worker_handle)
-        detach(scheduler_handle)
+        discard spawn_background_workers(log_enabled)
     } else if log_enabled == 1 {
-        log.info("runtime workers skipped", util.log_fields2("component", "runtime", "phase", "http_mode"))
+        discard log_runtime("http_mode")
     }
     if background_enabled == 1 && config.enable_agent_loop() == 1 {
-        let agent_handle = spawn_ctx(agent.run_loop, 102)
-        detach(agent_handle)
+        discard spawn_agent_loop(log_enabled)
     }
     discard supervisor.refresh_state()
     if log_enabled == 1 {
-        log.info("runtime.start complete", util.log_fields2("component", "runtime", "phase", "start_complete"))
+        discard log_runtime("start_complete")
     }
     return 0
 }
@@ -46,8 +65,8 @@ fn start() -> i32 {
 }
 
 fn start_chat() -> i32 {
-    events.boot_bus()
-    recovery.save_checkpoint()
+    discard events.boot_bus()
+    discard recovery.save_checkpoint()
     return 0
 }
 

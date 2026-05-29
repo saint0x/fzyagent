@@ -41,12 +41,6 @@ enum DispatchKind {
     DispatchCustom,
 }
 
-static mut QUEUE_PENDING_COUNT: i32 = 0;
-static mut QUEUE_ACTIVE_COUNT: i32 = 0;
-static mut QUEUE_COMPLETED_COUNT: i32 = 0;
-static mut QUEUE_CANCELLED_COUNT: i32 = 0;
-static mut NEXT_PARALLEL_CONTEXT_BASE: i32 = 100000;
-
 fn state_dir() -> str {
     return "/tmp/fzyagent"
 }
@@ -139,8 +133,7 @@ fn parallel_step_limit() -> i32 {
 }
 
 fn next_parallel_context_base() -> i32 {
-    NEXT_PARALLEL_CONTEXT_BASE += 16
-    return NEXT_PARALLEL_CONTEXT_BASE
+    return 100000 + (time.now() * 16)
 }
 
 fn parallel_step_request_path(context_id: i32) -> str {
@@ -288,6 +281,7 @@ fn aegis_base_url() -> str {
 fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.stdout(handle)
 }
@@ -295,6 +289,7 @@ fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> i32 {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.exit_code(handle)
 }
@@ -302,6 +297,7 @@ fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_payload_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -763,6 +759,7 @@ fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str)
     let env_map = default_proc_env()
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -780,6 +777,7 @@ fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, ou
     let env_map = default_proc_env()
     let argv = grep_argv(pattern, target)
     let handle = proc.spawn_cmd("grep", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -1184,6 +1182,7 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     }
     let argv = shell_argv(command_template)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, 180000)
     let exit_code = proc.exit_code(handle)
     let status = if exit_code == 0 { "ok" } else { "failed" }
@@ -1253,9 +1252,29 @@ fn queue_summary_doc(pending_count: i32, active_count: i32, completed_count: i32
 fn queue_summary_json() -> str {
     let payload = safe_read(queue_summary_path())
     if payload == "{}" {
-        return queue_summary_doc(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "", model.types.queue_idle_label())
+        return queue_summary_doc(0, 0, 0, 0, "", model.types.queue_idle_label())
     }
     return payload
+}
+
+fn queue_summary_parsed() -> JsonHandle {
+    return json.parse(queue_summary_json())
+}
+
+fn queue_pending_count() -> i32 {
+    return util.parse_i32(json.get_str(queue_summary_parsed(), "pending_count"))
+}
+
+fn queue_active_count() -> i32 {
+    return util.parse_i32(json.get_str(queue_summary_parsed(), "active_count"))
+}
+
+fn queue_completed_count() -> i32 {
+    return util.parse_i32(json.get_str(queue_summary_parsed(), "completed_count"))
+}
+
+fn queue_cancelled_count() -> i32 {
+    return util.parse_i32(json.get_str(queue_summary_parsed(), "cancelled_count"))
 }
 
 fn queue_status_payload(status: str, phase: str) -> str {
@@ -1304,8 +1323,7 @@ fn enqueue_tool_request(tool_id: str, run_id: str, input_raw: str) -> i32 {
     let queued_phase = model.types.queue_queued_label()
     fs.write_file(queue_request_path(run_id), if input_raw == "" { "{}" } else { input_raw })
     discard storage.atomic_append(queue_pending_path(), queue_event(tool_id, run_id, model.types.queue_record_pending_label(), queued_phase))
-    QUEUE_PENDING_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, queued_phase)
+    discard write_queue_summary(queue_pending_count() + 1, queue_active_count(), queue_completed_count(), queue_cancelled_count(), tool_id, queued_phase)
     return 0
 }
 
@@ -1320,14 +1338,9 @@ fn enqueue_tool() -> i32 {
 fn dequeue_tool_named(tool_id: str, run_id: str, status: str) -> i32 {
     discard init_tool_queue()
     discard storage.atomic_append(queue_active_path(), queue_event(tool_id, run_id, model.types.queue_record_completed_label(), status))
-    if QUEUE_PENDING_COUNT > 0 {
-        QUEUE_PENDING_COUNT -= 1
-    }
-    if QUEUE_ACTIVE_COUNT > 0 {
-        QUEUE_ACTIVE_COUNT -= 1
-    }
-    QUEUE_COMPLETED_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, status)
+    let pending = queue_pending_count()
+    let active = queue_active_count()
+    discard write_queue_summary(if pending > 0 { pending - 1 } else { 0 }, if active > 0 { active - 1 } else { 0 }, queue_completed_count() + 1, queue_cancelled_count(), tool_id, status)
     return 0
 }
 
@@ -1358,11 +1371,8 @@ fn process_background() -> i32 {
     let tool_id = json.get_str(event, "tool_id")
     let run_id = json.get_str(event, "run_id")
     fs.write_file(queue_pending_path(), drop_first_line(pending))
-    if QUEUE_PENDING_COUNT > 0 {
-        QUEUE_PENDING_COUNT -= 1
-    }
-    QUEUE_ACTIVE_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, tool_id, running_phase)
+    let current_pending = queue_pending_count()
+    discard write_queue_summary(if current_pending > 0 { current_pending - 1 } else { 0 }, queue_active_count() + 1, queue_completed_count(), queue_cancelled_count(), tool_id, running_phase)
     let input_raw = safe_read(queue_request_path(run_id))
     let status_code = dispatch_tool_request(tool_id, input_raw)
     let final_status = status_from_exit_code(status_code)
@@ -1403,7 +1413,7 @@ fn spawn_background() -> i32 {
         discard monitor_background()
         return 0
     }
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", spawned_phase)
+    discard write_queue_summary(queue_pending_count(), queue_active_count(), queue_completed_count(), queue_cancelled_count(), "background", spawned_phase)
     let handle = spawn(process_background_worker)
     detach(handle)
     return 0
@@ -1485,10 +1495,7 @@ fn run_queue_cancel() -> i32 {
     }
     fs.write_file(queue_pending_path(), "")
     fs.write_file(queue_cancel_path(), "cancel")
-    QUEUE_PENDING_COUNT = 0
-    QUEUE_ACTIVE_COUNT = 0
-    QUEUE_CANCELLED_COUNT += cancelled
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", cancelled_phase)
+    discard write_queue_summary(0, 0, queue_completed_count(), queue_cancelled_count() + cancelled, "background", cancelled_phase)
     discard monitor_background()
     let payload = model.types.queue_tool_payload_json("queue_cancel", ok_status, "queue cancellation requested", queue_summary_json(), "", "", "", "", "", "")
     fs.write_file(queue_cancel_run_path(), payload)
@@ -1553,9 +1560,7 @@ fn spawn_probe_worker() -> i32 {
 fn kill_background() -> i32 {
     discard init_tool_queue()
     fs.write_file(queue_cancel_path(), "kill")
-    QUEUE_ACTIVE_COUNT = 0
-    QUEUE_CANCELLED_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "background", model.types.queue_killed_label())
+    discard write_queue_summary(queue_pending_count(), 0, queue_completed_count(), queue_cancelled_count() + 1, "background", model.types.queue_killed_label())
     discard monitor_background()
     return 0
 }
@@ -2089,8 +2094,7 @@ fn run_with_timeout() -> i32 {
 fn cancel_tool_run() -> i32 {
     discard init_tool_queue()
     fs.write_file(queue_cancel_path(), "cancel")
-    QUEUE_CANCELLED_COUNT += 1
-    discard write_queue_summary(QUEUE_PENDING_COUNT, QUEUE_ACTIVE_COUNT, QUEUE_COMPLETED_COUNT, QUEUE_CANCELLED_COUNT, "generic", model.types.queue_cancelled_label())
+    discard write_queue_summary(queue_pending_count(), queue_active_count(), queue_completed_count(), queue_cancelled_count() + 1, "generic", model.types.queue_cancelled_label())
     discard monitor_background()
     return 0
 }

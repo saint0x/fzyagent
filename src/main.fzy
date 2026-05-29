@@ -1,9 +1,3 @@
-use core.time;
-use core.fs;
-use core.http;
-use core.proc;
-use core.mem;
-use core.thread;
 use core.log;
 use core.process;
 
@@ -15,38 +9,46 @@ mod cli;
 mod tests;
 mod util;
 
+fn boot_chat_mode() -> i32 {
+    log.quiet()
+    discard model.preflight()
+    discard cli.boot()
+    discard services.boot_chat()
+    discard runtime.start_chat()
+    discard api.touch()
+    return cli.run_chat()
+}
+
+fn boot_server_mode() -> i32 {
+    log.info("fzyagent main starting", util.log_fields2("component", "main", "phase", "boot"))
+    discard model.preflight()
+    log.info("fzyagent model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))
+    discard cli.boot()
+    log.info("fzyagent cli boot complete", util.log_fields2("component", "main", "phase", "cli_boot"))
+    discard services.boot_all()
+    log.info("fzyagent services boot complete", util.log_fields2("component", "main", "phase", "services_boot"))
+    discard runtime.start()
+    log.info("fzyagent runtime start complete", util.log_fields2("component", "main", "phase", "runtime_start"))
+    discard api.touch()
+    log.info("fzyagent api touch complete", util.log_fields2("component", "main", "phase", "api_touch"))
+    log.info("fzyagent entering serve_forever", util.log_fields2("component", "main", "phase", "serve_forever"))
+    return services.web.serve_forever()
+}
+
 fn main() -> i32 {
     requires true
 
     let mode = process.argv_or(1, "serve")
     if mode == "--help" || mode == "help" {
         log.quiet()
-        cli.boot()
+        discard cli.boot()
         return cli.print_help()
     }
     if mode == "chat" {
-        log.quiet()
-        model.preflight()
-        cli.boot()
-        services.boot_chat()
-        runtime.start_chat()
-        api.touch()
-        return cli.run_chat()
+        return boot_chat_mode()
     }
-    log.info("fzyagent main starting", util.log_fields2("component", "main", "phase", "boot"))
-    model.preflight()
-    log.info("fzyagent model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))
-    cli.boot()
-    log.info("fzyagent cli boot complete", util.log_fields2("component", "main", "phase", "cli_boot"))
-    services.boot_all()
-    log.info("fzyagent services boot complete", util.log_fields2("component", "main", "phase", "services_boot"))
-    runtime.start()
-    log.info("fzyagent runtime start complete", util.log_fields2("component", "main", "phase", "runtime_start"))
-    api.touch()
-    log.info("fzyagent api touch complete", util.log_fields2("component", "main", "phase", "api_touch"))
-    log.info("fzyagent entering serve_forever", util.log_fields2("component", "main", "phase", "serve_forever"))
-    services.web.serve_forever()
+    let exit_code = boot_server_mode()
 
     ensures true
-    return 0
+    return exit_code
 }

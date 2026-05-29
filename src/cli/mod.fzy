@@ -2,10 +2,11 @@ mod commands;
 mod logger;
 mod markdown;
 mod render;
+
 pub use commands.run_chat;
 pub use commands.print_help;
 
 fn boot() -> i32 {
-    commands.boot()
+    discard commands.boot()
     return 0
 }

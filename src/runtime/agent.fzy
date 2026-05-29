@@ -485,6 +485,7 @@ fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str
 }
 
 fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
+    defer http.stream_close(stream)
     let mut stop_reason = ""
     let mut block0 = empty_stream_block()
     let mut block1 = empty_stream_block()
@@ -557,13 +558,16 @@ fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
         }
     }
 
-    discard http.stream_close(stream)
     discard services.anthropic.finish_message_stream()
     if stream_mode == 1 && streamed_assistant_open == 1 && streamed_pending != "" {
         streamed_markdown_state = cli.render.print_assistant_stream_line(streamed_pending, streamed_markdown_state)
         discard streamed_markdown_state
     }
-    discard cli.render.print_assistant_stream_close(streamed_assistant_open)
+    if streamed_assistant_open == 1 {
+        discard cli.render.print_assistant_stream_close(1)
+    } else {
+        discard cli.render.print_assistant_stream_close(0)
+    }
 
     if stream_error != "" {
         return util.json_obj2("status", json.str("error"), "error", json.str(stream_error))
@@ -587,7 +591,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
     if status < 200 || status >= 300 {
         let upstream_raw = upstream_error_raw_response(payload, raw)
-        return turn_error_json("", upstream_raw, http.stream_error(stream), accumulated_events_json, str.from_i32(status))
+        return turn_error_json("", upstream_raw, raw, accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)

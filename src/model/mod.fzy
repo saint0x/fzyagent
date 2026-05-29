@@ -3,8 +3,8 @@ mod contracts;
 mod state;
 
 fn preflight() -> i32 {
-    contracts.preflight()
-    state.init_all()
-    types.schema_version()
+    discard contracts.preflight()
+    discard state.init_all()
+    discard types.schema_version()
     return 0
 }

@@ -86,3 +86,30 @@ fn json_arr4(v1: str, v2: str, v3: str, v4: str) -> str {
     discard list.push(items, v4)
     return json.array(items)
 }
+
+fn digit_value(ch: str) -> i32 {
+    if ch == "0" { return 0 }
+    if ch == "1" { return 1 }
+    if ch == "2" { return 2 }
+    if ch == "3" { return 3 }
+    if ch == "4" { return 4 }
+    if ch == "5" { return 5 }
+    if ch == "6" { return 6 }
+    if ch == "7" { return 7 }
+    if ch == "8" { return 8 }
+    if ch == "9" { return 9 }
+    return 0
+}
+
+fn parse_i32(text: str) -> i32 {
+    if text == "" {
+        return 0
+    }
+    let mut idx: i32 = 0
+    let mut out: i32 = 0
+    while idx < str.len(text) {
+        out = (out * 10) + digit_value(str.slice(text, idx, idx + 1))
+        idx += 1
+    }
+    return out
+}
