@@ -10,7 +10,6 @@ mod tests;
 mod util;
 
 fn boot_chat_mode() -> i32 {
-    log.quiet()
     discard model.preflight()
     discard cli.boot()
     discard services.boot_chat()
@@ -40,7 +39,6 @@ fn main() -> i32 {
 
     let mode = process.argv_or(1, "serve")
     if mode == "--help" || mode == "help" {
-        log.quiet()
         discard cli.boot()
         return cli.print_help()
     }

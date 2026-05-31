@@ -3,8 +3,6 @@ use core.fs;
 use core.storage;
 use core.thread;
 use core.log;
-use core.text;
-use core.path;
 
 enum ToolFailureClass {
     ToolSpawnFailure,
@@ -281,7 +279,6 @@ fn aegis_base_url() -> str {
 fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.stdout(handle)
 }
@@ -289,7 +286,6 @@ fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> i32 {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.exit_code(handle)
 }
@@ -297,7 +293,6 @@ fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_payload_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -759,7 +754,6 @@ fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str)
     let env_map = default_proc_env()
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -777,7 +771,6 @@ fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, ou
     let env_map = default_proc_env()
     let argv = grep_argv(pattern, target)
     let handle = proc.spawn_cmd("grep", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -881,7 +874,7 @@ fn run_aegis_with_args_to(action: str, url: str, query: str, eval_js: str, comma
         discard proc.env_set(env_map, "AEGIS_BODY", body)
         command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
     } else if effective_action == "search_eval" {
-        let encoded = text.replace(query, " ", "+")
+        let encoded = str.replace(query, " ", "+")
         let target_url = str.concat("https://duckduckgo.com/?q=", encoded)
         let commands = list.new()
         discard list.push(commands, json.raw(util.json_obj2("type", json.str("eval"), "code", json.str(str.concat("window.location.href = ", str.concat(json.str(target_url), ";"))))))
@@ -917,7 +910,7 @@ fn ensure_aegis_server() -> i32 {
     fs.mkdir(aegis_state_dir())
     let env_map = default_proc_env()
     let ready_cmd = str.concat("curl -s -o /dev/null -w '%{http_code}' ", str.concat(aegis_base_url(), "/readyz"))
-    let initial = text.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+    let initial = str.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
     if initial == "200" || initial == "503" {
         return 0
     }
@@ -925,13 +918,13 @@ fn ensure_aegis_server() -> i32 {
         str.concat("./aegis.sh --mode headless serve --addr ", aegis_addr()),
         str.concat(" >", str.concat(aegis_log_path(), " 2>&1 & echo $!")),
     )
-    let pid = text.trim(shell_stdout_with_env(launch_cmd, env_map, 15000))
+    let pid = str.trim(shell_stdout_with_env(launch_cmd, env_map, 15000))
     if pid != "" {
         fs.write_file(aegis_pid_path(), pid)
     }
     let mut attempt: i32 = 0
     while attempt < 80 {
-        let code = text.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+        let code = str.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
         if code == "200" {
             return 0
         }
@@ -975,19 +968,11 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
         )
     } else if effective_action == "list" {
         let entries = list.new()
-        if fs.exists(custom_tools_root()) == 1 {
-            let discovered = fs.listdir(custom_tools_root())
-            let mut copy_idx: i32 = 0
-            while copy_idx < list.len(discovered) {
-                discard list.push(entries, list.get(discovered, copy_idx))
-                copy_idx += 1
-            }
-        }
         let items = list.new()
         let mut idx: i32 = 0
         while idx < list.len(entries) {
             let entry = list.get(entries, idx)
-            let manifest_path = path.join(path.join(custom_tools_root(), entry), "tool.json")
+            let manifest_path = join_path(join_path(custom_tools_root(), entry), "tool.json")
             if fs.exists(manifest_path) == 1 {
                 let raw = fs.read_file(manifest_path)
                 if raw != "" {
@@ -1022,7 +1007,7 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
         if valid_tool_id(tool_id) == 0 || description == "" || command_template == "" {
             payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("create"), "message", json.str("tool_id, description, and command_template are required"))
         } else {
-            let tool_dir = path.join(custom_tools_root(), tool_id)
+            let tool_dir = join_path(custom_tools_root(), tool_id)
             fs.mkdir(custom_tools_root())
             fs.mkdir(tool_dir)
             let manifest = map.new()
@@ -1033,8 +1018,8 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
             discard map.set(manifest, "runner", json.str("shell"))
             discard map.set(manifest, "command_template", json.str(command_template))
             discard map.set(manifest, "input_schema", json.raw(schema))
-            let manifest_path = path.join(tool_dir, "tool.json")
-            let readme_path = path.join(tool_dir, "README.md")
+            let manifest_path = join_path(tool_dir, "tool.json")
+            let readme_path = join_path(tool_dir, "README.md")
             fs.write_file(manifest_path, json.object(manifest))
             fs.write_file(readme_path, str.concat("# ", str.concat(tool_id, str.concat("\n\n", str.concat(description, str.concat("\n\n## Command Template\n\n```sh\n", str.concat(command_template, str.concat("\n```\n\n## Input Schema\n\n```json\n", str.concat(schema, "\n```\n")))))))))
             discard services.registry.refresh_runtime()
@@ -1109,18 +1094,18 @@ fn run_promptsmith_to(action: str, content: str, out_path: str) -> i32 {
         fs.write_file(prompt_active_path(), default_text)
         payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("reset"), "content", json.str(default_text), "meta", json.raw(prompt_meta_json(default_text)))
     } else if effective_action == "set" {
-        if text.trim(content) == "" {
+        if str.trim(content) == "" {
             payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("set"), "message", json.str("content is required"))
         } else {
             fs.write_file(prompt_active_path(), content)
             payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("set"), "content", json.str(content), "meta", json.raw(prompt_meta_json(content)))
         }
     } else if effective_action == "append" {
-        if text.trim(content) == "" {
+        if str.trim(content) == "" {
             payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("append"), "message", json.str("content is required"))
         } else {
             let current = fs.read_file(prompt_active_path())
-            let updated = str.concat(current, str.concat("\n\n", str.concat(text.trim(content), "\n")))
+            let updated = str.concat(current, str.concat("\n\n", str.concat(str.trim(content), "\n")))
             fs.write_file(prompt_active_path(), updated)
             payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("append"), "content", json.str(updated), "meta", json.raw(prompt_meta_json(updated)))
         }
@@ -1165,24 +1150,9 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     fs.mkdir(custom_tool_state_dir(tool_id))
     fs.write_file(request_path, request)
     discard proc.env_set(env_map, "TOOL_INPUT_JSON", raw_input)
-    let parsed_input = json.parse(raw_input)
-    let keys = json.keys(parsed_input)
     let exported_keys = list.new()
-    let mut idx: i32 = 0
-    while idx < list.len(keys) {
-        let key = list.get(keys, idx)
-        let child = json.get(parsed_input, key)
-        let scalar = json.get_str(parsed_input, key)
-        let raw = json.get_str(child, "raw")
-        let value = if scalar == "" { raw } else { scalar }
-        let upper_key = sanitize_env_fragment(key)
-        discard proc.env_set(env_map, str.concat("TOOL_ARG_", upper_key), value)
-        discard list.push(exported_keys, json.str(str.concat("TOOL_ARG_", upper_key)))
-        idx += 1
-    }
     let argv = shell_argv(command_template)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
     discard proc.wait(handle, 180000)
     let exit_code = proc.exit_code(handle)
     let status = if exit_code == 0 { "ok" } else { "failed" }
@@ -1942,7 +1912,7 @@ fn parallel_step_request_json(step_raw: str) -> str {
 }
 
 fn run_parallel_step_ctx() -> i32 {
-    let context_id = thread.context_id()
+    let context_id = 0
     let request_raw = safe_read(parallel_step_request_path(context_id))
     let step = json.parse(request_raw)
     let step_id = json.get_str(step, "step_id")
@@ -2136,4 +2106,13 @@ fn failure_class_label(code: i32) -> str {
         _ => return "malformed_output",
     }
     return "malformed_output"
+}
+fn join_path(base: str, leaf: str) -> str {
+    if base == "" {
+        return leaf
+    }
+    if str.ends_with(base, "/") == 1 {
+        return str.concat(base, leaf)
+    }
+    return str.concat(base, "/", leaf)
 }

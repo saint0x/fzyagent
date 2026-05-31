@@ -3,6 +3,7 @@ use core.http;
 use core.thread;
 use core.log;
 
+
 fn system_prompt_path() -> str {
     return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
 }
@@ -399,11 +400,11 @@ fn turn_tool_events_raw(parsed: JsonHandle) -> str {
 }
 
 fn turn_error_json(message: str, raw_response: str, transport_error: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.ControlStatus::ControlError, "anthropic", "", raw_response, "", tool_events_json, http_status, message, transport_error)
+    return model.types.turn_result_json(model.types.control_error_status(), "anthropic", "", raw_response, "", tool_events_json, http_status, message, transport_error)
 }
 
 fn turn_success_json(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.ControlStatus::ControlOk, "anthropic", assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
+    return model.types.turn_result_json(model.types.control_ok_status(), "anthropic", assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
 }
 
 fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id: str) -> str {
@@ -484,110 +485,10 @@ fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str
     return json.object(payload)
 }
 
-fn consume_streamed_message(stream: HttpStreamHandle, stream_mode: i32) -> str {
-    defer http.stream_close(stream)
-    let mut stop_reason = ""
-    let mut block0 = empty_stream_block()
-    let mut block1 = empty_stream_block()
-    let mut block2 = empty_stream_block()
-    let mut block3 = empty_stream_block()
-    let mut stream_error = ""
-    let mut streamed_assistant_open: i32 = 0
-    let mut streamed_markdown_state: i32 = 0
-    let mut streamed_pending = ""
-
-    loop {
-        let event = http.sse_next(stream)
-        if event.done == 1 {
-            break
-        }
-        if event.event_type == "ping" {
-            continue
-        }
-        if event.event_type == "error" {
-            stream_error = event.data
-            break
-        }
-
-        let event_data = json.parse(event.data)
-        if event.event_type == "message_delta" {
-            let delta = json.get(event_data, "delta")
-            let next_stop_reason = json.get_str(delta, "stop_reason")
-            if next_stop_reason != "" {
-                stop_reason = next_stop_reason
-            }
-            continue
-        }
-        if event.event_type == "content_block_start" {
-            let index = stream_index_raw(event_data)
-            let content_block = json.get(event_data, "content_block")
-            if index == "0" { block0 = stream_block_from_start(content_block) }
-            if index == "1" { block1 = stream_block_from_start(content_block) }
-            if index == "2" { block2 = stream_block_from_start(content_block) }
-            if index == "3" { block3 = stream_block_from_start(content_block) }
-            continue
-        }
-        if event.event_type == "content_block_delta" {
-            let index = stream_index_raw(event_data)
-            let delta = json.get(event_data, "delta")
-            let delta_type = json.get_str(delta, "type")
-            if delta_type == "text_delta" && stream_mode == 1 {
-                if streamed_assistant_open == 0 {
-                    discard cli.render.print_assistant_stream_open()
-                    streamed_assistant_open = 1
-                }
-                streamed_pending = str.concat(streamed_pending, json.get_str(delta, "text"))
-                loop {
-                    let next_newline = newline_index(streamed_pending)
-                    if next_newline < 0 {
-                        break
-                    }
-                    let line = str.slice(streamed_pending, 0, next_newline)
-                    streamed_pending = str.slice(streamed_pending, next_newline + 1, str.len(streamed_pending))
-                    streamed_markdown_state = cli.render.print_assistant_stream_line(line, streamed_markdown_state)
-                }
-            }
-            if index == "0" { block0 = stream_block_apply_delta(block0, delta) }
-            if index == "1" { block1 = stream_block_apply_delta(block1, delta) }
-            if index == "2" { block2 = stream_block_apply_delta(block2, delta) }
-            if index == "3" { block3 = stream_block_apply_delta(block3, delta) }
-            continue
-        }
-        if event.event_type == "message_stop" {
-            break
-        }
-    }
-
-    discard services.anthropic.finish_message_stream()
-    if stream_mode == 1 && streamed_assistant_open == 1 && streamed_pending != "" {
-        streamed_markdown_state = cli.render.print_assistant_stream_line(streamed_pending, streamed_markdown_state)
-        discard streamed_markdown_state
-    }
-    if streamed_assistant_open == 1 {
-        discard cli.render.print_assistant_stream_close(1)
-    } else {
-        discard cli.render.print_assistant_stream_close(0)
-    }
-
-    if stream_error != "" {
-        return util.json_obj2("status", json.str("error"), "error", json.str(stream_error))
-    }
-    let payload = streamed_response_json(stop_reason, block0, block1, block2, block3)
-    if stream_mode == 1 && streamed_assistant_open == 0 {
-        let parsed = json.parse(payload)
-        let assistant_text = extract_text_block(parsed)
-        if assistant_text != "" {
-            discard cli.render.print_assistant(assistant_text)
-        }
-    }
-    return payload
-}
-
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32) -> str {
     let payload = request_payload_for(messages_json, services.registry.list_tool_definitions_json())
-    let stream = services.anthropic.open_message_stream(payload)
-    let status = http.stream_status(stream)
-    let raw = consume_streamed_message(stream, stream_mode)
+    let raw = services.anthropic.request_messages_sync(payload)
+    let status = services.anthropic.last_status()
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
     if status < 200 || status >= 300 {
         let upstream_raw = upstream_error_raw_response(payload, raw)

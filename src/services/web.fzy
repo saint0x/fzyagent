@@ -53,38 +53,57 @@ fn serve_forever() -> i32 {
 }
 
 fn accept_and_process() -> i32 {
-    let conn: HttpHandle = http.accept()
+    let conn_owned: HttpHandle = http.accept()
     if runtime.config.persist_request_artifacts() == 1 {
         log.info("web accepted connection", util.log_fields2("component", "web", "phase", "accept"))
     }
-    discard read_request(conn)
+    discard read_request(conn_owned)
 
-    let auth = security.auth_middleware_conn(conn)
+    let auth = security.auth_middleware_conn(conn_owned)
     if auth != 0 {
-        http.write_json(conn, 401, model.types.request_guard_error_json("unauthorized"))
+        discard http.write_json(conn_owned, 401, model.types.request_guard_error_json("unauthorized"))
         return 0
     }
 
-    let limited = security.rate_limit_conn(conn)
+    let limited = security.rate_limit_conn(conn_owned)
     if limited != 0 {
-        http.write_json(conn, 429, model.types.request_guard_error_json("rate_limited"))
+        discard http.write_json(conn_owned, 429, model.types.request_guard_error_json("rate_limited"))
         return 0
     }
 
-    let path = http.path(conn)
+    let path = http.path(conn_owned)
     let tool_id = if str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 {
         tool_id_from_run_path(path)
     } else {
         ""
     }
-    let policy = security.policy_filter_request(tool_id, http.method(conn), path)
+    let policy = security.policy_filter_request(tool_id, http.method(conn_owned), path)
     if policy != 0 {
-        http.write_json(conn, 403, model.types.request_guard_error_json("policy_denied"))
+        discard http.write_json(conn_owned, 403, model.types.request_guard_error_json("policy_denied"))
         return 0
     }
 
     checkpoint()
-    return dispatch(conn)
+    let method = http.method(conn_owned)
+    if runtime.config.persist_request_artifacts() == 1 {
+        log.info("web dispatch route", util.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
+        log.info("web dispatch method", util.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
+    }
+    let route = route_kind(method, path)
+    match route {
+        RouteKind::RouteHealth => return services.http.handle_health(conn_owned),
+        RouteKind::RouteSessionsCreate => return services.http.handle_sessions(conn_owned),
+        RouteKind::RouteSessionGet => return services.http.handle_session_get(conn_owned, path),
+        RouteKind::RouteToolsRegister => return services.http.handle_tools_register(conn_owned),
+        RouteKind::RouteToolsList => return services.http.handle_tools_list(conn_owned),
+        RouteKind::RouteToolsDelete => return services.http.handle_tools_delete(conn_owned, path),
+        RouteKind::RouteToolsRun => return services.http.handle_tools_run(conn_owned, path),
+        RouteKind::RouteMessagesPost => return services.http.handle_messages(conn_owned, path),
+        RouteKind::RouteRunGet => return services.http.handle_runs(conn_owned, path),
+        _ => return dispatch_not_found(conn_owned),
+    }
+    discard http.close(conn_owned)
+    return 0
 }
 
 fn read_request(conn: HttpHandle) -> i32 {

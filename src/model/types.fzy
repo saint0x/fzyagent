@@ -156,6 +156,14 @@ fn control_error_label() -> str {
     return control_status_label(ControlStatus::ControlError)
 }
 
+fn control_ok_status() -> ControlStatus {
+    return ControlStatus::ControlOk
+}
+
+fn control_error_status() -> ControlStatus {
+    return ControlStatus::ControlError
+}
+
 fn queue_phase_label(phase: QueuePhase) -> str {
     match phase {
         QueuePhase::QueueIdle => return "idle",

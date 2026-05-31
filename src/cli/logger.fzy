@@ -1,5 +1,4 @@
 use core.term;
-use core.text;
 
 fn ansi_enabled() -> i32 {
     if term.is_interactive() == 1 {
@@ -113,9 +112,29 @@ pub fn print_error(text: str) -> i32 {
 }
 
 pub fn indent(value: str, prefix: str) -> str {
-    return text.indent(value, prefix)
+    return indent_text(value, prefix)
 }
 
 pub fn pad_command(value: str, width: i32) -> str {
-    return text.pad_right(value, width)
+    return pad_right_text(value, width)
+}
+fn indent_text(value: str, prefix: str) -> str {
+    if value == "" {
+        return prefix
+    }
+    return str.concat(prefix, str.replace(value, "\n", str.concat("\n", prefix)))
+}
+
+fn pad_right_text(value: str, width: i32) -> str {
+    let current = str.len(value)
+    if current >= width {
+        return value
+    }
+    let mut out = value
+    let mut remaining = width - current
+    while remaining > 0 {
+        out = str.concat(out, " ")
+        remaining -= 1
+    }
+    return out
 }

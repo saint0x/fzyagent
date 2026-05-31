@@ -1,6 +1,4 @@
 use core.fs;
-use core.io;
-use core.path;
 use core.storage;
 use core.time;
 
@@ -209,30 +207,8 @@ fn append_custom_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
     if fs.exists(custom_tools_root()) == 0 {
         return 0
     }
-    let entries = io.list_dir(custom_tools_root())
-    let mut idx: i32 = 0
-    while idx < list.len(entries) {
-        let entry = list.get(entries, idx)
-        let manifest_path = path.join(path.join(custom_tools_root(), entry), "tool.json")
-        if fs.exists(manifest_path) == 1 {
-            let raw = fs.read_file(manifest_path)
-            if raw != "" {
-                let parsed = json.parse(raw)
-                let tool_id = json.get_str(parsed, "id")
-                let description = json.get_str(parsed, "description")
-                let kind = json.get_str(parsed, "kind")
-                let mode = json.get_str(parsed, "mode")
-                let input_schema = json.get_str(json.get(parsed, "input_schema"), "raw")
-                if tool_id != "" {
-                    let schema = if input_schema == "" { default_input_schema() } else { input_schema }
-                    let tool_json = custom_tool_json(tool_id, description, if kind == "" { "process" } else { kind }, if mode == "" { "single" } else { mode }, schema)
-                    let anthropic_json = anthropic_tool_json(tool_id, description, schema)
-                    discard append_tool_pair(tools, anthropic, tool_json, anthropic_json)
-                }
-            }
-        }
-        idx += 1
-    }
+    discard tools
+    discard anthropic
     return 0
 }
 
@@ -561,4 +537,13 @@ fn record_audit(event: str) -> i32 {
     let line = model.types.audit_record_json(event, model.types.control_ok_label(), str.from_i32(time.now()), summary_path())
     discard storage.atomic_append(audit_path(), line)
     return 0
+}
+fn join_path(base: str, leaf: str) -> str {
+    if base == "" {
+        return leaf
+    }
+    if str.ends_with(base, "/") == 1 {
+        return str.concat(base, leaf)
+    }
+    return str.concat(base, "/", leaf)
 }

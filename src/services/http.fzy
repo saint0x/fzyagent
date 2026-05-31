@@ -35,9 +35,10 @@ fn listen_public() -> i32 {
 }
 
 fn accept_once() -> i32 {
-    let conn: HttpHandle = http.accept()
-    http.read(conn)
-    http.write(conn, 200, "ok")
+    let conn_owned: HttpHandle = http.accept()
+    http.read(conn_owned)
+    discard http.write(conn_owned, 200, "ok")
+    discard http.close(conn_owned)
     return 0
 }
 
@@ -196,11 +197,11 @@ fn message_denied_response_json(session_id: str) -> str {
 }
 
 fn message_turn_success_json(session_id: str, request_id: str, data_json: str) -> str {
-    return model.types.message_turn_response_json(model.types.ControlStatus::ControlOk, session_id, request_id, data_json)
+    return model.types.message_turn_response_json(model.types.control_ok_status(), session_id, request_id, data_json)
 }
 
 fn message_turn_error_json(session_id: str, request_id: str, data_json: str) -> str {
-    return model.types.message_turn_response_json(model.types.ControlStatus::ControlError, session_id, request_id, data_json)
+    return model.types.message_turn_response_json(model.types.control_error_status(), session_id, request_id, data_json)
 }
 
 fn handle_sessions(conn: HttpHandle) -> i32 {

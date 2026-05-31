@@ -78,15 +78,6 @@ fn request_messages_sync(payload: str) -> str {
     return out
 }
 
-fn open_message_stream(payload: str) -> HttpStreamHandle {
-    provider.anthropic_transport()
-    provider.normalize_request()
-    provider.translate_tool_calls()
-    provider.stream_completion()
-    queue_stream_headers()
-    return http.post_json_stream(endpoint(), payload)
-}
-
 fn finish_message_stream() -> i32 {
     provider.normalize_response()
     return 0
