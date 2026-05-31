@@ -2,27 +2,21 @@ use core.fs;
 use core.thread;
 
 fn preflight() -> i32 {
-    requires true
     require_tool_schema()
-    ensures true
     return 0
 }
 
 fn require_active_session() -> i32 {
-    requires true
     let session = env.get("AGENT_SESSION_ID")
     if session == "" {
         checkpoint()
     }
-    ensures true
     return 0
 }
 
 fn require_tool_schema() -> i32 {
-    requires true
     if fs.exists("/tmp/fzyagent/registry.json") == 0 {
         checkpoint()
     }
-    ensures true
     return 0
 }

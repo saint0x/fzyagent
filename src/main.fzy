@@ -35,8 +35,6 @@ fn boot_server_mode() -> i32 {
 }
 
 fn main() -> i32 {
-    requires true
-
     let mode = process.argv_or(1, "serve")
     if mode == "--help" || mode == "help" {
         discard cli.boot()
@@ -46,7 +44,5 @@ fn main() -> i32 {
         return boot_chat_mode()
     }
     let exit_code = boot_server_mode()
-
-    ensures true
     return exit_code
 }

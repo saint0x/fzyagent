@@ -128,6 +128,7 @@ fn default_model_name() -> str {
 fn model_code(model: ModelClass) -> i32 {
     match model {
         ModelClass::ClaudeHaiku45 => return 45,
+        _ => return 45,
     }
     return 45
 }
@@ -135,6 +136,7 @@ fn model_code(model: ModelClass) -> i32 {
 fn model_name(model: ModelClass) -> str {
     match model {
         ModelClass::ClaudeHaiku45 => return env.get("ANTHROPIC_MODEL"),
+        _ => return env.get("ANTHROPIC_MODEL"),
     }
     return env.get("ANTHROPIC_MODEL")
 }
