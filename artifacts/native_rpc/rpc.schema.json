@@ -1,0 +1,197 @@
+{
+  "methods": [
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 1,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "CreateSession",
+      "params": [
+        {
+          "name": "req",
+          "type": "SessionRequest"
+        }
+      ],
+      "requestType": "SessionRequest",
+      "responseType": "SessionResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 2,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "GetSession",
+      "params": [
+        {
+          "name": "req",
+          "type": "SessionLookupRequest"
+        }
+      ],
+      "requestType": "SessionLookupRequest",
+      "responseType": "SessionResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 3,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "PostMessage",
+      "params": [
+        {
+          "name": "req",
+          "type": "MessageRequest"
+        }
+      ],
+      "requestType": "MessageRequest",
+      "responseType": "MessageResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 4,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "ListTools",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolsRequest"
+        }
+      ],
+      "requestType": "ToolsRequest",
+      "responseType": "ToolsResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 5,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "RegisterTools",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolRegistrationRequest"
+        }
+      ],
+      "requestType": "ToolRegistrationRequest",
+      "responseType": "ToolsResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 6,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "DeleteTool",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolDeleteRequest"
+        }
+      ],
+      "requestType": "ToolDeleteRequest",
+      "responseType": "ToolMutationResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 7,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "RunTool",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolRunRequest"
+        }
+      ],
+      "requestType": "ToolRunRequest",
+      "responseType": "ToolRunResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 8,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "RunToolSequence",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolBatchSequenceRequest"
+        }
+      ],
+      "requestType": "ToolBatchSequenceRequest",
+      "responseType": "ToolRunResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 9,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "RunToolParallel",
+      "params": [
+        {
+          "name": "req",
+          "type": "ToolBatchParallelRequest"
+        }
+      ],
+      "requestType": "ToolBatchParallelRequest",
+      "responseType": "ToolRunResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 10,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "GetRun",
+      "params": [
+        {
+          "name": "req",
+          "type": "RunLookupRequest"
+        }
+      ],
+      "requestType": "RunLookupRequest",
+      "responseType": "RunResponse",
+      "serverStreaming": false
+    },
+    {
+      "clientStreaming": false,
+      "file": "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy",
+      "line": 11,
+      "mode": "unary",
+      "module": "rpc",
+      "name": "GetHealth",
+      "params": [
+        {
+          "name": "req",
+          "type": "HealthRequest"
+        }
+      ],
+      "requestType": "HealthRequest",
+      "responseType": "HealthResponse",
+      "serverStreaming": false
+    }
+  ],
+  "modules": [
+    "/Users/deepsaint/Desktop/fzyagent/src/api/rpc.fzy"
+  ],
+  "projectRoot": "../fzyagent/src/api",
+  "schemaVersion": "fozzylang.rpc.v1",
+  "source": "../fzyagent/src/api/rpc.fzy"
+}

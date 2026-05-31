@@ -90,10 +90,10 @@ fn export_spec() -> i32 {
 
     let session_responses = response_map2("200", session_response_object("Session created or loaded"), "403", response_object("Forbidden"))
     let message_responses = response_map3("200", message_response_object("Assistant turn completed"), "403", message_response_object("Prompt denied"), "502", message_response_object("Provider failure"))
-    let tool_responses = response_map3("200", tool_rpc_response_object("Tool finished successfully with a strict tool RPC envelope"), "500", tool_rpc_response_object("Tool failed with a strict tool RPC envelope"), "403", response_object("Forbidden"))
+    let tool_responses = response_map3("200", tool_rpc_response_object("Tool finished successfully with a native tool run response envelope"), "500", tool_rpc_response_object("Tool failed with a native tool run response envelope"), "403", response_object("Forbidden"))
     let run_responses = response_map2("200", run_response_object("Stored run payload"), "404", response_object("Run missing"))
     let health_responses = response_map1("200", health_response_object("Health status"))
-    let tool_run_request_body = api.rpc.request_body_json("Strict tool RPC envelope for single, sequence, or parallel tool execution.", api.rpc.request_schema_name(), "true")
+    let tool_run_request_body = api.rpc.request_body_json("Native tool execution payload for single, sequence, or parallel execution.", api.rpc.request_schema_name(), "true")
     let session_request_body = api.rpc.request_body_json("Session create or reset payload.", api.rpc.session_request_schema_name(), "false")
     let message_request_body = api.rpc.request_body_json("Runtime chat message payload.", api.rpc.message_request_schema_name(), "true")
 

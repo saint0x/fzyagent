@@ -44,9 +44,9 @@ fn newline_count(text: str) -> i32 {
     let mut total: i32 = 0
     while idx < str.len(text) {
         if str.slice(text, idx, idx + 1) == "\n" {
-            total += 1
+            total = total + 1
         }
-        idx += 1
+        idx = idx + 1
     }
     return total
 }
@@ -69,9 +69,9 @@ fn first_lines(text: str, max_lines: i32) -> str {
             if seen >= max_lines {
                 return str.slice(text, 0, idx)
             }
-            seen += 1
+            seen = seen + 1
         }
-        idx += 1
+        idx = idx + 1
     }
     return text
 }

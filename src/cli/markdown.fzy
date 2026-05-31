@@ -4,7 +4,7 @@ fn next_newline_index(text: str, start: i32) -> i32 {
         if str.slice(text, idx, idx + 1) == "\n" {
             return idx
         }
-        idx += 1
+        idx = idx + 1
     }
     return str.len(text)
 }
@@ -33,7 +33,7 @@ fn find_from(text: str, pattern: str, start: i32) -> i32 {
         if str.slice(text, idx, idx + pattern_len) == pattern {
             return idx
         }
-        idx += 1
+        idx = idx + 1
     }
     return -1
 }
@@ -48,7 +48,7 @@ fn digits_only(text: str) -> i32 {
         if ch < "0" || ch > "9" {
             return 0
         }
-        idx += 1
+        idx = idx + 1
     }
     return 1
 }
@@ -63,7 +63,7 @@ fn heading_level(line: str) -> i32 {
         if str.slice(line, idx, idx + 1) != "#" {
             break
         }
-        idx += 1
+        idx = idx + 1
     }
     if idx == 0 || idx >= str.len(line) {
         return 0
@@ -212,7 +212,7 @@ fn render_inline(line: str) -> str {
             }
         }
         out = append_piece(out, str.slice(line, idx, idx + 1))
-        idx += 1
+        idx = idx + 1
     }
     return out
 }

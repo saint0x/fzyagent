@@ -24,6 +24,7 @@ In practice, that means we can ship real agent runtime features quickly while ke
 - Module-oriented architecture across runtime, services, model, API, and CLI layers
 - Type-safe boundaries and explicit contracts between components
 - Concurrent task orchestration for tool execution and runtime workflows
+- Native RPC declarations in `src/api/rpc.fzy` with generated schema/client/server artifacts
 - Native HTTP/server flows and provider integration in language-level code
 - Deterministic testing, replay, and trace validation with Fozzy-first workflows
 - Structured logging and operational visibility from fzy code paths

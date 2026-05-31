@@ -22,11 +22,12 @@
 - Safety/auth/rate-limit: `src/services/safety.fzy`, `src/services/security.fzy`
 - Persistence/recovery: `src/services/persistence.fzy`, `src/runtime/recovery.fzy`
 - Server/runtime config: `src/runtime/server.fzy`, `src/runtime/config.fzy`
+- Native RPC contract: `src/api/rpc.fzy`
 
 ## Generated Interface Artifacts
 - Header: `artifacts/phase8_runtime.h`
 - ABI: `artifacts/phase8_runtime.abi.json`
-- RPC schema/stubs: `artifacts/phase8_rpc/`
+- RPC schema/stubs: `artifacts/native_rpc/`
 
 ## Production Smoke Command
 ```bash

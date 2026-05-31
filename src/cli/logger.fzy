@@ -134,7 +134,7 @@ fn pad_right_text(value: str, width: i32) -> str {
     let mut remaining = width - current
     while remaining > 0 {
         out = str.concat(out, " ")
-        remaining -= 1
+        remaining = remaining - 1
     }
     return out
 }

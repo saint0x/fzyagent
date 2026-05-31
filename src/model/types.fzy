@@ -695,13 +695,13 @@ fn ffi_manifest_json(abi: str, project: str, exports_json: str, rpc_protocol: st
     return json.object(payload)
 }
 
-fn runtime_config_json(host: str, port: str, workers: str, background_mode: str, observability_mode: str) -> str {
+fn runtime_config_json(host_name: str, port_value: str, worker_count_value: str, background_mode_value: str, observability_mode_value: str) -> str {
     return util.json_obj5(
-        "host", json.str(host),
-        "port", json.str(port),
-        "workers", json.str(workers),
-        "background_mode", json.str(background_mode),
-        "observability_mode", json.str(observability_mode),
+        "host", json.str(host_name),
+        "port", json.str(port_value),
+        "workers", json.str(worker_count_value),
+        "background_mode", json.str(background_mode_value),
+        "observability_mode", json.str(observability_mode_value),
     )
 }
 
@@ -714,11 +714,11 @@ fn runtime_event_json(event: str, component: str, clock: str, status: str) -> st
     )
 }
 
-fn telemetry_runtime_json(workers: str, host: str, port: str) -> str {
+fn telemetry_runtime_json(worker_count_value: str, host_name: str, port_value: str) -> str {
     return util.json_obj3(
-        "workers", json.str(workers),
-        "host", json.str(host),
-        "port", json.str(port),
+        "workers", json.str(worker_count_value),
+        "host", json.str(host_name),
+        "port", json.str(port_value),
     )
 }
 

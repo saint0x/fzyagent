@@ -1,3 +1,15 @@
+rpc CreateSession(req: SessionRequest) -> SessionResponse;
+rpc GetSession(req: SessionLookupRequest) -> SessionResponse;
+rpc PostMessage(req: MessageRequest) -> MessageResponse;
+rpc ListTools(req: ToolsRequest) -> ToolsResponse;
+rpc RegisterTools(req: ToolRegistrationRequest) -> ToolsResponse;
+rpc DeleteTool(req: ToolDeleteRequest) -> ToolMutationResponse;
+rpc RunTool(req: ToolRunRequest) -> ToolRunResponse;
+rpc RunToolSequence(req: ToolBatchSequenceRequest) -> ToolRunResponse;
+rpc RunToolParallel(req: ToolBatchParallelRequest) -> ToolRunResponse;
+rpc GetRun(req: RunLookupRequest) -> RunResponse;
+rpc GetHealth(req: HealthRequest) -> HealthResponse;
+
 use core.fs;
 use core.time;
 
@@ -18,7 +30,7 @@ fn rpc_manifest_path() -> str {
 }
 
 fn tool_protocol_version() -> str {
-    return "fzyagent.toolrpc.v1"
+    return "fzy.native.rpc.v1"
 }
 
 fn single_request_schema_name() -> str {
@@ -112,6 +124,10 @@ fn schema_array_items_json(items_json: str) -> str {
     return util.json_obj2("type", json.str("array"), "items", json.raw(items_json))
 }
 
+fn required_list0() -> ListHandle {
+    return list.new()
+}
+
 fn required_list1(a: str) -> ListHandle {
     let required = list.new()
     discard list.push(required, json.str(a))
@@ -182,46 +198,42 @@ fn step_schema_json() -> str {
 
 fn single_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "protocol", json.raw(schema_string_json()))
     discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "op", json.raw(schema_string_json()))
     discard map.set(properties, "tool_id", json.raw(schema_string_json()))
     discard map.set(properties, "input", json.raw(schema_object_json()))
-    return object_schema_json(properties, required_list4("protocol", "request_id", "op", "tool_id"))
+    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    return object_schema_json(properties, required_list0())
 }
 
 fn batch_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "protocol", json.raw(schema_string_json()))
     discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "op", json.raw(schema_string_json()))
     discard map.set(properties, "execution", json.raw(schema_string_json()))
     discard map.set(properties, "steps", json.raw(schema_array_items_json(step_schema_json())))
-    return object_schema_json(properties, required_list5("protocol", "request_id", "op", "execution", "steps"))
+    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    return object_schema_json(properties, required_list1("steps"))
 }
 
 fn request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "protocol", json.raw(schema_string_json()))
     discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "op", json.raw(schema_string_json()))
     discard map.set(properties, "execution", json.raw(schema_string_json()))
     discard map.set(properties, "tool_id", json.raw(schema_string_json()))
     discard map.set(properties, "input", json.raw(schema_object_json()))
     discard map.set(properties, "steps", json.raw(schema_array_items_json(step_schema_json())))
-    return object_schema_json(properties, required_list3("protocol", "request_id", "op"))
+    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    return object_schema_json(properties, required_list0())
 }
 
 fn response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "protocol", json.raw(schema_string_json()))
     discard map.set(properties, "request_id", json.raw(schema_string_json()))
     discard map.set(properties, "status", json.raw(schema_string_json()))
     discard map.set(properties, "tool_id", json.raw(schema_string_json()))
     discard map.set(properties, "run_id", json.raw(schema_string_json()))
     discard map.set(properties, "artifact_path", json.raw(schema_string_json()))
     discard map.set(properties, "result", json.raw(schema_object_json()))
-    return object_schema_json(properties, required_list7("protocol", "request_id", "status", "tool_id", "run_id", "artifact_path", "result"))
+    return object_schema_json(properties, required_list5("status", "tool_id", "run_id", "artifact_path", "result"))
 }
 
 fn session_request_schema_json() -> str {
@@ -290,10 +302,8 @@ fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
 }
 
 fn single_example_json() -> str {
-    return util.json_obj5(
-        "protocol", json.str(tool_protocol_version()),
+    return util.json_obj4(
         "request_id", json.str("req_example"),
-        "op", json.str("run"),
         "tool_id", json.str("bash"),
         "input", json.raw(util.json_obj1("command", json.str("printf hi"))),
     )
@@ -303,10 +313,8 @@ fn batch_example_json() -> str {
     let batch_steps = list.new()
     discard list.push(batch_steps, json.raw(batch_step_example_json("a", "bash", util.json_obj1("command", json.str("printf a")))))
     discard list.push(batch_steps, json.raw(batch_step_example_json("b", "grep_search", util.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
-    return util.json_obj5(
-        "protocol", json.str(tool_protocol_version()),
+    return util.json_obj3(
         "request_id", json.str("req_batch"),
-        "op", json.str("run"),
         "execution", json.str("parallel"),
         "steps", json.raw(json.array(batch_steps)),
     )
@@ -341,7 +349,7 @@ fn service_schema_names_json() -> str {
 fn protocol_doc_json() -> str {
     let payload = map.new()
     discard map.set(payload, "protocol", json.str(tool_protocol_version()))
-    discard map.set(payload, "transport", json.str("http+routed-rpc"))
+    discard map.set(payload, "transport", json.str("http+native-rpc"))
     discard map.set(payload, "single_request_schema", json.raw(single_request_schema_json()))
     discard map.set(payload, "batch_request_schema", json.raw(batch_request_schema_json()))
     discard map.set(payload, "request_schema", json.raw(request_schema_json()))
@@ -365,14 +373,18 @@ fn protocol_doc_json() -> str {
 fn rpc_touch() -> i32 {
     fs.mkdir("/tmp/fzyagent")
     let methods = list.new()
-    discard list.push(methods, json.raw(method_doc_json("CreateSession", "/sessions", "POST", "allocate or reset session state")))
-    discard list.push(methods, json.raw(method_doc_json("PostMessage", "/sessions/{session_id}/messages", "POST", "run an agent turn")))
-    discard list.push(methods, json.raw(method_doc_json("ListTools", "/tools", "GET", "discover runtime tools")))
-    discard list.push(methods, json.raw(method_doc_json("RunTool", "/tools/{tool_id}/run", "POST", "execute a single tool request")))
-    discard list.push(methods, json.raw(method_doc_json("RunToolBatch", "/tools/{tool_id}/run", "POST", "execute sequence or parallel batched requests through the strict tool RPC envelope")))
+    discard list.push(methods, json.raw(method_doc_json("CreateSession", "/sessions", "POST", "native rpc session allocation/reset surface")))
+    discard list.push(methods, json.raw(method_doc_json("GetSession", "/sessions/{session_id}", "GET", "native rpc session lookup surface")))
+    discard list.push(methods, json.raw(method_doc_json("PostMessage", "/sessions/{session_id}/messages", "POST", "native rpc assistant turn surface")))
+    discard list.push(methods, json.raw(method_doc_json("ListTools", "/tools", "GET", "native rpc tool discovery surface")))
+    discard list.push(methods, json.raw(method_doc_json("RunTool", "/tools/{tool_id}/run", "POST", "native rpc tool execution surface")))
+    discard list.push(methods, json.raw(method_doc_json("RunToolSequence", "/tools/tool_sequence/run", "POST", "native rpc batched sequence execution surface")))
+    discard list.push(methods, json.raw(method_doc_json("RunToolParallel", "/tools/tool_parallel/run", "POST", "native rpc batched parallel execution surface")))
+    discard list.push(methods, json.raw(method_doc_json("GetRun", "/runs/{run_id}", "GET", "native rpc run lookup surface")))
+    discard list.push(methods, json.raw(method_doc_json("GetHealth", "/healthz", "GET", "native rpc health surface")))
     let payload = util.json_obj5(
         "status", json.str("ok"),
-        "transport", json.str("http+routed-rpc"),
+        "transport", json.str("http+native-rpc"),
         "project", json.str("fzyagent"),
         "methods", json.raw(json.array(methods)),
         "tool_protocol", json.raw(protocol_doc_json()),
@@ -391,8 +403,7 @@ fn rpc_touch() -> i32 {
 }
 
 fn rpc_error_json(request_id: str, code: str, message: str) -> str {
-    return util.json_obj4(
-        "protocol", json.str(tool_protocol_version()),
+    return util.json_obj3(
         "request_id", json.str(request_id),
         "status", json.str("error"),
         "error", json.raw(util.json_obj2("code", json.str(code), "message", json.str(message))),
@@ -400,9 +411,6 @@ fn rpc_error_json(request_id: str, code: str, message: str) -> str {
 }
 
 fn request_kind(parsed: JsonHandle) -> ToolRequestKind {
-    if json.get_str(parsed, "protocol") != tool_protocol_version() {
-        return ToolRequestKind::ToolRequestInvalid
-    }
     let execution = json.get_str(parsed, "execution")
     if execution == "sequence" {
         return ToolRequestKind::ToolRequestSequence
@@ -427,10 +435,8 @@ fn request_kind_code(kind: ToolRequestKind) -> i32 {
 }
 
 fn single_request_json(request_id: str, tool_id: str, input_json: str) -> str {
-    return util.json_obj5(
-        "protocol", json.str(tool_protocol_version()),
+    return util.json_obj4(
         "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }),
-        "op", json.str("run"),
         "tool_id", json.str(tool_id),
         "input", json.raw(if input_json == "" { "{}" } else { input_json }),
     )
@@ -457,7 +463,6 @@ fn tool_response_label(kind: ToolResponseKind) -> str {
 
 fn tool_response_json(request_id: str, tool_id: str, run_id: str, status_code: i32, artifact_path: str, result_json: str) -> str {
     let payload = map.new()
-    discard map.set(payload, "protocol", json.str(tool_protocol_version()))
     discard map.set(payload, "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }))
     discard map.set(payload, "status", json.str(tool_result_status(status_code)))
     discard map.set(payload, "tool_id", json.str(tool_id))
@@ -492,43 +497,35 @@ fn response_result_raw(parsed: JsonHandle) -> str {
 }
 
 fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
-    let parsed = json.parse(if raw_body == "" { "{}" } else { raw_body })
-    let protocol = json.get_str(parsed, "protocol")
-    let request_id = request_id_from(raw_body)
-    if protocol == tool_protocol_version() {
-        let op = json.get_str(parsed, "op")
-        let execution = json.get_str(parsed, "execution")
-        let tool_id = json.get_str(parsed, "tool_id")
-        let input_raw = json.get_str(json.get(parsed, "input"), "raw")
-        let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
-        if execution == "parallel" || execution == "sequence" {
-            return util.json_obj5(
-                "protocol", json.str(tool_protocol_version()),
-                "request_id", json.str(request_id),
-                "op", json.str(if op == "" { "run" } else { op }),
-                "execution", json.str(execution),
-                "steps", json.raw(if steps_raw == "" { "[]" } else { steps_raw }),
-            )
+    let safe_body = if raw_body == "" { "{}" } else { raw_body }
+    let parsed = json.parse(safe_body)
+    let request_id = request_id_from(safe_body)
+    let session_id = json.get_str(parsed, "session_id")
+    let execution = json.get_str(parsed, "execution")
+    let input_raw = json.get_str(json.get(parsed, "input"), "raw")
+    let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
+    if execution == "parallel" || execution == "sequence" {
+        let payload = map.new()
+        discard map.set(payload, "request_id", json.str(request_id))
+        discard map.set(payload, "execution", json.str(execution))
+        discard map.set(payload, "steps", json.raw(if steps_raw == "" { "[]" } else { steps_raw }))
+        if session_id != "" {
+            discard map.set(payload, "session_id", json.str(session_id))
         }
-        return util.json_obj5(
-            "protocol", json.str(tool_protocol_version()),
-            "request_id", json.str(request_id),
-            "op", json.str(if op == "" { "run" } else { op }),
-            "tool_id", json.str(if tool_id == "" { path_tool_id } else { tool_id }),
-            "input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
-        )
+        return json.object(payload)
     }
-    return if raw_body == "" { "{}" } else { raw_body }
+    let payload = map.new()
+    discard map.set(payload, "request_id", json.str(request_id))
+    discard map.set(payload, "tool_id", json.str(path_tool_id))
+    discard map.set(payload, "input", json.raw(if input_raw == "" { safe_body } else { input_raw }))
+    if session_id != "" {
+        discard map.set(payload, "session_id", json.str(session_id))
+    }
+    return json.object(payload)
 }
 
 fn validate_normalized_tool_request(normalized_json: str) -> str {
     let parsed = json.parse(normalized_json)
-    if json.get_str(parsed, "protocol") != tool_protocol_version() {
-        return rpc_error_json(request_id_from(normalized_json), "invalid_protocol", "tool request protocol version is required")
-    }
-    if json.get_str(parsed, "op") != "run" {
-        return rpc_error_json(request_id_from(normalized_json), "invalid_op", "only op=run is currently supported")
-    }
     let kind = request_kind(parsed)
     let steps_raw = json.get_str(json.get(parsed, "steps"), "raw")
     match kind {

@@ -449,7 +449,7 @@ fn sanitize_env_fragment(value: str) -> str {
         } else {
             out = str.concat(out, "_")
         }
-        idx += 1
+        idx = idx + 1
     }
     return out
 }
@@ -462,9 +462,9 @@ fn prompt_line_count(text_value: str) -> i32 {
     let mut idx: i32 = 0
     while idx < str.len(text_value) {
         if str.slice(text_value, idx, idx + 1) == "\n" {
-            count += 1
+            count = count + 1
         }
-        idx += 1
+        idx = idx + 1
     }
     return count
 }
@@ -929,7 +929,7 @@ fn ensure_aegis_server() -> i32 {
             return 0
         }
         time.sleep_ms(250)
-        attempt += 1
+        attempt = attempt + 1
     }
     return 13
 }
@@ -987,7 +987,7 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
                     discard list.push(items, json.raw(item))
                 }
             }
-            idx += 1
+            idx = idx + 1
         }
         payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("ok"), "action", json.str("list"), "tools", json.raw(json.array(items)))
     } else if effective_action == "inspect" {
@@ -1196,7 +1196,7 @@ fn first_line(text_value: str) -> str {
         if str.slice(text_value, idx, idx + 1) == "\n" {
             return str.slice(text_value, 0, idx)
         }
-        idx += 1
+        idx = idx + 1
     }
     return text_value
 }
@@ -1210,7 +1210,7 @@ fn drop_first_line(text_value: str) -> str {
         if str.slice(text_value, idx, idx + 1) == "\n" {
             return str.slice(text_value, idx + 1, str.len(text_value))
         }
-        idx += 1
+        idx = idx + 1
     }
     return ""
 }
@@ -1366,7 +1366,7 @@ fn process_background_worker() -> i32 {
         if outcome == 0 {
             return 0
         }
-        processed_count += 1
+        processed_count = processed_count + 1
         if processed_count >= 64 {
             let payload = model.types.queue_state_payload_json(ok_status, model.types.queue_worker_limit_label(), queue_summary_json(), "", "", "", "", "", str.from_i32(processed_count))
             fs.write_file(queue_monitor_path(), payload)
@@ -1460,7 +1460,7 @@ fn run_queue_cancel() -> i32 {
     let mut cancelled: i32 = 0
     let mut remaining = pending
     while first_line(remaining) != "" {
-        cancelled += 1
+        cancelled = cancelled + 1
         remaining = drop_first_line(remaining)
     }
     fs.write_file(queue_pending_path(), "")
@@ -1756,8 +1756,8 @@ fn field_with_input(parsed: JsonHandle, strict_input: JsonHandle, key: str) -> s
 fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
     let strict_input = json.get(parsed, "input")
-    let action = json.get_str(parsed, "action")
-    let op = json.get_str(parsed, "op")
+    let action = field_with_input(parsed, strict_input, "action")
+    let op = field_with_input(parsed, strict_input, "op")
     let effective_action = if op == "" { action } else { op }
     let url = field_with_input(parsed, strict_input, "url")
     let query = field_with_input(parsed, strict_input, "query")
@@ -1771,16 +1771,16 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let strict_queue_input_raw = json.get_str(json.get(strict_input, "input"), "raw")
     let queue_tool_id = field_with_input(parsed, strict_input, "queue_tool_id")
     let queued_run_id = field_with_input(parsed, strict_input, "queued_run_id")
-    let requested_tool_id = json.get_str(parsed, "tool_id")
-    let create_tool_id = json.get_str(parsed, "create_tool_id")
-    let description = json.get_str(parsed, "description")
-    let command_template = json.get_str(parsed, "command_template")
-    let input_schema_json = json.get_str(parsed, "input_schema_json")
+    let requested_tool_id = field_with_input(parsed, strict_input, "tool_id")
+    let create_tool_id = field_with_input(parsed, strict_input, "create_tool_id")
+    let description = field_with_input(parsed, strict_input, "description")
+    let command_template = field_with_input(parsed, strict_input, "command_template")
+    let input_schema_json = field_with_input(parsed, strict_input, "input_schema_json")
     let input_schema_raw = json.get_str(json.get(parsed, "input_schema"), "raw")
-    let kind = json.get_str(parsed, "kind")
-    let mode = json.get_str(parsed, "mode")
-    let max_lines = json.get_str(parsed, "max_lines")
-    let content = json.get_str(parsed, "content")
+    let kind = field_with_input(parsed, strict_input, "kind")
+    let mode = field_with_input(parsed, strict_input, "mode")
+    let max_lines = field_with_input(parsed, strict_input, "max_lines")
+    let content = field_with_input(parsed, strict_input, "content")
     let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
         if commands_raw == "" { strict_commands_raw } else { commands_raw }
@@ -1824,8 +1824,8 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
 fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
     let strict_input = json.get(parsed, "input")
-    let action = json.get_str(parsed, "action")
-    let op = json.get_str(parsed, "op")
+    let action = field_with_input(parsed, strict_input, "action")
+    let op = field_with_input(parsed, strict_input, "op")
     let effective_action = if op == "" { action } else { op }
     let url = field_with_input(parsed, strict_input, "url")
     let query = field_with_input(parsed, strict_input, "query")
@@ -1839,16 +1839,16 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     let strict_queue_input_raw = json.get_str(json.get(strict_input, "input"), "raw")
     let queue_tool_id = field_with_input(parsed, strict_input, "queue_tool_id")
     let queued_run_id = field_with_input(parsed, strict_input, "queued_run_id")
-    let requested_tool_id = json.get_str(parsed, "tool_id")
-    let create_tool_id = json.get_str(parsed, "create_tool_id")
-    let description = json.get_str(parsed, "description")
-    let command_template = json.get_str(parsed, "command_template")
-    let input_schema_json = json.get_str(parsed, "input_schema_json")
+    let requested_tool_id = field_with_input(parsed, strict_input, "tool_id")
+    let create_tool_id = field_with_input(parsed, strict_input, "create_tool_id")
+    let description = field_with_input(parsed, strict_input, "description")
+    let command_template = field_with_input(parsed, strict_input, "command_template")
+    let input_schema_json = field_with_input(parsed, strict_input, "input_schema_json")
     let input_schema_raw = json.get_str(json.get(parsed, "input_schema"), "raw")
-    let kind = json.get_str(parsed, "kind")
-    let mode = json.get_str(parsed, "mode")
-    let max_lines = json.get_str(parsed, "max_lines")
-    let content = json.get_str(parsed, "content")
+    let kind = field_with_input(parsed, strict_input, "kind")
+    let mode = field_with_input(parsed, strict_input, "mode")
+    let max_lines = field_with_input(parsed, strict_input, "max_lines")
+    let content = field_with_input(parsed, strict_input, "content")
     let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
         if commands_raw == "" { strict_commands_raw } else { commands_raw }
@@ -1949,7 +1949,7 @@ fn run_tool_sequence(request_json: str) -> i32 {
             overall = status
             break
         }
-        idx += 1
+        idx = idx + 1
     }
     let payload = model.types.batch_tool_result_payload_json("tool_sequence", if overall == 0 { model.types.control_ok_label() } else { model.types.control_error_label() }, json.array(items))
     fs.write_file("/tmp/fzyagent/runs/tool_sequence.json", payload)

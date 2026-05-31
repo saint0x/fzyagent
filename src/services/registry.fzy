@@ -75,7 +75,7 @@ fn object_schema_json(properties: MapHandle, required: ListHandle) -> str {
 }
 
 fn built_tool_json(tool_id: str, description: str, kind: str, mode: str, execution_model: str, supports_sequence: str, supports_parallel: str, input_schema_json: str) -> str {
-    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "builtin", execution_model, supports_sequence, supports_parallel, api.rpc.tool_protocol_version(), "http+routed-rpc", input_schema_json)
+    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "builtin", execution_model, supports_sequence, supports_parallel, api.rpc.tool_protocol_version(), "http+native-rpc", input_schema_json)
 }
 
 fn anthropic_tool_json(tool_id: str, description: str, input_schema_json: str) -> str {
@@ -83,7 +83,7 @@ fn anthropic_tool_json(tool_id: str, description: str, input_schema_json: str) -
 }
 
 fn custom_tool_json(tool_id: str, description: str, kind: str, mode: str, input_schema_json: str) -> str {
-    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "custom", "single", "true", "true", api.rpc.tool_protocol_version(), "http+routed-rpc", input_schema_json)
+    return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "custom", "single", "true", "true", api.rpc.tool_protocol_version(), "http+native-rpc", input_schema_json)
 }
 
 fn append_tool_pair(tools: ListHandle, anthropic: ListHandle, tool_json: str, anthropic_json: str) -> i32 {
@@ -305,28 +305,28 @@ fn export_index_and_summary() -> i32 {
     while idx < 128 {
         let tool_id = tool_id_at(parsed, idx)
         if tool_id != "" {
-            total += 1
+            total = total + 1
             let kind = tool_kind_at(parsed, idx)
             let origin = tool_origin_at(parsed, idx)
             if origin == "custom" {
-                custom += 1
+                custom = custom + 1
             } else {
-                builtin += 1
+                builtin = builtin + 1
             }
             if kind == "process" {
-                process_tools += 1
+                process_tools = process_tools + 1
             }
             if kind == "workflow" {
-                workflow_tools += 1
+                workflow_tools = workflow_tools + 1
             }
             if kind == "browser" {
-                browser_tools += 1
+                browser_tools = browser_tools + 1
             }
             if kind == "docs" {
-                docs_tools += 1
+                docs_tools = docs_tools + 1
             }
             if tool_health_at(parsed, idx) == "ready" {
-                healthy_tools += 1
+                healthy_tools = healthy_tools + 1
             }
             let raw = tool_raw_at(parsed, idx)
             if raw != "" {
@@ -334,7 +334,7 @@ fn export_index_and_summary() -> i32 {
             }
             discard add_tool_to_arrays(parsed, idx, ids, search, browser, authoring, workflows)
         }
-        idx += 1
+        idx = idx + 1
     }
 
     let mode_counts = model.types.registry_kind_counts_json(
