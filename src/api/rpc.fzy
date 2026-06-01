@@ -78,7 +78,7 @@ fn health_response_schema_name() -> str {
 }
 
 fn schema_ref(schema_name: str) -> str {
-    return util.json_obj1("$ref", json.str(str.concat("#/components/schemas/", schema_name)))
+    return apputil.json_obj1("$ref", json.str(str.concat("#/components/schemas/", schema_name)))
 }
 
 fn request_body_json(description: str, schema_name: str, required: str) -> str {
@@ -109,7 +109,7 @@ fn response_object_json(description: str, schema_name: str) -> str {
 }
 
 fn schema_type_json(type_name: str) -> str {
-    return util.json_obj1("type", json.str(type_name))
+    return apputil.json_obj1("type", json.str(type_name))
 }
 
 fn schema_string_json() -> str {
@@ -121,7 +121,7 @@ fn schema_object_json() -> str {
 }
 
 fn schema_array_items_json(items_json: str) -> str {
-    return util.json_obj2("type", json.str("array"), "items", json.raw(items_json))
+    return apputil.json_obj2("type", json.str("array"), "items", json.raw(items_json))
 }
 
 fn required_list0() -> ListHandle {
@@ -294,7 +294,7 @@ fn health_response_schema_json() -> str {
 }
 
 fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
-    return util.json_obj3(
+    return apputil.json_obj3(
         "step_id", json.str(step_id),
         "tool_id", json.str(tool_id),
         "input", json.raw(input_json),
@@ -302,18 +302,18 @@ fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
 }
 
 fn single_example_json() -> str {
-    return util.json_obj4(
+    return apputil.json_obj3(
         "request_id", json.str("req_example"),
         "tool_id", json.str("bash"),
-        "input", json.raw(util.json_obj1("command", json.str("printf hi"))),
+        "input", json.raw(apputil.json_obj1("command", json.str("printf hi"))),
     )
 }
 
 fn batch_example_json() -> str {
     let batch_steps = list.new()
-    discard list.push(batch_steps, json.raw(batch_step_example_json("a", "bash", util.json_obj1("command", json.str("printf a")))))
-    discard list.push(batch_steps, json.raw(batch_step_example_json("b", "grep_search", util.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
-    return util.json_obj3(
+    discard list.push(batch_steps, json.raw(batch_step_example_json("a", "bash", apputil.json_obj1("command", json.str("printf a")))))
+    discard list.push(batch_steps, json.raw(batch_step_example_json("b", "grep_search", apputil.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
+    return apputil.json_obj3(
         "request_id", json.str("req_batch"),
         "execution", json.str("parallel"),
         "steps", json.raw(json.array(batch_steps)),
@@ -321,7 +321,7 @@ fn batch_example_json() -> str {
 }
 
 fn method_doc_json(name: str, path: str, verb: str, purpose: str) -> str {
-    return util.json_obj4(
+    return apputil.json_obj4(
         "name", json.str(name),
         "path", json.str(path),
         "verb", json.str(verb),
@@ -330,7 +330,7 @@ fn method_doc_json(name: str, path: str, verb: str, purpose: str) -> str {
 }
 
 fn runtime_schema_names_json() -> str {
-    return util.json_obj4(
+    return apputil.json_obj4(
         "session_request", json.str(session_request_schema_name()),
         "session_response", json.str(session_response_schema_name()),
         "message_request", json.str(message_request_schema_name()),
@@ -339,7 +339,7 @@ fn runtime_schema_names_json() -> str {
 }
 
 fn service_schema_names_json() -> str {
-    return util.json_obj3(
+    return apputil.json_obj3(
         "tools_response", json.str(tools_response_schema_name()),
         "run_response", json.str(run_response_schema_name()),
         "health_response", json.str(health_response_schema_name()),
@@ -382,7 +382,7 @@ fn rpc_touch() -> i32 {
     discard list.push(methods, json.raw(method_doc_json("RunToolParallel", "/tools/tool_parallel/run", "POST", "native rpc batched parallel execution surface")))
     discard list.push(methods, json.raw(method_doc_json("GetRun", "/runs/{run_id}", "GET", "native rpc run lookup surface")))
     discard list.push(methods, json.raw(method_doc_json("GetHealth", "/healthz", "GET", "native rpc health surface")))
-    let payload = util.json_obj5(
+    let payload = apputil.json_obj5(
         "status", json.str("ok"),
         "transport", json.str("http+native-rpc"),
         "project", json.str("fzyagent"),
@@ -403,10 +403,10 @@ fn rpc_touch() -> i32 {
 }
 
 fn rpc_error_json(request_id: str, code: str, message: str) -> str {
-    return util.json_obj3(
+    return apputil.json_obj3(
         "request_id", json.str(request_id),
         "status", json.str("error"),
-        "error", json.raw(util.json_obj2("code", json.str(code), "message", json.str(message))),
+        "error", json.raw(apputil.json_obj2("code", json.str(code), "message", json.str(message))),
     )
 }
 
@@ -435,7 +435,7 @@ fn request_kind_code(kind: ToolRequestKind) -> i32 {
 }
 
 fn single_request_json(request_id: str, tool_id: str, input_json: str) -> str {
-    return util.json_obj4(
+    return apputil.json_obj3(
         "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }),
         "tool_id", json.str(tool_id),
         "input", json.raw(if input_json == "" { "{}" } else { input_json }),

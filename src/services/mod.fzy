@@ -2,6 +2,7 @@ mod store;
 mod http;
 mod web;
 mod anthropic;
+mod openai_compat;
 mod provider;
 mod registry;
 mod tools;
@@ -12,6 +13,7 @@ mod openapi;
 mod persistence;
 mod chaos;
 mod safety;
+mod longrange;
 
 use core.log;
 use registry.list_tools as list_tools_alias;
@@ -19,10 +21,11 @@ use registry.list_tools as list_tools_alias;
 pub use telemetry.boot_metrics;
 
 fn boot_all() -> i32 {
-    log.info("services.boot_all begin", util.log_fields2("component", "services", "phase", "boot_begin"))
+    log.info("services.boot_all begin", apputil.log_fields2("component", "services", "phase", "boot_begin"))
     discard store.init()
     discard web.boot()
     discard sessions.boot()
+    discard longrange.boot()
     discard registry.load_builtin()
     discard registry.refresh_runtime()
     discard registry.heartbeat()
@@ -37,7 +40,7 @@ fn boot_all() -> i32 {
     discard openapi.validate_schema()
     discard persistence.load_session()
 
-    log.info("services.boot_all complete", util.log_fields2("component", "services", "phase", "boot_complete"))
+    log.info("services.boot_all complete", apputil.log_fields2("component", "services", "phase", "boot_complete"))
     discard list_tools_alias()
     return 0
 }
@@ -45,6 +48,7 @@ fn boot_all() -> i32 {
 fn boot_chat() -> i32 {
     discard store.init()
     discard sessions.boot()
+    discard longrange.boot()
     discard registry.load_builtin()
     discard registry.refresh_runtime()
     discard tools.boot_runner()

@@ -2,7 +2,7 @@ use core.thread;
 use core.log;
 
 fn run() -> i32 {
-    log.info("runtime.worker started", util.log_fields2("component", "runtime.worker", "phase", "loop_start"))
+    log.info("runtime.worker started", apputil.log_fields2("component", "runtime.worker", "phase", "loop_start"))
     loop {
         checkpoint()
         runtime.events.emit_health_tick()

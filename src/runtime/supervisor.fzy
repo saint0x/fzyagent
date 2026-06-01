@@ -21,6 +21,7 @@ fn supervisor_state_json(phase: str, shutdown: str) -> str {
         runtime.limits.limits_json(),
         fs.read_file(runtime.sandbox.sandbox_path()),
         services.tools.queue_summary_json(),
+        services.longrange.summary_json(),
     )
 }
 
@@ -32,7 +33,7 @@ fn refresh_state() -> i32 {
 }
 
 fn configure_limits() -> i32 {
-    log.info("runtime.supervisor configure_limits", util.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
+    log.info("runtime.supervisor configure_limits", apputil.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
     fs.mkdir("/tmp/fzyagent")
     if fs.exists(shutdown_signal_path()) == 1 {
         discard fs.remove_file(shutdown_signal_path())
@@ -62,7 +63,7 @@ fn shutdown_requested() -> i32 {
 }
 
 fn run_forever() -> i32 {
-    log.info("runtime.supervisor started", util.log_fields2("component", "runtime.supervisor", "phase", "loop_start"))
+    log.info("runtime.supervisor started", apputil.log_fields2("component", "runtime.supervisor", "phase", "loop_start"))
     loop {
         runtime.events.emit_health_tick()
         discard refresh_state()

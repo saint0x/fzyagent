@@ -2,7 +2,7 @@ fn log_fields2(k1: str, v1: str, k2: str, v2: str) -> str {
     let fields = map.new()
     discard map.set(fields, k1, v1)
     discard map.set(fields, k2, v2)
-    return log.fields(fields)
+    return json.object(fields)
 }
 
 fn log_fields3(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str) -> str {
@@ -10,7 +10,7 @@ fn log_fields3(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str) -> str {
     discard map.set(fields, k1, v1)
     discard map.set(fields, k2, v2)
     discard map.set(fields, k3, v3)
-    return log.fields(fields)
+    return json.object(fields)
 }
 
 fn json_obj1(k1: str, v1: str) -> str {

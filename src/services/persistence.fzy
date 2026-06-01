@@ -101,8 +101,8 @@ fn excerpt(text: str, max_chars: i32) -> str {
 fn session_doc_for(session_id: str, state: str, turn_count: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str) -> str {
     let meta = model.types.session_meta_json(
         now_label(),
-        "anthropic",
-        services.anthropic.default_model_name(),
+        services.provider.current_provider_name(),
+        services.provider.default_model_name(),
         session_messages_path(session_id),
         session_runs_path(session_id),
     )

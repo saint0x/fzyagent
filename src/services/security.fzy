@@ -51,7 +51,7 @@ fn request_limit() -> i32 {
 fn request_counter() -> i32 {
     fs.mkdir("/tmp/fzyagent")
     let current_raw = fs.read_file(request_counter_path())
-    let next_value = util.parse_i32(current_raw) + 1
+    let next_value = apputil.parse_i32(current_raw) + 1
     fs.write_file(request_counter_path(), str.from_i32(next_value))
     return next_value
 }

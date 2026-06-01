@@ -77,6 +77,17 @@ test "det_parallel_tools" {
     runtime.agent.dispatch_parallel_tools();
 }
 
+test "det_longrange_control" {
+    services.longrange.boot();
+    let run_id = services.longrange.create_run("det-longrange", "Ship long-range mode", "det-longrange-start");
+    services.longrange.enqueue_message(run_id, "steer", "keep going", "det-longrange-steer", 0);
+    services.longrange.apply_plan_create(run_id, "Ship long-range mode", "All required runtime, tools, and tests land", "high", "multi-turn", "step-1", "Build the runtime and verify it", "[{\"step_id\":\"step-1\",\"title\":\"Plan\",\"description\":\"Create the plan\",\"status\":\"in_progress\",\"done_criteria\":\"plan recorded\"}]", "det-plan-create");
+    services.longrange.apply_plan_update(run_id, "", "", "", "", "step-2", "Advance to implementation", "[{\"step_id\":\"step-2\",\"title\":\"Implement\",\"description\":\"Build the feature\",\"status\":\"in_progress\",\"done_criteria\":\"feature works\"}]", "det-plan-update");
+    services.longrange.prompt_context("det-longrange");
+    services.longrange.summary_json();
+    services.longrange.cancel_run(run_id, "deterministic cleanup", "det-longrange-cancel");
+}
+
 test "det_http_routes" {
     services.web.boot();
     services.web.configure_listener();
@@ -100,7 +111,7 @@ test "det_http_routes" {
 }
 
 test "det_provider_and_streaming" {
-    services.provider.anthropic_transport();
+    services.provider.provider_transport();
     services.provider.normalize_request();
     services.provider.translate_tool_calls();
     services.provider.stream_completion();

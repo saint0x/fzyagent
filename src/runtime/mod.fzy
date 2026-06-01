@@ -9,11 +9,12 @@ mod recovery;
 mod server;
 mod sandbox;
 mod config;
+mod longrange;
 
 use core.log;
 
 fn log_runtime(phase: str) -> i32 {
-    log.info("runtime.lifecycle", util.log_fields2("component", "runtime", "phase", phase))
+    log.info("runtime.lifecycle", apputil.log_fields2("component", "runtime", "phase", phase))
     return 0
 }
 
@@ -37,6 +38,15 @@ fn spawn_agent_loop(log_enabled: i32) -> i32 {
     return 0
 }
 
+fn spawn_longrange_loop(log_enabled: i32) -> i32 {
+    let longrange_handle = spawn_ctx(longrange.run_loop, 103)
+    if log_enabled == 1 {
+        discard log_runtime("longrange_loop")
+    }
+    detach(longrange_handle)
+    return 0
+}
+
 fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
     if log_enabled == 1 {
         discard log_runtime("start_begin")
@@ -52,6 +62,9 @@ fn start_common(log_enabled: i32, background_enabled: i32) -> i32 {
     }
     if background_enabled == 1 && config.enable_agent_loop() == 1 {
         discard spawn_agent_loop(log_enabled)
+    }
+    if background_enabled == 1 {
+        discard spawn_longrange_loop(log_enabled)
     }
     discard supervisor.refresh_state()
     if log_enabled == 1 {

@@ -16,7 +16,7 @@ enum RouteKind {
 }
 
 fn boot() -> i32 {
-    log.info("web.boot", util.log_fields2("component", "web", "phase", "boot"))
+    log.info("web.boot", apputil.log_fields2("component", "web", "phase", "boot"))
     configure_listener()
     return 0
 }
@@ -32,7 +32,7 @@ fn start_listener() -> i32 {
     configure_listener()
     let listener: HttpHandle = http.bind()
     http.listen(listener)
-    log.info("web listener started", util.log_fields2("component", "web", "phase", "listener_started"))
+    log.info("web listener started", apputil.log_fields2("component", "web", "phase", "listener_started"))
     close(listener)
     return 0
 }
@@ -40,7 +40,7 @@ fn start_listener() -> i32 {
 fn serve_forever() -> i32 {
     configure_listener()
     discard start_listener()
-    log.info("web serve_forever entered", util.log_fields2("component", "web", "phase", "serve_forever"))
+    log.info("web serve_forever entered", apputil.log_fields2("component", "web", "phase", "serve_forever"))
     loop {
         if runtime.supervisor.shutdown_requested() == 1 {
             break
@@ -55,7 +55,7 @@ fn serve_forever() -> i32 {
 fn accept_and_process() -> i32 {
     let conn_owned: HttpHandle = http.accept()
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("web accepted connection", util.log_fields2("component", "web", "phase", "accept"))
+        log.info("web accepted connection", apputil.log_fields2("component", "web", "phase", "accept"))
     }
     discard read_request(conn_owned)
 
@@ -86,8 +86,8 @@ fn accept_and_process() -> i32 {
     checkpoint()
     let method = http.method(conn_owned)
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("web dispatch route", util.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
-        log.info("web dispatch method", util.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
+        log.info("web dispatch route", apputil.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
+        log.info("web dispatch method", apputil.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
     }
     let route = route_kind(method, path)
     match route {
@@ -102,7 +102,6 @@ fn accept_and_process() -> i32 {
         RouteKind::RouteRunGet => return services.http.handle_runs(conn_owned, path),
         _ => return dispatch_not_found(conn_owned),
     }
-    discard http.close(conn_owned)
     return 0
 }
 
@@ -150,8 +149,8 @@ fn dispatch(conn: HttpHandle) -> i32 {
     let method = http.method(conn)
     let path = http.path(conn)
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("web dispatch route", util.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
-        log.info("web dispatch method", util.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
+        log.info("web dispatch route", apputil.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
+        log.info("web dispatch method", apputil.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
     }
     let route = route_kind(method, path)
     match route {
@@ -170,7 +169,7 @@ fn dispatch(conn: HttpHandle) -> i32 {
 }
 
 fn dispatch_not_found(conn: HttpHandle) -> i32 {
-    log.warn("web route not found", util.log_fields2("component", "web", "phase", "not_found"))
+    log.warn("web route not found", apputil.log_fields2("component", "web", "phase", "not_found"))
     return write_not_found(conn)
 }
 

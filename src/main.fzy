@@ -1,5 +1,5 @@
-use core.log;
 use core.process;
+use core.log;
 
 mod api;
 mod model;
@@ -7,7 +7,7 @@ mod services;
 mod runtime;
 mod cli;
 mod tests;
-mod util;
+mod apputil;
 
 fn boot_chat_mode() -> i32 {
     discard model.preflight()
@@ -19,18 +19,18 @@ fn boot_chat_mode() -> i32 {
 }
 
 fn boot_server_mode() -> i32 {
-    log.info("fzyagent main starting", util.log_fields2("component", "main", "phase", "boot"))
+    log.info("fzyagent main starting", apputil.log_fields2("component", "main", "phase", "boot"))
     discard model.preflight()
-    log.info("fzyagent model preflight complete", util.log_fields2("component", "main", "phase", "model_preflight"))
+    log.info("fzyagent model preflight complete", apputil.log_fields2("component", "main", "phase", "model_preflight"))
     discard cli.boot()
-    log.info("fzyagent cli boot complete", util.log_fields2("component", "main", "phase", "cli_boot"))
+    log.info("fzyagent cli boot complete", apputil.log_fields2("component", "main", "phase", "cli_boot"))
     discard services.boot_all()
-    log.info("fzyagent services boot complete", util.log_fields2("component", "main", "phase", "services_boot"))
+    log.info("fzyagent services boot complete", apputil.log_fields2("component", "main", "phase", "services_boot"))
     discard runtime.start()
-    log.info("fzyagent runtime start complete", util.log_fields2("component", "main", "phase", "runtime_start"))
+    log.info("fzyagent runtime start complete", apputil.log_fields2("component", "main", "phase", "runtime_start"))
     discard api.touch()
-    log.info("fzyagent api touch complete", util.log_fields2("component", "main", "phase", "api_touch"))
-    log.info("fzyagent entering serve_forever", util.log_fields2("component", "main", "phase", "serve_forever"))
+    log.info("fzyagent api touch complete", apputil.log_fields2("component", "main", "phase", "api_touch"))
+    log.info("fzyagent entering serve_forever", apputil.log_fields2("component", "main", "phase", "serve_forever"))
     return services.web.serve_forever()
 }
 

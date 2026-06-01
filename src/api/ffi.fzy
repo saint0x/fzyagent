@@ -6,13 +6,13 @@ fn ffi_manifest_path() -> str {
 
 fn ffi_touch() -> i32 {
     fs.mkdir("/tmp/fzyagent")
-    let exports = util.json_arr4(
+    let exports = apputil.json_arr4(
         json.raw(model.types.ffi_export_json("fzyagent_main", "entrypoint", "native")),
         json.raw(model.types.ffi_export_json("fzyagent_chat", "cli", "interactive")),
         json.raw(model.types.ffi_export_json("fzyagent_http", "service", "host_http")),
         json.raw(model.types.ffi_export_json("fzyagent_tools", "runtime", "tooling")),
     )
-    let rpc_schemas = util.json_obj4(
+    let rpc_schemas = apputil.json_obj4(
         "request", json.str(api.rpc.request_schema_name()),
         "single_request", json.str(api.rpc.single_request_schema_name()),
         "batch_request", json.str(api.rpc.batch_request_schema_name()),
@@ -27,7 +27,7 @@ fn ffi_touch() -> i32 {
     discard map.set(runtime_schema_map, "run_response", json.str(api.rpc.run_response_schema_name()))
     discard map.set(runtime_schema_map, "health_response", json.str(api.rpc.health_response_schema_name()))
     let runtime_schemas = json.object(runtime_schema_map)
-    let manifests = util.json_obj3("ffi", json.str(ffi_manifest_path()), "rpc", json.str("/tmp/fzyagent/api.rpc.json"), "openapi", json.str("/tmp/fzyagent/openapi.json"))
+    let manifests = apputil.json_obj3("ffi", json.str(ffi_manifest_path()), "rpc", json.str("/tmp/fzyagent/api.rpc.json"), "openapi", json.str("/tmp/fzyagent/openapi.json"))
     let payload = model.types.ffi_manifest_json("c-compatible-descriptor", "fzyagent", exports, api.rpc.tool_protocol_version(), rpc_schemas, runtime_schemas, manifests)
     fs.write_file(ffi_manifest_path(), payload)
     return 0

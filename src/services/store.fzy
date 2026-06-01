@@ -4,6 +4,5 @@ fn init() -> i32 {
     fs.mkdir("/tmp/fzyagent")
     fs.mkdir("/tmp/fzyagent/runs")
     fs.mkdir("/tmp/fzyagent/tools")
-    fs.flush()
     return 0
 }

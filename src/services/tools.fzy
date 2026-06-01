@@ -33,6 +33,14 @@ enum DispatchKind {
     DispatchRuntimeCheckpoint,
     DispatchRuntimeRecover,
     DispatchRuntimeShutdown,
+    DispatchLongrangeStart,
+    DispatchLongrangeStatus,
+    DispatchLongrangeCancel,
+    DispatchLongrangeSteer,
+    DispatchPlanCreate,
+    DispatchPlanUpdate,
+    DispatchPlanView,
+    DispatchGoalComplete,
     DispatchToolSequence,
     DispatchToolParallel,
     DispatchAll,
@@ -109,6 +117,38 @@ fn runtime_recover_run_path() -> str {
 
 fn runtime_shutdown_run_path() -> str {
     return "/tmp/fzyagent/runs/runtime_shutdown.json"
+}
+
+fn longrange_start_run_path() -> str {
+    return "/tmp/fzyagent/runs/longrange_start.json"
+}
+
+fn longrange_status_run_path() -> str {
+    return "/tmp/fzyagent/runs/longrange_status.json"
+}
+
+fn longrange_cancel_run_path() -> str {
+    return "/tmp/fzyagent/runs/longrange_cancel.json"
+}
+
+fn longrange_steer_run_path() -> str {
+    return "/tmp/fzyagent/runs/longrange_steer.json"
+}
+
+fn plan_create_run_path() -> str {
+    return "/tmp/fzyagent/runs/plan_create.json"
+}
+
+fn plan_update_run_path() -> str {
+    return "/tmp/fzyagent/runs/plan_update.json"
+}
+
+fn plan_view_run_path() -> str {
+    return "/tmp/fzyagent/runs/plan_view.json"
+}
+
+fn goal_complete_run_path() -> str {
+    return "/tmp/fzyagent/runs/goal_complete.json"
 }
 
 fn queue_request_dir() -> str {
@@ -279,6 +319,7 @@ fn aegis_base_url() -> str {
 fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.stdout(handle)
 }
@@ -286,6 +327,7 @@ fn shell_stdout_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> i32 {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     return proc.exit_code(handle)
 }
@@ -293,6 +335,7 @@ fn shell_status_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> 
 fn shell_payload_with_env(command: str, env_map: ProcessEnv, timeout_ms: i32) -> str {
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -420,6 +463,30 @@ fn dispatch_kind(tool_id: str) -> DispatchKind {
     if tool_id == "runtime_shutdown" {
         return DispatchKind::DispatchRuntimeShutdown
     }
+    if tool_id == "longrange_start" {
+        return DispatchKind::DispatchLongrangeStart
+    }
+    if tool_id == "longrange_status" {
+        return DispatchKind::DispatchLongrangeStatus
+    }
+    if tool_id == "longrange_cancel" {
+        return DispatchKind::DispatchLongrangeCancel
+    }
+    if tool_id == "longrange_steer" {
+        return DispatchKind::DispatchLongrangeSteer
+    }
+    if tool_id == "plan_create" {
+        return DispatchKind::DispatchPlanCreate
+    }
+    if tool_id == "plan_update" {
+        return DispatchKind::DispatchPlanUpdate
+    }
+    if tool_id == "plan_view" {
+        return DispatchKind::DispatchPlanView
+    }
+    if tool_id == "goal_complete" {
+        return DispatchKind::DispatchGoalComplete
+    }
     if tool_id == "tool_sequence" {
         return DispatchKind::DispatchToolSequence
     }
@@ -477,7 +544,7 @@ fn prompt_preview(text_value: str) -> str {
 }
 
 fn prompt_meta_json(text_value: str) -> str {
-    return util.json_obj5(
+    return apputil.json_obj5(
         "active_path", json.str(prompt_active_path()),
         "default_path", json.str(prompt_default_path()),
         "chars", json.str(str.from_i32(str.len(text_value))),
@@ -498,11 +565,15 @@ fn ensure_prompt_files() -> i32 {
 }
 
 fn template_lint_warnings(command_template: str) -> str {
-    let env_map = default_proc_env()
-    discard proc.env_set(env_map, "FZY_TEMPLATE", command_template)
-    let has_token = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q 'TOOL_ARG_'", env_map, 5000)
-    let has_dollar = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\$TOOL_ARG_'", env_map, 5000)
-    let has_brace = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\${TOOL_ARG_'", env_map, 5000)
+    let env_token = default_proc_env()
+    discard proc.env_set(env_token, "FZY_TEMPLATE", command_template)
+    let has_token = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q 'TOOL_ARG_'", env_token, 5000)
+    let env_dollar = default_proc_env()
+    discard proc.env_set(env_dollar, "FZY_TEMPLATE", command_template)
+    let has_dollar = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\$TOOL_ARG_'", env_dollar, 5000)
+    let env_brace = default_proc_env()
+    discard proc.env_set(env_brace, "FZY_TEMPLATE", command_template)
+    let has_brace = shell_status_with_env("printf '%s' \"$FZY_TEMPLATE\" | grep -q '\\${TOOL_ARG_'", env_brace, 5000)
     let warnings = list.new()
     if has_token == 0 && has_dollar != 0 && has_brace != 0 {
         discard list.push(warnings, json.str("command_template references TOOL_ARG_* tokens without shell variable expansion; use $TOOL_ARG_FIELD or ${TOOL_ARG_FIELD}"))
@@ -556,6 +627,30 @@ fn last_run_path_for(tool_id: str) -> str {
     }
     if normalized == "runtime_shutdown" {
         return runtime_shutdown_run_path()
+    }
+    if normalized == "longrange_start" {
+        return longrange_start_run_path()
+    }
+    if normalized == "longrange_status" {
+        return longrange_status_run_path()
+    }
+    if normalized == "longrange_cancel" {
+        return longrange_cancel_run_path()
+    }
+    if normalized == "longrange_steer" {
+        return longrange_steer_run_path()
+    }
+    if normalized == "plan_create" {
+        return plan_create_run_path()
+    }
+    if normalized == "plan_update" {
+        return plan_update_run_path()
+    }
+    if normalized == "plan_view" {
+        return plan_view_run_path()
+    }
+    if normalized == "goal_complete" {
+        return goal_complete_run_path()
     }
     if normalized == "timeout_probe" {
         return "/tmp/fzyagent/runs/timeout_probe.json"
@@ -633,6 +728,30 @@ fn run_id_for_tool(tool_id: str) -> str {
     }
     if normalized == "runtime_shutdown" {
         return "runtime_shutdown_latest"
+    }
+    if normalized == "longrange_start" {
+        return "longrange_start_latest"
+    }
+    if normalized == "longrange_status" {
+        return "longrange_status_latest"
+    }
+    if normalized == "longrange_cancel" {
+        return "longrange_cancel_latest"
+    }
+    if normalized == "longrange_steer" {
+        return "longrange_steer_latest"
+    }
+    if normalized == "plan_create" {
+        return "plan_create_latest"
+    }
+    if normalized == "plan_update" {
+        return "plan_update_latest"
+    }
+    if normalized == "plan_view" {
+        return "plan_view_latest"
+    }
+    if normalized == "goal_complete" {
+        return "goal_complete_latest"
     }
     if normalized == "timeout_probe" {
         return "timeout_probe_latest"
@@ -754,13 +873,14 @@ fn run_shell_to_file(tool_id: str, command: str, timeout_ms: i32, out_path: str)
     let env_map = default_proc_env()
     let argv = shell_argv(command)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
     checkpoint()
     let stdout = proc.stdout(handle)
     let stderr = proc.stderr(handle)
-    let meta = util.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("bounded"))
+    let meta = apputil.json_obj2("timeout_ms", json.str("managed"), "budget", json.str("bounded"))
     let payload = model.types.tool_command_payload_json(tool_id, status, command, stdout, stderr, meta)
     fs.write_file(out_path, payload)
     fs.write_file(last_run_path_for(tool_id), payload)
@@ -771,6 +891,7 @@ fn run_grep_to_file(tool_id: str, pattern: str, target: str, timeout_ms: i32, ou
     let env_map = default_proc_env()
     let argv = grep_argv(pattern, target)
     let handle = proc.spawn_cmd("grep", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, timeout_ms)
     let exit_code = proc.exit_code(handle)
     let status = status_from_exit_code(exit_code)
@@ -835,7 +956,7 @@ fn run_aegis() -> i32 {
 fn run_aegis_with_args_to(action: str, url: str, query: str, eval_js: str, commands_json: str, out_path: str) -> i32 {
     ensure_dirs()
     if ensure_aegis_server() != 0 {
-        let failure = util.json_obj4(
+        let failure = apputil.json_obj4(
             "tool", json.str("aegis"),
             "status", json.str("failed"),
             "server", json.str(aegis_addr()),
@@ -860,25 +981,25 @@ fn run_aegis_with_args_to(action: str, url: str, query: str, eval_js: str, comma
     } else if effective_action == "events" {
         command = str.concat("curl -sS ", str.concat(base, "/events?since=0"))
     } else if effective_action == "navigate" {
-        let body = util.json_obj1("url", json.str(url))
+        let body = apputil.json_obj1("url", json.str(url))
         discard proc.env_set(env_map, "AEGIS_BODY", body)
         command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/navigate"))
     } else if effective_action == "execute" {
-        let body = util.json_obj1("commands", json.raw(if commands_json == "" { "[]" } else { commands_json }))
+        let body = apputil.json_obj1("commands", json.raw(if commands_json == "" { "[]" } else { commands_json }))
         discard proc.env_set(env_map, "AEGIS_BODY", body)
         command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
     } else if effective_action == "eval" {
         let commands = list.new()
-        discard list.push(commands, json.raw(util.json_obj2("type", json.str("eval"), "code", json.str(eval_js))))
-        let body = util.json_obj1("commands", json.raw(json.array(commands)))
+        discard list.push(commands, json.raw(apputil.json_obj2("type", json.str("eval"), "code", json.str(eval_js))))
+        let body = apputil.json_obj1("commands", json.raw(json.array(commands)))
         discard proc.env_set(env_map, "AEGIS_BODY", body)
         command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
     } else if effective_action == "search_eval" {
         let encoded = str.replace(query, " ", "+")
         let target_url = str.concat("https://duckduckgo.com/?q=", encoded)
         let commands = list.new()
-        discard list.push(commands, json.raw(util.json_obj2("type", json.str("eval"), "code", json.str(str.concat("window.location.href = ", str.concat(json.str(target_url), ";"))))))
-        let body = util.json_obj1("commands", json.raw(json.array(commands)))
+        discard list.push(commands, json.raw(apputil.json_obj2("type", json.str("eval"), "code", json.str(str.concat("window.location.href = ", str.concat(json.str(target_url), ";"))))))
+        let body = apputil.json_obj1("commands", json.raw(json.array(commands)))
         discard proc.env_set(env_map, "AEGIS_BODY", body)
         command = str.concat("curl -sS -H 'content-type: application/json' -X POST --data \"$AEGIS_BODY\" ", str.concat(base, "/execute"))
     }
@@ -886,7 +1007,7 @@ fn run_aegis_with_args_to(action: str, url: str, query: str, eval_js: str, comma
     let parsed = json.parse(payload)
     let status = json.get_str(parsed, "status")
     let stdout = json.get_str(json.get(json.get(parsed, "streams"), "stdout"), "raw")
-    let wrapped = util.json_obj5(
+    let wrapped = apputil.json_obj5(
         "tool", json.str("aegis"),
         "status", json.str(status),
         "action", json.str(effective_action),
@@ -908,9 +1029,8 @@ fn run_bash_with_command(command: str) -> i32 {
 
 fn ensure_aegis_server() -> i32 {
     fs.mkdir(aegis_state_dir())
-    let env_map = default_proc_env()
     let ready_cmd = str.concat("curl -s -o /dev/null -w '%{http_code}' ", str.concat(aegis_base_url(), "/readyz"))
-    let initial = str.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+    let initial = str.trim(shell_stdout_with_env(ready_cmd, default_proc_env(), 5000))
     if initial == "200" || initial == "503" {
         return 0
     }
@@ -918,13 +1038,13 @@ fn ensure_aegis_server() -> i32 {
         str.concat("./aegis.sh --mode headless serve --addr ", aegis_addr()),
         str.concat(" >", str.concat(aegis_log_path(), " 2>&1 & echo $!")),
     )
-    let pid = str.trim(shell_stdout_with_env(launch_cmd, env_map, 15000))
+    let pid = str.trim(shell_stdout_with_env(launch_cmd, default_proc_env(), 15000))
     if pid != "" {
         fs.write_file(aegis_pid_path(), pid)
     }
     let mut attempt: i32 = 0
     while attempt < 80 {
-        let code = str.trim(shell_stdout_with_env(ready_cmd, env_map, 5000))
+        let code = str.trim(shell_stdout_with_env(ready_cmd, default_proc_env(), 5000))
         if code == "200" {
             return 0
         }
@@ -947,7 +1067,7 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
     let effective_action = if action == "" { "protocol" } else { action }
     let request_path = toolsmith_request_path_for(effective_action, tool_id)
     let response_path = toolsmith_response_path_for(effective_action, tool_id)
-    let meta = util.json_obj5(
+    let meta = apputil.json_obj5(
         "tool_id", json.str(tool_id),
         "description", json.str(description),
         "kind", json.str(kind),
@@ -955,16 +1075,16 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
         "command_template", json.str(command_template),
     )
     let schema = if input_schema_json == "" { default_input_schema() } else { input_schema_json }
-    let request = util.json_obj3("action", json.str(effective_action), "meta", json.raw(meta), "input_schema", json.raw(schema))
+    let request = apputil.json_obj3("action", json.str(effective_action), "meta", json.raw(meta), "input_schema", json.raw(schema))
     fs.write_file(request_path, request)
     let mut payload = "{}"
     if effective_action == "protocol" {
-        payload = util.json_obj5(
+        payload = apputil.json_obj5(
             "tool", json.str("toolsmith"),
             "status", json.str("ok"),
             "action", json.str("protocol"),
-            "actions", json.raw(util.json_arr4(json.str("protocol"), json.str("create"), json.str("list"), json.str("inspect"))),
-            "requirements", json.raw(util.json_obj3("tool_id", json.str("lowercase snake_case, starts with a letter"), "command_template", json.str("shell command that uses TOOL_ARG_<FIELD> env vars"), "input_schema", json.str("JSON schema object with properties and optional required list"))),
+            "actions", json.raw(apputil.json_arr4(json.str("protocol"), json.str("create"), json.str("list"), json.str("inspect"))),
+            "requirements", json.raw(apputil.json_obj3("tool_id", json.str("lowercase snake_case, starts with a letter"), "command_template", json.str("shell command that uses TOOL_ARG_<FIELD> env vars"), "input_schema", json.str("JSON schema object with properties and optional required list"))),
         )
     } else if effective_action == "list" {
         let entries = list.new()
@@ -977,7 +1097,7 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
                 let raw = fs.read_file(manifest_path)
                 if raw != "" {
                     let manifest = json.parse(raw)
-                    let item = util.json_obj5(
+                    let item = apputil.json_obj5(
                         "id", json.str(json.get_str(manifest, "id")),
                         "description", json.str(json.get_str(manifest, "description")),
                         "kind", json.str(json.get_str(manifest, "kind")),
@@ -989,13 +1109,13 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
             }
             idx = idx + 1
         }
-        payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("ok"), "action", json.str("list"), "tools", json.raw(json.array(items)))
+        payload = apputil.json_obj4("tool", json.str("toolsmith"), "status", json.str("ok"), "action", json.str("list"), "tools", json.raw(json.array(items)))
     } else if effective_action == "inspect" {
         let manifest_path = custom_tool_manifest_path(tool_id)
         if tool_id == "" || valid_tool_id(tool_id) == 0 || fs.exists(manifest_path) == 0 {
-            payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("inspect"), "message", json.str("custom tool not found"))
+            payload = apputil.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("inspect"), "message", json.str("custom tool not found"))
         } else {
-            payload = util.json_obj5(
+            payload = apputil.json_obj5(
                 "tool", json.str("toolsmith"),
                 "status", json.str("ok"),
                 "action", json.str("inspect"),
@@ -1005,7 +1125,7 @@ fn run_toolsmith_to(action: str, tool_id: str, description: str, command_templat
         }
     } else {
         if valid_tool_id(tool_id) == 0 || description == "" || command_template == "" {
-            payload = util.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("create"), "message", json.str("tool_id, description, and command_template are required"))
+            payload = apputil.json_obj4("tool", json.str("toolsmith"), "status", json.str("error"), "action", json.str("create"), "message", json.str("tool_id, description, and command_template are required"))
         } else {
             let tool_dir = join_path(custom_tools_root(), tool_id)
             fs.mkdir(custom_tools_root())
@@ -1056,7 +1176,7 @@ fn run_fzydoc_to(query: str, max_lines: str, out_path: str) -> i32 {
     let line_budget = if max_lines == "" { "6" } else { max_lines }
     let cmd = str.concat("grep -R -n -C 2 -- ", str.concat(json.str(effective_query), str.concat(" ", docs_root())))
     let stdout = shell_stdout_with_env(cmd, env_map, 60000)
-    let payload = util.json_obj5(
+    let payload = apputil.json_obj5(
         "tool", json.str("fzydoc"),
         "status", json.str("ok"),
         "query", json.str(effective_query),
@@ -1078,40 +1198,40 @@ fn run_promptsmith_to(action: str, content: str, out_path: str) -> i32 {
     let effective_action = if action == "" { "get" } else { action }
     let request_path = promptsmith_request_path_for(effective_action)
     let response_path = promptsmith_response_path_for(effective_action)
-    let request = util.json_obj2("action", json.str(effective_action), "content", json.str(content))
+    let request = apputil.json_obj2("action", json.str(effective_action), "content", json.str(content))
     fs.write_file(request_path, request)
     let mut payload = "{}"
     if effective_action == "protocol" {
-        payload = util.json_obj5(
+        payload = apputil.json_obj5(
             "tool", json.str("promptsmith"),
             "status", json.str("ok"),
             "action", json.str("protocol"),
-            "actions", json.raw(util.json_arr4(json.str("protocol"), json.str("get"), json.str("set"), json.str("append"))),
-            "requirements", json.raw(util.json_obj1("content", json.str("full prompt text for set, appended text for append"))),
+            "actions", json.raw(apputil.json_arr4(json.str("protocol"), json.str("get"), json.str("set"), json.str("append"))),
+            "requirements", json.raw(apputil.json_obj1("content", json.str("full prompt text for set, appended text for append"))),
         )
     } else if effective_action == "reset" {
         let default_text = fs.read_file(prompt_default_path())
         fs.write_file(prompt_active_path(), default_text)
-        payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("reset"), "content", json.str(default_text), "meta", json.raw(prompt_meta_json(default_text)))
+        payload = apputil.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("reset"), "content", json.str(default_text), "meta", json.raw(prompt_meta_json(default_text)))
     } else if effective_action == "set" {
         if str.trim(content) == "" {
-            payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("set"), "message", json.str("content is required"))
+            payload = apputil.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("set"), "message", json.str("content is required"))
         } else {
             fs.write_file(prompt_active_path(), content)
-            payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("set"), "content", json.str(content), "meta", json.raw(prompt_meta_json(content)))
+            payload = apputil.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("set"), "content", json.str(content), "meta", json.raw(prompt_meta_json(content)))
         }
     } else if effective_action == "append" {
         if str.trim(content) == "" {
-            payload = util.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("append"), "message", json.str("content is required"))
+            payload = apputil.json_obj4("tool", json.str("promptsmith"), "status", json.str("error"), "action", json.str("append"), "message", json.str("content is required"))
         } else {
             let current = fs.read_file(prompt_active_path())
             let updated = str.concat(current, str.concat("\n\n", str.concat(str.trim(content), "\n")))
             fs.write_file(prompt_active_path(), updated)
-            payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("append"), "content", json.str(updated), "meta", json.raw(prompt_meta_json(updated)))
+            payload = apputil.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("append"), "content", json.str(updated), "meta", json.raw(prompt_meta_json(updated)))
         }
     } else {
         let current = fs.read_file(prompt_active_path())
-        payload = util.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("get"), "content", json.str(current), "meta", json.raw(prompt_meta_json(current)))
+        payload = apputil.json_obj5("tool", json.str("promptsmith"), "status", json.str("ok"), "action", json.str("get"), "content", json.str(current), "meta", json.raw(prompt_meta_json(current)))
     }
     fs.write_file(response_path, payload)
     fs.write_file(out_path, payload)
@@ -1127,7 +1247,7 @@ fn run_custom_tool(tool_id: str, tool_input_json: str) -> i32 {
 fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 {
     let manifest_path = custom_tool_manifest_path(tool_id)
     if fs.exists(manifest_path) == 0 {
-        let missing = util.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool manifest not found"), "manifest_path", json.str(manifest_path))
+        let missing = apputil.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool manifest not found"), "manifest_path", json.str(manifest_path))
         fs.write_file(custom_tool_state_path(tool_id), missing)
         fs.write_file(out_path, missing)
         fs.write_file(custom_tool_last_run_path(tool_id), missing)
@@ -1136,7 +1256,7 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     let manifest = json.parse(fs.read_file(manifest_path))
     let command_template = json.get_str(manifest, "command_template")
     if command_template == "" {
-        let invalid = util.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool missing command_template"), "manifest_path", json.str(manifest_path))
+        let invalid = apputil.json_obj4("tool", json.str(tool_id), "status", json.str("failed"), "message", json.str("custom tool missing command_template"), "manifest_path", json.str(manifest_path))
         fs.write_file(custom_tool_state_path(tool_id), invalid)
         fs.write_file(out_path, invalid)
         fs.write_file(custom_tool_last_run_path(tool_id), invalid)
@@ -1144,7 +1264,7 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     }
     let env_map = default_proc_env()
     let raw_input = if tool_input_json == "" { "{}" } else { tool_input_json }
-    let request = util.json_obj2("tool_id", json.str(tool_id), "input", json.raw(raw_input))
+    let request = apputil.json_obj2("tool_id", json.str(tool_id), "input", json.raw(raw_input))
     let request_path = custom_tool_request_path(tool_id)
     fs.mkdir("/tmp/fzyagent/custom_tools")
     fs.mkdir(custom_tool_state_dir(tool_id))
@@ -1153,11 +1273,12 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
     let exported_keys = list.new()
     let argv = shell_argv(command_template)
     let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
     discard proc.wait(handle, 180000)
     let exit_code = proc.exit_code(handle)
     let status = if exit_code == 0 { "ok" } else { "failed" }
-    let streams = util.json_obj2("stdout", json.str(proc.stdout(handle)), "stderr", json.str(proc.stderr(handle)))
-    let meta = util.json_obj2("runner", json.str(json.get_str(manifest, "runner")), "exit_code", json.str(str.from_i32(exit_code)))
+    let streams = apputil.json_obj2("stdout", json.str(proc.stdout(handle)), "stderr", json.str(proc.stderr(handle)))
+    let meta = apputil.json_obj2("runner", json.str(json.get_str(manifest, "runner")), "exit_code", json.str(str.from_i32(exit_code)))
     let payload = map.new()
     discard map.set(payload, "tool", json.str(tool_id))
     discard map.set(payload, "status", json.str(status))
@@ -1178,7 +1299,7 @@ fn run_custom_tool_to(tool_id: str, tool_input_json: str, out_path: str) -> i32 
 fn assemble_pair(path_a: str, path_b: str) -> str {
     let left = safe_read(path_a)
     let right = safe_read(path_b)
-    return util.json_obj2("left", json.raw(left), "right", json.raw(right))
+    return apputil.json_obj2("left", json.raw(left), "right", json.raw(right))
 }
 
 fn boot_runner() -> i32 {
@@ -1232,19 +1353,19 @@ fn queue_summary_parsed() -> JsonHandle {
 }
 
 fn queue_pending_count() -> i32 {
-    return util.parse_i32(json.get_str(queue_summary_parsed(), "pending_count"))
+    return apputil.parse_i32(json.get_str(queue_summary_parsed(), "pending_count"))
 }
 
 fn queue_active_count() -> i32 {
-    return util.parse_i32(json.get_str(queue_summary_parsed(), "active_count"))
+    return apputil.parse_i32(json.get_str(queue_summary_parsed(), "active_count"))
 }
 
 fn queue_completed_count() -> i32 {
-    return util.parse_i32(json.get_str(queue_summary_parsed(), "completed_count"))
+    return apputil.parse_i32(json.get_str(queue_summary_parsed(), "completed_count"))
 }
 
 fn queue_cancelled_count() -> i32 {
-    return util.parse_i32(json.get_str(queue_summary_parsed(), "cancelled_count"))
+    return apputil.parse_i32(json.get_str(queue_summary_parsed(), "cancelled_count"))
 }
 
 fn queue_status_payload(status: str, phase: str) -> str {
@@ -1258,7 +1379,7 @@ fn write_queue_summary(pending_count: i32, active_count: i32, completed_count: i
 }
 
 fn queue_event(tool_id: str, run_id: str, state: str, status: str) -> str {
-    return util.json_obj5(
+    return apputil.json_obj5(
         "tool_id", json.str(tool_id),
         "run_id", json.str(run_id),
         "state", json.str(state),
@@ -1523,6 +1644,137 @@ fn run_runtime_shutdown() -> i32 {
     return status_code
 }
 
+fn resolve_longrange_run_id(session_id: str, requested_run_id: str) -> str {
+    if requested_run_id != "" {
+        return requested_run_id
+    }
+    if session_id == "" {
+        return ""
+    }
+    return services.longrange.active_run_id_for_session(session_id)
+}
+
+fn longrange_tool_payload(tool: str, run_id: str, message: str) -> str {
+    return model.types.longrange_tool_payload_json(
+        tool,
+        model.types.control_ok_label(),
+        run_id,
+        message,
+        if run_id == "" { "" } else { services.longrange.load_state_json(run_id) },
+        if run_id == "" { "" } else { services.longrange.load_plan_json(run_id) },
+        services.longrange.summary_json(),
+        if run_id == "" { "0" } else { str.from_i32(services.longrange.queue_depth_for(run_id)) },
+    )
+}
+
+fn longrange_error_payload(tool: str, message: str) -> str {
+    return model.types.longrange_tool_payload_json(tool, model.types.control_error_label(), "", message, "", "", services.longrange.summary_json(), "0")
+}
+
+fn run_longrange_start(session_id: str, goal: str) -> i32 {
+    discard services.longrange.boot()
+    if goal == "" {
+        fs.write_file(longrange_start_run_path(), longrange_error_payload("longrange_start", "goal is required"))
+        return 13
+    }
+    let effective_session_id = if session_id == "" { services.sessions.default_session_id() } else { session_id }
+    let run_id = services.longrange.create_run(effective_session_id, goal, str.concat("longrange-start-", str.from_i32(time.now())))
+    discard runtime.longrange.kick()
+    fs.write_file(longrange_start_run_path(), longrange_tool_payload("longrange_start", run_id, "long-range run started"))
+    return 0
+}
+
+fn run_longrange_status(session_id: str, requested_run_id: str) -> i32 {
+    discard services.longrange.boot()
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(longrange_status_run_path(), longrange_error_payload("longrange_status", "no active long-range run found"))
+        return 13
+    }
+    fs.write_file(longrange_status_run_path(), longrange_tool_payload("longrange_status", run_id, "long-range run status"))
+    return 0
+}
+
+fn run_longrange_cancel(session_id: str, requested_run_id: str) -> i32 {
+    discard services.longrange.boot()
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(longrange_cancel_run_path(), longrange_error_payload("longrange_cancel", "no active long-range run found"))
+        return 13
+    }
+    discard services.longrange.cancel_run(run_id, "cancelled by operator", str.concat("longrange-cancel-", str.from_i32(time.now())))
+    fs.write_file(longrange_cancel_run_path(), longrange_tool_payload("longrange_cancel", run_id, "long-range run cancelled"))
+    return 0
+}
+
+fn run_longrange_steer(session_id: str, requested_run_id: str, message: str, interrupt: str) -> i32 {
+    discard services.longrange.boot()
+    if message == "" {
+        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "message is required"))
+        return 13
+    }
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "no active long-range run found"))
+        return 13
+    }
+    discard services.longrange.enqueue_message(run_id, "steer", message, str.concat("longrange-steer-", str.from_i32(time.now())), if interrupt == "true" { 1 } else { 0 })
+    discard runtime.longrange.kick()
+    fs.write_file(longrange_steer_run_path(), longrange_tool_payload("longrange_steer", run_id, "steering message queued"))
+    return 0
+}
+
+fn run_plan_create(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+    discard services.longrange.boot()
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(plan_create_run_path(), longrange_error_payload("plan_create", "no active long-range run found"))
+        return 13
+    }
+    discard services.longrange.apply_plan_create(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, str.concat("plan-create-", str.from_i32(time.now())))
+    fs.write_file(plan_create_run_path(), longrange_tool_payload("plan_create", run_id, "plan created"))
+    return 0
+}
+
+fn run_plan_update(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+    discard services.longrange.boot()
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(plan_update_run_path(), longrange_error_payload("plan_update", "no active long-range run found"))
+        return 13
+    }
+    discard services.longrange.apply_plan_update(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, str.concat("plan-update-", str.from_i32(time.now())))
+    fs.write_file(plan_update_run_path(), longrange_tool_payload("plan_update", run_id, "plan updated"))
+    return 0
+}
+
+fn run_plan_view(session_id: str, requested_run_id: str) -> i32 {
+    discard services.longrange.boot()
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(plan_view_run_path(), longrange_error_payload("plan_view", "no active long-range run found"))
+        return 13
+    }
+    fs.write_file(plan_view_run_path(), longrange_tool_payload("plan_view", run_id, "plan view"))
+    return 0
+}
+
+fn run_goal_complete(session_id: str, requested_run_id: str, summary: str) -> i32 {
+    discard services.longrange.boot()
+    if summary == "" {
+        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "summary is required"))
+        return 13
+    }
+    let run_id = resolve_longrange_run_id(session_id, requested_run_id)
+    if run_id == "" || services.longrange.run_exists(run_id) == 0 {
+        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "no active long-range run found"))
+        return 13
+    }
+    discard services.longrange.mark_completed(run_id, summary, str.concat("goal-complete-", str.from_i32(time.now())))
+    fs.write_file(goal_complete_run_path(), longrange_tool_payload("goal_complete", run_id, "goal marked complete"))
+    return 0
+}
+
 fn spawn_probe_worker() -> i32 {
     return 7
 }
@@ -1548,8 +1800,8 @@ fn run_parallel_bash() -> i32 {
     let probe_label = if probe_result == 7 { "ok" } else if probe_result == -1 { "neg1" } else if probe_result == -2 { "neg2" } else { "other" }
     let left_label = if left_result == 0 { "ok" } else if left_result == -1 { "neg1" } else if left_result == -2 { "neg2" } else { "other" }
     let right_label = if right_result == 0 { "ok" } else if right_result == -1 { "neg1" } else if right_result == -2 { "neg2" } else { "other" }
-    let meta = util.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
-    let combined = util.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
+    let meta = apputil.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
+    let combined = apputil.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
     fs.write_file(last_run_path_for("parallel_bash"), combined)
     runtime.events.emit_tool_finished()
     if probe_result == 7 && left_result == 0 && right_result == 0 {
@@ -1571,8 +1823,8 @@ fn run_parallel_grep() -> i32 {
     let probe_label = if probe_result == 7 { "ok" } else if probe_result == -1 { "neg1" } else if probe_result == -2 { "neg2" } else { "other" }
     let left_label = if left_result == 0 { "ok" } else if left_result == -1 { "neg1" } else if left_result == -2 { "neg2" } else { "other" }
     let right_label = if right_result == 0 { "ok" } else if right_result == -1 { "neg1" } else if right_result == -2 { "neg2" } else { "other" }
-    let meta = util.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
-    let combined = util.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
+    let meta = apputil.json_obj3("probe_result", json.str(probe_label), "left_result", json.str(left_label), "right_result", json.str(right_label))
+    let combined = apputil.json_obj2("pair", json.raw(payload), "meta", json.raw(meta))
     fs.write_file(last_run_path_for("parallel_grep"), combined)
     runtime.events.emit_tool_finished()
     if probe_result == 7 && left_result == 0 && right_result == 0 {
@@ -1602,7 +1854,7 @@ fn run_aegis_worker() -> i32 {
 }
 
 fn run_parallel() -> i32 {
-    log.info("tools.run_parallel start", util.log_fields2("component", "tools", "phase", "run_parallel_start"))
+    log.info("tools.run_parallel start", apputil.log_fields2("component", "tools", "phase", "run_parallel_start"))
     runtime.events.emit_tool_started()
     ensure_dirs()
     enqueue_tool_named("parallel_bash", "parallel_bash_latest")
@@ -1619,10 +1871,10 @@ fn run_parallel() -> i32 {
 
     let bash_result = safe_read(last_run_path_for("parallel_bash"))
     let grep_result = safe_read(last_run_path_for("parallel_grep"))
-    let combined = util.json_obj2("parallel_bash", json.raw(bash_result), "parallel_grep", json.raw(grep_result))
+    let combined = apputil.json_obj2("parallel_bash", json.raw(bash_result), "parallel_grep", json.raw(grep_result))
     fs.write_file(last_parallel_path(), combined)
     runtime.events.emit_tool_finished()
-    log.info("tools.run_parallel complete", util.log_fields2("component", "tools", "phase", "run_parallel_complete"))
+    log.info("tools.run_parallel complete", apputil.log_fields2("component", "tools", "phase", "run_parallel_complete"))
     if bash_status == 0 && grep_status == 0 {
         return 0
     }
@@ -1630,7 +1882,7 @@ fn run_parallel() -> i32 {
 }
 
 fn run_release_audit() -> i32 {
-    log.info("tools.run_release_audit start", util.log_fields2("component", "tools", "phase", "run_release_audit_start"))
+    log.info("tools.run_release_audit start", apputil.log_fields2("component", "tools", "phase", "run_release_audit_start"))
     runtime.events.emit_tool_started()
     ensure_dirs()
 
@@ -1653,12 +1905,12 @@ fn run_release_audit() -> i32 {
     let bash_result = safe_read(last_run_path_for("parallel_bash"))
     let grep_result = safe_read(last_run_path_for("parallel_grep"))
     let inventory_result = safe_read(inventory_path())
-    let meta = util.json_obj3(
+    let meta = apputil.json_obj3(
         "parallel_bash", json.str(status_from_exit_code(bash_status)),
         "parallel_grep", json.str(status_from_exit_code(grep_status)),
         "inventory", json.str(status_from_exit_code(inventory_status)),
     )
-    let combined = util.json_obj4(
+    let combined = apputil.json_obj4(
         "parallel_bash", json.raw(bash_result),
         "parallel_grep", json.raw(grep_result),
         "inventory", json.raw(inventory_result),
@@ -1666,7 +1918,7 @@ fn run_release_audit() -> i32 {
     )
     fs.write_file(last_run_path_for("release_audit"), combined)
     runtime.events.emit_tool_finished()
-    log.info("tools.run_release_audit complete", util.log_fields2("component", "tools", "phase", "run_release_audit_complete"))
+    log.info("tools.run_release_audit complete", apputil.log_fields2("component", "tools", "phase", "run_release_audit_complete"))
     if bash_status == 0 && grep_status == 0 && inventory_status == 0 {
         return 0
     }
@@ -1674,7 +1926,7 @@ fn run_release_audit() -> i32 {
 }
 
 fn run_project_seed() -> i32 {
-    log.info("tools.run_project_seed start", util.log_fields2("component", "tools", "phase", "run_project_seed_start"))
+    log.info("tools.run_project_seed start", apputil.log_fields2("component", "tools", "phase", "run_project_seed_start"))
     runtime.events.emit_tool_started()
     ensure_dirs()
 
@@ -1691,18 +1943,18 @@ fn run_project_seed() -> i32 {
 
     let audit_result = safe_read(last_run_path_for("release_audit"))
     let digest_result = safe_read(workspace_digest_path())
-    let meta = util.json_obj2(
+    let meta = apputil.json_obj2(
         "release_audit", json.str(status_from_exit_code(audit_status)),
         "workspace_digest", json.str(status_from_exit_code(digest_status)),
     )
-    let combined = util.json_obj3(
+    let combined = apputil.json_obj3(
         "release_audit", json.raw(audit_result),
         "workspace_digest", json.raw(digest_result),
         "meta", json.raw(meta),
     )
     fs.write_file("/tmp/fzyagent/runs/project_seed.json", combined)
     runtime.events.emit_tool_finished()
-    log.info("tools.run_project_seed complete", util.log_fields2("component", "tools", "phase", "run_project_seed_complete"))
+    log.info("tools.run_project_seed complete", apputil.log_fields2("component", "tools", "phase", "run_project_seed_complete"))
     if audit_status == 0 && digest_status == 0 {
         return 0
     }
@@ -1710,7 +1962,7 @@ fn run_project_seed() -> i32 {
 }
 
 fn run_browser_ops_seed() -> i32 {
-    log.info("tools.run_browser_ops_seed start", util.log_fields2("component", "tools", "phase", "run_browser_ops_seed_start"))
+    log.info("tools.run_browser_ops_seed start", apputil.log_fields2("component", "tools", "phase", "run_browser_ops_seed_start"))
     runtime.events.emit_tool_started()
     ensure_dirs()
 
@@ -1727,18 +1979,18 @@ fn run_browser_ops_seed() -> i32 {
 
     let digest_result = safe_read(workspace_digest_path())
     let browser_result = safe_read(aegis_path())
-    let meta = util.json_obj2(
+    let meta = apputil.json_obj2(
         "workspace_digest", json.str(status_from_exit_code(digest_status)),
         "aegis", json.str(status_from_exit_code(browser_status)),
     )
-    let combined = util.json_obj3(
+    let combined = apputil.json_obj3(
         "workspace_digest", json.raw(digest_result),
         "aegis", json.raw(browser_result),
         "meta", json.raw(meta),
     )
     fs.write_file("/tmp/fzyagent/runs/browser_ops_seed.json", combined)
     runtime.events.emit_tool_finished()
-    log.info("tools.run_browser_ops_seed complete", util.log_fields2("component", "tools", "phase", "run_browser_ops_seed_complete"))
+    log.info("tools.run_browser_ops_seed complete", apputil.log_fields2("component", "tools", "phase", "run_browser_ops_seed_complete"))
     if digest_status == 0 && browser_status == 0 {
         return 0
     }
@@ -1756,6 +2008,7 @@ fn field_with_input(parsed: JsonHandle, strict_input: JsonHandle, key: str) -> s
 fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
     let strict_input = json.get(parsed, "input")
+    let session_id = json.get_str(parsed, "session_id")
     let action = field_with_input(parsed, strict_input, "action")
     let op = field_with_input(parsed, strict_input, "op")
     let effective_action = if op == "" { action } else { op }
@@ -1781,6 +2034,18 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let mode = field_with_input(parsed, strict_input, "mode")
     let max_lines = field_with_input(parsed, strict_input, "max_lines")
     let content = field_with_input(parsed, strict_input, "content")
+    let goal = field_with_input(parsed, strict_input, "goal")
+    let run_id = field_with_input(parsed, strict_input, "run_id")
+    let message = field_with_input(parsed, strict_input, "message")
+    let summary = field_with_input(parsed, strict_input, "summary")
+    let goal_summary = field_with_input(parsed, strict_input, "goal_summary")
+    let finished_definition = field_with_input(parsed, strict_input, "finished_definition")
+    let difficulty = field_with_input(parsed, strict_input, "difficulty")
+    let estimated_effort = field_with_input(parsed, strict_input, "estimated_effort")
+    let current_step_id = field_with_input(parsed, strict_input, "current_step_id")
+    let plan_summary = field_with_input(parsed, strict_input, "plan_summary")
+    let interrupt = field_with_input(parsed, strict_input, "interrupt")
+    let steps_json = json.get_str(json.get(strict_input, "steps"), "raw")
     let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
         if commands_raw == "" { strict_commands_raw } else { commands_raw }
@@ -1813,6 +2078,14 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
         DispatchKind::DispatchRuntimeCheckpoint => return run_runtime_checkpoint(),
         DispatchKind::DispatchRuntimeRecover => return run_runtime_recover(),
         DispatchKind::DispatchRuntimeShutdown => return run_runtime_shutdown(),
+        DispatchKind::DispatchLongrangeStart => return run_longrange_start(session_id, goal),
+        DispatchKind::DispatchLongrangeStatus => return run_longrange_status(session_id, run_id),
+        DispatchKind::DispatchLongrangeCancel => return run_longrange_cancel(session_id, run_id),
+        DispatchKind::DispatchLongrangeSteer => return run_longrange_steer(session_id, run_id, message, interrupt),
+        DispatchKind::DispatchPlanCreate => return run_plan_create(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json),
+        DispatchKind::DispatchPlanUpdate => return run_plan_update(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json),
+        DispatchKind::DispatchPlanView => return run_plan_view(session_id, run_id),
+        DispatchKind::DispatchGoalComplete => return run_goal_complete(session_id, run_id, summary),
         DispatchKind::DispatchToolSequence => return run_tool_sequence(input_raw),
         DispatchKind::DispatchToolParallel => return run_tool_parallel(input_raw),
         DispatchKind::DispatchAll => return run_parallel(),
@@ -1824,6 +2097,7 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
 fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -> i32 {
     let parsed = json.parse(if input_raw == "" { "{}" } else { input_raw })
     let strict_input = json.get(parsed, "input")
+    let session_id = json.get_str(parsed, "session_id")
     let action = field_with_input(parsed, strict_input, "action")
     let op = field_with_input(parsed, strict_input, "op")
     let effective_action = if op == "" { action } else { op }
@@ -1849,6 +2123,18 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     let mode = field_with_input(parsed, strict_input, "mode")
     let max_lines = field_with_input(parsed, strict_input, "max_lines")
     let content = field_with_input(parsed, strict_input, "content")
+    let goal = field_with_input(parsed, strict_input, "goal")
+    let run_id = field_with_input(parsed, strict_input, "run_id")
+    let message = field_with_input(parsed, strict_input, "message")
+    let summary = field_with_input(parsed, strict_input, "summary")
+    let goal_summary = field_with_input(parsed, strict_input, "goal_summary")
+    let finished_definition = field_with_input(parsed, strict_input, "finished_definition")
+    let difficulty = field_with_input(parsed, strict_input, "difficulty")
+    let estimated_effort = field_with_input(parsed, strict_input, "estimated_effort")
+    let current_step_id = field_with_input(parsed, strict_input, "current_step_id")
+    let plan_summary = field_with_input(parsed, strict_input, "plan_summary")
+    let interrupt = field_with_input(parsed, strict_input, "interrupt")
+    let steps_json = json.get_str(json.get(strict_input, "steps"), "raw")
     let strict_input_raw = json.get_str(strict_input, "raw")
     let effective_commands = if commands_json == "" {
         if commands_raw == "" { strict_commands_raw } else { commands_raw }
@@ -1864,7 +2150,7 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
         DispatchKind::DispatchBash => return run_shell_to_file("bash", if command == "" { env_or("TOOL_BASH", "echo bash-tool-default") } else { command }, 20000, out_path),
         DispatchKind::DispatchGrepSearch => return run_grep_to_file("grep_search", if pattern == "" { env_or("TOOL_GREP_PATTERN_A", "fn ") } else { pattern }, if target == "" { env_or("TOOL_GREP_TARGET_A", "src") } else { target }, 15000, out_path),
         DispatchKind::DispatchQueueStatus => return dispatch_tool_request_copy("queue_status", input_raw, out_path),
-        DispatchKind::DispatchQueueEnqueue => return dispatch_tool_request_copy("queue_enqueue", util.json_obj3("queue_tool_id", json.str(queue_tool_id), "queued_run_id", json.str(queued_run_id), "input", json.raw(queued_input_raw)), out_path),
+        DispatchKind::DispatchQueueEnqueue => return dispatch_tool_request_copy("queue_enqueue", apputil.json_obj3("queue_tool_id", json.str(queue_tool_id), "queued_run_id", json.str(queued_run_id), "input", json.raw(queued_input_raw)), out_path),
         DispatchKind::DispatchQueueSpawn => return dispatch_tool_request_copy("queue_spawn", input_raw, out_path),
         DispatchKind::DispatchQueueProcess => return dispatch_tool_request_copy("queue_process", input_raw, out_path),
         DispatchKind::DispatchQueueCancel => return dispatch_tool_request_copy("queue_cancel", input_raw, out_path),
@@ -1875,6 +2161,14 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
         DispatchKind::DispatchRuntimeCheckpoint => return dispatch_tool_request_copy("runtime_checkpoint", input_raw, out_path),
         DispatchKind::DispatchRuntimeRecover => return dispatch_tool_request_copy("runtime_recover", input_raw, out_path),
         DispatchKind::DispatchRuntimeShutdown => return dispatch_tool_request_copy("runtime_shutdown", input_raw, out_path),
+        DispatchKind::DispatchLongrangeStart => return dispatch_tool_request_copy("longrange_start", apputil.json_obj3("session_id", json.str(session_id), "goal", json.str(goal), "input", json.raw("{}")), out_path),
+        DispatchKind::DispatchLongrangeStatus => return dispatch_tool_request_copy("longrange_status", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
+        DispatchKind::DispatchLongrangeCancel => return dispatch_tool_request_copy("longrange_cancel", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
+        DispatchKind::DispatchLongrangeSteer => return dispatch_tool_request_copy("longrange_steer", apputil.json_obj5("session_id", json.str(session_id), "run_id", json.str(run_id), "message", json.str(message), "interrupt", json.str(interrupt), "input", json.raw("{}")), out_path),
+        DispatchKind::DispatchPlanCreate => return dispatch_tool_request_copy("plan_create", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(apputil.json_obj6("finished_definition", json.str(finished_definition), "difficulty", json.str(difficulty), "estimated_effort", json.str(estimated_effort), "current_step_id", json.str(current_step_id), "plan_summary", json.str(plan_summary), "steps", json.raw(if steps_json == "" { "[]" } else { steps_json })))), out_path),
+        DispatchKind::DispatchPlanUpdate => return dispatch_tool_request_copy("plan_update", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(apputil.json_obj6("finished_definition", json.str(finished_definition), "difficulty", json.str(difficulty), "estimated_effort", json.str(estimated_effort), "current_step_id", json.str(current_step_id), "plan_summary", json.str(plan_summary), "steps", json.raw(if steps_json == "" { "[]" } else { steps_json })))), out_path),
+        DispatchKind::DispatchPlanView => return dispatch_tool_request_copy("plan_view", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
+        DispatchKind::DispatchGoalComplete => return dispatch_tool_request_copy("goal_complete", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "summary", json.str(summary), "input", json.raw("{}")), out_path),
         DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if strict_input_raw == "" { input_raw } else { strict_input_raw }, out_path),
         _ => return dispatch_tool_request_copy(tool_id, input_raw, out_path),
     }
@@ -1906,7 +2200,7 @@ fn tool_step_skipped_json(step_id: str) -> str {
 
 fn parallel_step_request_json(step_raw: str) -> str {
     if step_raw == "" {
-        return util.json_obj3("step_id", json.str(""), "tool_id", json.str(""), "input", json.raw("{}"))
+        return apputil.json_obj3("step_id", json.str(""), "tool_id", json.str(""), "input", json.raw("{}"))
     }
     return step_raw
 }

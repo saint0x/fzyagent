@@ -1,0 +1,161 @@
+use core.thread;
+use core.log;
+use core.time;
+
+fn auto_prompt_for(run_id: str) -> str {
+    let goal = services.longrange.run_goal(run_id)
+    let goal_summary = services.longrange.goal_summary(run_id)
+    let finished_definition = services.longrange.finished_definition(run_id)
+    let difficulty = services.longrange.difficulty(run_id)
+    let estimated_effort = services.longrange.estimated_effort(run_id)
+    let current_step_id = services.longrange.current_step_id(run_id)
+    let plan_summary = services.longrange.plan_summary(run_id)
+    let progress = services.longrange.progress_excerpt(run_id)
+    let no_plan = if services.longrange.plan_status_ready(run_id) == 1 { 0 } else { 1 }
+    if no_plan == 1 {
+        let mut planning_prompt = "AUTOMATED LONG RANGE MESSAGE\n"
+        planning_prompt = str.concat(planning_prompt, str.concat("run_id: ", run_id))
+        planning_prompt = str.concat(planning_prompt, str.concat("\nliteral_goal: ", goal))
+        planning_prompt = str.concat(planning_prompt, "\nNo durable plan exists yet for this goal.\n")
+        planning_prompt = str.concat(planning_prompt, "First call `plan_create` with a complete durable plan containing goal summary, finished definition, difficulty, estimated effort, current step, and concrete steps.\n")
+        planning_prompt = str.concat(planning_prompt, "After the plan is recorded, begin executing it.\n")
+        planning_prompt = str.concat(planning_prompt, "When the goal is fully complete, respond only by calling `goal_complete`.\n")
+        return planning_prompt
+    }
+    let mut prompt = "AUTOMATED LONG RANGE MESSAGE\n"
+    prompt = str.concat(prompt, str.concat("run_id: ", run_id))
+    prompt = str.concat(prompt, str.concat("\nliteral_goal: ", goal))
+    prompt = str.concat(prompt, str.concat("\ngoal_summary: ", goal_summary))
+    prompt = str.concat(prompt, str.concat("\nfinished_definition: ", finished_definition))
+    prompt = str.concat(prompt, str.concat("\ndifficulty: ", difficulty))
+    prompt = str.concat(prompt, str.concat("\nestimated_effort: ", estimated_effort))
+    prompt = str.concat(prompt, str.concat("\ncurrent_step: ", current_step_id))
+    prompt = str.concat(prompt, str.concat("\nplan_summary: ", plan_summary))
+    prompt = str.concat(prompt, "\nrecent_progress:\n")
+    prompt = str.concat(prompt, progress)
+    prompt = str.concat(prompt, "\nContinue towards the goal. This is an automated continuation message.\n")
+    prompt = str.concat(prompt, "Use `plan_update` whenever the plan or current step changes.\n")
+    prompt = str.concat(prompt, "When the goal is fully complete, respond only by calling `goal_complete`.\n")
+    return prompt
+}
+
+fn next_message_json(run_id: str) -> str {
+    let queued = services.longrange.dequeue_next_message_json(run_id)
+    if queued != "" {
+        return queued
+    }
+    if services.longrange.auto_continue_pending(run_id) == 1 {
+        return model.types.longrange_message_json("continue", auto_prompt_for(run_id), "", str.from_i32(time.now()), "false")
+    }
+    return ""
+}
+
+fn run_message_kind(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "kind")
+}
+
+fn run_message_content(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "content")
+}
+
+fn run_message_request_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "request_id")
+}
+
+fn next_request_id(run_id: str, parsed: JsonHandle) -> str {
+    let queued = run_message_request_id(parsed)
+    if queued != "" {
+        return queued
+    }
+    return str.concat3("auto-", run_id, str.concat("-", str.from_i32(time.now())))
+}
+
+fn summarize_result(parsed: JsonHandle) -> str {
+    let assistant = runtime.agent.turn_assistant_text(parsed)
+    if assistant != "" {
+        return assistant
+    }
+    let raw = runtime.agent.turn_raw_response_text(parsed)
+    if raw != "" {
+        return raw
+    }
+    return "empty_assistant_response"
+}
+
+fn process_run(run_id: str) -> i32 {
+    let status = services.longrange.run_status(run_id)
+    if status == "completed" || status == "failed" || status == "cancelled" {
+        return 0
+    }
+    let message_json = next_message_json(run_id)
+    if message_json == "" {
+        return 0
+    }
+    let parsed_message = json.parse(message_json)
+    let message_kind = run_message_kind(parsed_message)
+    let message_content = run_message_content(parsed_message)
+    let request_id = next_request_id(run_id, parsed_message)
+    let session_id = services.longrange.run_session_id(run_id)
+    discard services.longrange.set_auto_continue(run_id, 0, message_kind)
+    discard services.sessions.post_message_for(session_id, message_content, request_id, run_id)
+    let result = runtime.agent.run_session_turn(session_id, message_content, request_id)
+    let parsed = json.parse(result)
+    let summary = summarize_result(parsed)
+    if runtime.agent.turn_response_is_ok(parsed) == 1 {
+        let fresh_status = services.longrange.run_status(run_id)
+        if fresh_status == "completed" || fresh_status == "failed" || fresh_status == "cancelled" {
+            return 1
+        }
+        discard services.longrange.update_after_turn(run_id, request_id, summary, 1)
+        return 1
+    }
+    discard services.longrange.update_after_turn(run_id, request_id, summary, 0)
+    if services.longrange.failure_count(run_id) >= 3 {
+        discard services.longrange.mark_failed(run_id, summary, request_id)
+    }
+    return 1
+}
+
+fn process_once() -> i32 {
+    let run_id = services.longrange.pop_active_run_id()
+    if run_id == "" {
+        return 0
+    }
+    let processed = process_run(run_id)
+    let status = services.longrange.run_status(run_id)
+    if status == "planning" || status == "active" {
+        discard services.longrange.requeue_active_run_id(run_id)
+    }
+    return processed
+}
+
+fn process_worker() -> i32 {
+    let mut processed_count: i32 = 0
+    loop {
+        let processed = process_once()
+        if processed == 0 {
+            return 0
+        }
+        processed_count = processed_count + 1
+        if processed_count >= 32 {
+            return 0
+        }
+        checkpoint()
+        yield()
+    }
+}
+
+fn kick() -> i32 {
+    let handle = spawn(process_worker)
+    detach(handle)
+    return 0
+}
+
+fn run_loop() -> i32 {
+    log.info("runtime.longrange started", apputil.log_fields2("component", "runtime.longrange", "phase", "loop_start"))
+    loop {
+        discard process_once()
+        checkpoint()
+        yield()
+    }
+}

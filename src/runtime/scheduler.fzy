@@ -2,7 +2,7 @@ use core.thread;
 use core.log;
 
 fn tick() -> i32 {
-    log.info("runtime.scheduler started", util.log_fields2("component", "runtime.scheduler", "phase", "loop_start"))
+    log.info("runtime.scheduler started", apputil.log_fields2("component", "runtime.scheduler", "phase", "loop_start"))
     loop {
         checkpoint()
         runtime.events.emit_health_tick()

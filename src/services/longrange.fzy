@@ -1,0 +1,755 @@
+use core.fs;
+use core.storage;
+use core.time;
+
+fn state_dir() -> str {
+    return "/tmp/fzyagent/longrange"
+}
+
+fn runs_dir() -> str {
+    return "/tmp/fzyagent/longrange/runs"
+}
+
+fn sessions_dir() -> str {
+    return "/tmp/fzyagent/longrange/sessions"
+}
+
+fn active_runs_path() -> str {
+    return "/tmp/fzyagent/longrange/active.jsonl"
+}
+
+fn summary_path() -> str {
+    return "/tmp/fzyagent/longrange/summary.json"
+}
+
+fn run_dir(run_id: str) -> str {
+    return str.concat("/tmp/fzyagent/longrange/runs/", run_id)
+}
+
+fn run_state_path(run_id: str) -> str {
+    return str.concat(run_dir(run_id), "/state.json")
+}
+
+fn run_plan_path(run_id: str) -> str {
+    return str.concat(run_dir(run_id), "/plan.json")
+}
+
+fn run_progress_path(run_id: str) -> str {
+    return str.concat(run_dir(run_id), "/progress.jsonl")
+}
+
+fn run_queue_path(run_id: str) -> str {
+    return str.concat(run_dir(run_id), "/queue.jsonl")
+}
+
+fn session_dir(session_id: str) -> str {
+    return str.concat("/tmp/fzyagent/longrange/sessions/", session_id)
+}
+
+fn session_active_run_path(session_id: str) -> str {
+    return str.concat(session_dir(session_id), "/active_run.txt")
+}
+
+fn now_label() -> str {
+    return str.from_i32(time.now())
+}
+
+fn safe_read(path: str) -> str {
+    if fs.exists(path) == 0 {
+        return ""
+    }
+    return fs.read_file(path)
+}
+
+fn bool_text(flag: i32) -> str {
+    if flag == 1 {
+        return "true"
+    }
+    return "false"
+}
+
+fn ensure_state() -> i32 {
+    fs.mkdir(state_dir())
+    fs.mkdir(runs_dir())
+    fs.mkdir(sessions_dir())
+    if fs.exists(active_runs_path()) == 0 {
+        fs.write_file(active_runs_path(), "")
+    }
+    if fs.exists(summary_path()) == 0 {
+        fs.write_file(summary_path(), model.types.longrange_summary_json("0", "0", "0", "0", "", "idle"))
+    }
+    return 0
+}
+
+fn boot() -> i32 {
+    return ensure_state()
+}
+
+fn ensure_run(run_id: str) -> i32 {
+    discard ensure_state()
+    fs.mkdir(run_dir(run_id))
+    if fs.exists(run_progress_path(run_id)) == 0 {
+        fs.write_file(run_progress_path(run_id), "")
+    }
+    if fs.exists(run_queue_path(run_id)) == 0 {
+        fs.write_file(run_queue_path(run_id), "")
+    }
+    return 0
+}
+
+fn ensure_session(session_id: str) -> i32 {
+    discard ensure_state()
+    fs.mkdir(session_dir(session_id))
+    return 0
+}
+
+fn summary_json() -> str {
+    discard ensure_state()
+    let payload = safe_read(summary_path())
+    if payload == "" {
+        return model.types.longrange_summary_json("0", "0", "0", "0", "", "idle")
+    }
+    return payload
+}
+
+fn summary_active_runs(parsed: JsonHandle) -> i32 {
+    return apputil.parse_i32(json.get_str(parsed, "active_runs"))
+}
+
+fn summary_completed_runs(parsed: JsonHandle) -> i32 {
+    return apputil.parse_i32(json.get_str(parsed, "completed_runs"))
+}
+
+fn summary_failed_runs(parsed: JsonHandle) -> i32 {
+    return apputil.parse_i32(json.get_str(parsed, "failed_runs"))
+}
+
+fn summary_cancelled_runs(parsed: JsonHandle) -> i32 {
+    return apputil.parse_i32(json.get_str(parsed, "cancelled_runs"))
+}
+
+fn count_lines(text_value: str) -> i32 {
+    if text_value == "" {
+        return 0
+    }
+    let mut count: i32 = 0
+    let mut rest = text_value
+    while services.persistence.first_line(rest) != "" {
+        count = count + 1
+        rest = services.persistence.drop_first_line(rest)
+    }
+    return count
+}
+
+fn active_run_count() -> i32 {
+    return count_lines(safe_read(active_runs_path()))
+}
+
+fn write_summary_counts(completed_runs: i32, failed_runs: i32, cancelled_runs: i32, latest_run_id: str, latest_status: str) -> i32 {
+    let active_runs = active_run_count()
+    let payload = model.types.longrange_summary_json(
+        str.from_i32(active_runs),
+        str.from_i32(completed_runs),
+        str.from_i32(failed_runs),
+        str.from_i32(cancelled_runs),
+        latest_run_id,
+        latest_status,
+    )
+    fs.write_file(summary_path(), payload)
+    return 0
+}
+
+fn refresh_summary(latest_run_id: str, latest_status: str) -> i32 {
+    discard ensure_state()
+    let parsed = json.parse(summary_json())
+    return write_summary_counts(
+        summary_completed_runs(parsed),
+        summary_failed_runs(parsed),
+        summary_cancelled_runs(parsed),
+        latest_run_id,
+        latest_status,
+    )
+}
+
+fn write_terminal_summary(latest_run_id: str, latest_status: str) -> i32 {
+    discard ensure_state()
+    let parsed = json.parse(summary_json())
+    let completed_runs = summary_completed_runs(parsed) + if latest_status == "completed" { 1 } else { 0 }
+    let failed_runs = summary_failed_runs(parsed) + if latest_status == "failed" { 1 } else { 0 }
+    let cancelled_runs = summary_cancelled_runs(parsed) + if latest_status == "cancelled" { 1 } else { 0 }
+    return write_summary_counts(completed_runs, failed_runs, cancelled_runs, latest_run_id, latest_status)
+}
+
+fn state_status(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "run_status")
+}
+
+fn state_session_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "session_id")
+}
+
+fn state_goal(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "goal")
+}
+
+fn state_plan_status(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "plan_status")
+}
+
+fn state_current_step_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "current_step_id")
+}
+
+fn state_last_request_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_request_id")
+}
+
+fn state_turns_completed(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "turns_completed")
+}
+
+fn state_failure_count(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "failure_count")
+}
+
+fn state_auto_continue_pending(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "auto_continue_pending")
+}
+
+fn state_active_message_kind(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "active_message_kind")
+}
+
+fn state_latest_summary(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "latest_summary")
+}
+
+fn state_created_at(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "created_at")
+}
+
+fn state_completed_at(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "completed_at")
+}
+
+fn plan_goal_summary(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "goal_summary")
+}
+
+fn plan_finished_definition(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "finished_definition")
+}
+
+fn plan_difficulty(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "difficulty")
+}
+
+fn plan_estimated_effort(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "estimated_effort")
+}
+
+fn plan_current_step_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "current_step_id")
+}
+
+fn plan_summary_value(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "plan_summary")
+}
+
+fn plan_steps_raw(parsed: JsonHandle) -> str {
+    let raw = json.get_str(json.get(parsed, "steps"), "raw")
+    if raw == "" {
+        return "[]"
+    }
+    return raw
+}
+
+fn save_state(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, auto_continue_pending: str, active_message_kind: str, latest_summary: str, created_at: str, completed_at: str) -> i32 {
+    discard ensure_run(run_id)
+    fs.write_file(
+        run_state_path(run_id),
+        model.types.longrange_run_state_json(
+            run_id,
+            session_id,
+            goal,
+            status,
+            plan_status,
+            current_step_id,
+            last_request_id,
+            turns_completed,
+            failure_count,
+            auto_continue_pending,
+            active_message_kind,
+            latest_summary,
+            created_at,
+            now_label(),
+            completed_at,
+        ),
+    )
+    return 0
+}
+
+fn save_plan(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+    discard ensure_run(run_id)
+    fs.write_file(
+        run_plan_path(run_id),
+        model.types.longrange_plan_json(
+            run_id,
+            goal_summary,
+            finished_definition,
+            difficulty,
+            estimated_effort,
+            current_step_id,
+            plan_summary,
+            if steps_json == "" { "[]" } else { steps_json },
+            now_label(),
+        ),
+    )
+    return 0
+}
+
+fn load_state_json(run_id: str) -> str {
+    discard ensure_run(run_id)
+    let payload = safe_read(run_state_path(run_id))
+    if payload == "" {
+        return model.types.longrange_run_state_json(run_id, "", "", "missing", "missing", "", "", "0", "0", "false", "", "", now_label(), now_label(), "")
+    }
+    return payload
+}
+
+fn load_plan_json(run_id: str) -> str {
+    discard ensure_run(run_id)
+    let payload = safe_read(run_plan_path(run_id))
+    if payload == "" {
+        return model.types.longrange_plan_json(run_id, "", "", "", "", "", "", "[]", now_label())
+    }
+    return payload
+}
+
+fn active_run_id_for_session(session_id: str) -> str {
+    discard ensure_session(session_id)
+    return str.trim(safe_read(session_active_run_path(session_id)))
+}
+
+fn has_active_run_for_session(session_id: str) -> i32 {
+    let run_id = active_run_id_for_session(session_id)
+    if run_id == "" {
+        return 0
+    }
+    let parsed = json.parse(load_state_json(run_id))
+    let status = state_status(parsed)
+    if status == "planning" || status == "active" {
+        return 1
+    }
+    return 0
+}
+
+fn set_active_run_for_session(session_id: str, run_id: str) -> i32 {
+    discard ensure_session(session_id)
+    fs.write_file(session_active_run_path(session_id), run_id)
+    return 0
+}
+
+fn clear_active_run_for_session(session_id: str, run_id: str) -> i32 {
+    let active = active_run_id_for_session(session_id)
+    if active == run_id && fs.exists(session_active_run_path(session_id)) == 1 {
+        discard fs.remove_file(session_active_run_path(session_id))
+    }
+    return 0
+}
+
+fn active_index_contains(run_id: str) -> i32 {
+    let mut rest = safe_read(active_runs_path())
+    while services.persistence.first_line(rest) != "" {
+        if services.persistence.first_line(rest) == run_id {
+            return 1
+        }
+        rest = services.persistence.drop_first_line(rest)
+    }
+    return 0
+}
+
+fn append_active_run(run_id: str) -> i32 {
+    discard ensure_state()
+    if active_index_contains(run_id) == 1 {
+        return 0
+    }
+    discard services.persistence.append_line(active_runs_path(), run_id)
+    return 0
+}
+
+fn remove_active_run(run_id: str) -> i32 {
+    discard ensure_state()
+    let mut next = ""
+    let mut rest = safe_read(active_runs_path())
+    while services.persistence.first_line(rest) != "" {
+        let line = services.persistence.first_line(rest)
+        if line != run_id {
+            if next == "" {
+                next = line
+            } else {
+                next = str.concat(str.concat(next, "\n"), line)
+            }
+        }
+        rest = services.persistence.drop_first_line(rest)
+    }
+    if next == "" {
+        fs.write_file(active_runs_path(), "")
+    } else {
+        fs.write_file(active_runs_path(), str.concat(next, "\n"))
+    }
+    return 0
+}
+
+fn pop_active_run_id() -> str {
+    discard ensure_state()
+    let active = safe_read(active_runs_path())
+    let line = services.persistence.first_line(active)
+    if line == "" {
+        return ""
+    }
+    fs.write_file(active_runs_path(), services.persistence.drop_first_line(active))
+    return line
+}
+
+fn requeue_active_run_id(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    return append_active_run(run_id)
+}
+
+fn run_exists(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    if fs.exists(run_state_path(run_id)) == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn next_run_id(session_id: str) -> str {
+    return str.concat3("longrange_", session_id, str.concat("_", now_label()))
+}
+
+fn append_progress(run_id: str, phase: str, message_kind: str, request_id: str, detail: str) -> i32 {
+    discard ensure_run(run_id)
+    let line = model.types.longrange_progress_event_json(run_id, phase, message_kind, request_id, detail, now_label())
+    discard services.persistence.append_line(run_progress_path(run_id), line)
+    return 0
+}
+
+fn create_run(session_id: str, goal: str, request_id: str) -> str {
+    discard ensure_state()
+    let existing = active_run_id_for_session(session_id)
+    if existing != "" && has_active_run_for_session(session_id) == 1 {
+        return existing
+    }
+    let run_id = next_run_id(session_id)
+    discard ensure_run(run_id)
+    discard save_state(run_id, session_id, goal, "planning", "missing", "", request_id, "0", "0", "true", "start", "", now_label(), "")
+    discard save_plan(run_id, "", "", "", "", "", "", "[]")
+    discard set_active_run_for_session(session_id, run_id)
+    discard append_active_run(run_id)
+    discard append_progress(run_id, "started", "start", request_id, goal)
+    discard refresh_summary(run_id, "planning")
+    return run_id
+}
+
+fn queue_depth_for(run_id: str) -> i32 {
+    return count_lines(safe_read(run_queue_path(run_id)))
+}
+
+fn enqueue_message(run_id: str, kind: str, content: str, request_id: str, interrupt: i32) -> i32 {
+    discard ensure_run(run_id)
+    let line = model.types.longrange_message_json(kind, content, request_id, now_label(), bool_text(interrupt))
+    if interrupt == 1 {
+        let current = safe_read(run_queue_path(run_id))
+        if current == "" {
+            fs.write_file(run_queue_path(run_id), str.concat(line, "\n"))
+        } else {
+            fs.write_file(run_queue_path(run_id), str.concat3(line, "\n", current))
+        }
+    } else {
+        discard services.persistence.append_line(run_queue_path(run_id), line)
+    }
+    discard append_progress(run_id, "queued_message", kind, request_id, content)
+    return 0
+}
+
+fn enqueue_steer_for_session(session_id: str, content: str, request_id: str, interrupt: i32) -> str {
+    let run_id = active_run_id_for_session(session_id)
+    if run_id == "" {
+        return ""
+    }
+    discard enqueue_message(run_id, "steer", content, request_id, interrupt)
+    return run_id
+}
+
+fn dequeue_next_message_json(run_id: str) -> str {
+    discard ensure_run(run_id)
+    let payload = safe_read(run_queue_path(run_id))
+    let line = services.persistence.first_line(payload)
+    if line == "" {
+        return ""
+    }
+    fs.write_file(run_queue_path(run_id), services.persistence.drop_first_line(payload))
+    return line
+}
+
+fn set_auto_continue(run_id: str, flag: i32, message_kind: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    return save_state(
+        run_id,
+        state_session_id(parsed),
+        state_goal(parsed),
+        state_status(parsed),
+        state_plan_status(parsed),
+        state_current_step_id(parsed),
+        state_last_request_id(parsed),
+        state_turns_completed(parsed),
+        state_failure_count(parsed),
+        bool_text(flag),
+        message_kind,
+        state_latest_summary(parsed),
+        state_created_at(parsed),
+        state_completed_at(parsed),
+    )
+}
+
+fn plan_status_ready(run_id: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    if state_plan_status(parsed) == "ready" {
+        return 1
+    }
+    return 0
+}
+
+fn apply_plan_create(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str) -> i32 {
+    let state_parsed = json.parse(load_state_json(run_id))
+    discard save_plan(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json)
+    discard save_state(
+        run_id,
+        state_session_id(state_parsed),
+        state_goal(state_parsed),
+        "active",
+        "ready",
+        current_step_id,
+        request_id,
+        state_turns_completed(state_parsed),
+        state_failure_count(state_parsed),
+        "true",
+        "plan_create",
+        plan_summary,
+        state_created_at(state_parsed),
+        state_completed_at(state_parsed),
+    )
+    discard append_progress(run_id, "plan_created", "plan_create", request_id, plan_summary)
+    discard refresh_summary(run_id, "active")
+    return 0
+}
+
+fn apply_plan_update(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str) -> i32 {
+    let current_plan = json.parse(load_plan_json(run_id))
+    let next_goal_summary = if goal_summary == "" { plan_goal_summary(current_plan) } else { goal_summary }
+    let next_finished_definition = if finished_definition == "" { plan_finished_definition(current_plan) } else { finished_definition }
+    let next_difficulty = if difficulty == "" { plan_difficulty(current_plan) } else { difficulty }
+    let next_estimated_effort = if estimated_effort == "" { plan_estimated_effort(current_plan) } else { estimated_effort }
+    let next_current_step_id = if current_step_id == "" { plan_current_step_id(current_plan) } else { current_step_id }
+    let next_plan_summary = if plan_summary == "" { plan_summary_value(current_plan) } else { plan_summary }
+    let next_steps_json = if steps_json == "" || steps_json == "[]" { plan_steps_raw(current_plan) } else { steps_json }
+    return apply_plan_create(run_id, next_goal_summary, next_finished_definition, next_difficulty, next_estimated_effort, next_current_step_id, next_plan_summary, next_steps_json, request_id)
+}
+
+fn mark_completed(run_id: str, summary_text: str, request_id: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    discard save_state(
+        run_id,
+        state_session_id(parsed),
+        state_goal(parsed),
+        "completed",
+        state_plan_status(parsed),
+        state_current_step_id(parsed),
+        request_id,
+        state_turns_completed(parsed),
+        state_failure_count(parsed),
+        "false",
+        "goal_complete",
+        summary_text,
+        state_created_at(parsed),
+        now_label(),
+    )
+    discard clear_active_run_for_session(state_session_id(parsed), run_id)
+    discard remove_active_run(run_id)
+    discard append_progress(run_id, "completed", "goal_complete", request_id, summary_text)
+    discard write_terminal_summary(run_id, "completed")
+    return 0
+}
+
+fn mark_failed(run_id: str, detail: str, request_id: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    discard save_state(
+        run_id,
+        state_session_id(parsed),
+        state_goal(parsed),
+        "failed",
+        state_plan_status(parsed),
+        state_current_step_id(parsed),
+        request_id,
+        state_turns_completed(parsed),
+        state_failure_count(parsed),
+        "false",
+        "failed",
+        detail,
+        state_created_at(parsed),
+        now_label(),
+    )
+    discard clear_active_run_for_session(state_session_id(parsed), run_id)
+    discard remove_active_run(run_id)
+    discard append_progress(run_id, "failed", "failed", request_id, detail)
+    discard write_terminal_summary(run_id, "failed")
+    return 0
+}
+
+fn cancel_run(run_id: str, reason: str, request_id: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    discard save_state(
+        run_id,
+        state_session_id(parsed),
+        state_goal(parsed),
+        "cancelled",
+        state_plan_status(parsed),
+        state_current_step_id(parsed),
+        request_id,
+        state_turns_completed(parsed),
+        state_failure_count(parsed),
+        "false",
+        "cancel",
+        reason,
+        state_created_at(parsed),
+        now_label(),
+    )
+    discard clear_active_run_for_session(state_session_id(parsed), run_id)
+    discard remove_active_run(run_id)
+    discard append_progress(run_id, "cancelled", "cancel", request_id, reason)
+    discard write_terminal_summary(run_id, "cancelled")
+    return 0
+}
+
+fn update_after_turn(run_id: str, request_id: str, assistant_summary: str, success: i32) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    let next_turns = apputil.parse_i32(state_turns_completed(parsed)) + 1
+    let next_failures = if success == 1 { 0 } else { apputil.parse_i32(state_failure_count(parsed)) + 1 }
+    let next_status = if success == 1 {
+        if state_plan_status(parsed) == "missing" { "planning" } else { "active" }
+    } else {
+        "active"
+    }
+    discard save_state(
+        run_id,
+        state_session_id(parsed),
+        state_goal(parsed),
+        next_status,
+        state_plan_status(parsed),
+        state_current_step_id(parsed),
+        request_id,
+        str.from_i32(next_turns),
+        str.from_i32(next_failures),
+        if success == 1 { "true" } else { "true" },
+        if success == 1 { "continue" } else { "retry" },
+        assistant_summary,
+        state_created_at(parsed),
+        state_completed_at(parsed),
+    )
+    discard append_progress(run_id, if success == 1 { "turn_completed" } else { "turn_failed" }, if success == 1 { "continue" } else { "retry" }, request_id, assistant_summary)
+    discard refresh_summary(run_id, next_status)
+    return 0
+}
+
+fn failure_count(run_id: str) -> i32 {
+    return apputil.parse_i32(state_failure_count(json.parse(load_state_json(run_id))))
+}
+
+fn auto_continue_pending(run_id: str) -> i32 {
+    if state_auto_continue_pending(json.parse(load_state_json(run_id))) == "true" {
+        return 1
+    }
+    return 0
+}
+
+fn run_status(run_id: str) -> str {
+    return state_status(json.parse(load_state_json(run_id)))
+}
+
+fn run_session_id(run_id: str) -> str {
+    return state_session_id(json.parse(load_state_json(run_id)))
+}
+
+fn run_goal(run_id: str) -> str {
+    return state_goal(json.parse(load_state_json(run_id)))
+}
+
+fn latest_summary(run_id: str) -> str {
+    return state_latest_summary(json.parse(load_state_json(run_id)))
+}
+
+fn current_step_id(run_id: str) -> str {
+    let state_parsed = json.parse(load_state_json(run_id))
+    if state_current_step_id(state_parsed) != "" {
+        return state_current_step_id(state_parsed)
+    }
+    return plan_current_step_id(json.parse(load_plan_json(run_id)))
+}
+
+fn progress_excerpt(run_id: str) -> str {
+    let payload = safe_read(run_progress_path(run_id))
+    if payload == "" {
+        return ""
+    }
+    if str.len(payload) <= 1600 {
+        return payload
+    }
+    return str.slice(payload, str.len(payload) - 1600, str.len(payload))
+}
+
+fn plan_summary(run_id: str) -> str {
+    return plan_summary_value(json.parse(load_plan_json(run_id)))
+}
+
+fn goal_summary(run_id: str) -> str {
+    return plan_goal_summary(json.parse(load_plan_json(run_id)))
+}
+
+fn finished_definition(run_id: str) -> str {
+    return plan_finished_definition(json.parse(load_plan_json(run_id)))
+}
+
+fn difficulty(run_id: str) -> str {
+    return plan_difficulty(json.parse(load_plan_json(run_id)))
+}
+
+fn estimated_effort(run_id: str) -> str {
+    return plan_estimated_effort(json.parse(load_plan_json(run_id)))
+}
+
+fn prompt_context(session_id: str) -> str {
+    if has_active_run_for_session(session_id) == 0 {
+        return ""
+    }
+    let run_id = active_run_id_for_session(session_id)
+    let state_payload = load_state_json(run_id)
+    let state_parsed = json.parse(state_payload)
+    let plan_payload = load_plan_json(run_id)
+    let plan_parsed = json.parse(plan_payload)
+    let mut out = "ACTIVE LONG RANGE RUN\n"
+    out = str.concat(out, str.concat("run_id: ", run_id))
+    out = str.concat(out, str.concat("\nrun_status: ", state_status(state_parsed)))
+    out = str.concat(out, str.concat("\nplan_status: ", state_plan_status(state_parsed)))
+    out = str.concat(out, str.concat("\ncurrent_step: ", current_step_id(run_id)))
+    out = str.concat(out, str.concat("\ngoal_summary: ", plan_goal_summary(plan_parsed)))
+    out = str.concat(out, str.concat("\nfinished_definition: ", plan_finished_definition(plan_parsed)))
+    out = str.concat(out, str.concat("\nplan_summary: ", plan_summary_value(plan_parsed)))
+    out = str.concat(out, str.concat("\nlatest_summary: ", state_latest_summary(state_parsed)))
+    return out
+}

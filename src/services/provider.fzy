@@ -1,20 +1,107 @@
+use core.http;
 use core.log;
-use core.thread;
+use core.fs;
 
-fn anthropic_transport() -> i32 {
-    log.info("provider.anthropic_transport", util.log_fields2("component", "provider", "phase", "transport"))
-    return 0
+enum ProviderKind {
+    ProviderAnthropic,
+    ProviderOpenAICompat,
 }
 
-async fn anthropic_transport_async() -> i32 {
-    anthropic_transport()
-    checkpoint()
-    yield()
-    return 0
+fn configured_provider_raw() -> str {
+    let provider = env.get("AGENT_PROVIDER")
+    if provider == "" {
+        return "anthropic"
+    }
+    return provider
+}
+
+fn current_provider_kind() -> ProviderKind {
+    let provider = configured_provider_raw()
+    if provider == "openai" || provider == "openai_compat" || provider == "local" || provider == "local_openai" {
+        return ProviderKind::ProviderOpenAICompat
+    }
+    return ProviderKind::ProviderAnthropic
+}
+
+fn current_provider_name() -> str {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return "openai_compat",
+        _ => return "anthropic",
+    }
+    return "anthropic"
+}
+
+fn latest_model_label() -> str {
+    return str.concat(current_provider_name(), "_latest")
+}
+
+fn default_model_name() -> str {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return openai_compat.default_model_name(),
+        _ => return anthropic.default_model_name(),
+    }
+    return anthropic.default_model_name()
+}
+
+fn request_max_tokens() -> str {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return openai_compat.request_max_tokens(),
+        _ => return anthropic.request_max_tokens(),
+    }
+    return anthropic.request_max_tokens()
+}
+
+fn active_tool_format() -> str {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return "openai_compat",
+        _ => return "anthropic",
+    }
+    return "anthropic"
 }
 
 fn normalize_request() -> i32 {
-    log.info("provider.normalize_request", util.log_fields2("component", "provider", "phase", "normalize_request"))
+    log.info("provider.normalize_request", apputil.log_fields3("component", "provider", "phase", "normalize_request", "provider", current_provider_name()))
+    return 0
+}
+
+fn normalize_response() -> i32 {
+    log.info("provider.normalize_response", apputil.log_fields3("component", "provider", "phase", "normalize_response", "provider", current_provider_name()))
+    return 0
+}
+
+fn translate_tool_calls() -> i32 {
+    log.info("provider.translate_tool_calls", apputil.log_fields3("component", "provider", "phase", "translate_tools", "provider", current_provider_name()))
+    registry.planner_hints()
+    if runtime.config.persist_request_artifacts() == 1 {
+        registry.record_invocation_decision()
+    }
+    return 0
+}
+
+fn stream_completion() -> i32 {
+    log.info("provider.stream_completion", apputil.log_fields3("component", "provider", "phase", "stream_completion", "provider", current_provider_name()))
+    runtime.events.emit_stdout_chunk()
+    return 0
+}
+
+fn map_provider_error() -> i32 {
+    log.warn("provider.map_provider_error", apputil.log_fields3("component", "provider", "phase", "map_error", "provider", current_provider_name()))
+    return 0
+}
+
+fn provider_transport() -> i32 {
+    log.info("provider.transport", apputil.log_fields3("component", "provider", "phase", "transport", "provider", current_provider_name()))
+    return 0
+}
+
+async fn provider_transport_async() -> i32 {
+    provider_transport()
+    checkpoint()
+    yield()
     return 0
 }
 
@@ -24,23 +111,9 @@ async fn normalize_request_async() -> i32 {
     return 0
 }
 
-fn normalize_response() -> i32 {
-    log.info("provider.normalize_response", util.log_fields2("component", "provider", "phase", "normalize_response"))
-    return 0
-}
-
 async fn normalize_response_async() -> i32 {
     normalize_response()
     checkpoint()
-    return 0
-}
-
-fn translate_tool_calls() -> i32 {
-    log.info("provider.translate_tool_calls", util.log_fields2("component", "provider", "phase", "translate_tools"))
-    registry.planner_hints()
-    if runtime.config.persist_request_artifacts() == 1 {
-        registry.record_invocation_decision()
-    }
     return 0
 }
 
@@ -50,19 +123,81 @@ async fn translate_tool_calls_async() -> i32 {
     return 0
 }
 
-fn stream_completion() -> i32 {
-    log.info("provider.stream_completion", util.log_fields2("component", "provider", "phase", "stream_completion"))
-    runtime.events.emit_stdout_chunk()
-    return 0
-}
-
 async fn stream_completion_async() -> i32 {
     stream_completion()
     checkpoint()
     return 0
 }
 
-fn map_provider_error() -> i32 {
-    log.warn("provider.map_provider_error", util.log_fields2("component", "provider", "phase", "map_error"))
-    return 0
+fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str) -> str {
+    provider_transport()
+    normalize_request()
+    translate_tool_calls()
+    stream_completion()
+    let provider_name = current_provider_name()
+    let max_tokens = request_max_tokens()
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent")
+        fs.write_file(
+            "/tmp/fzyagent/provider.dispatch.json",
+            json.object(#{
+                "provider": json.str(provider_name),
+                "max_tokens": json.str(max_tokens),
+                "messages_chars": json.str(str.from_i32(str.len(messages_json))),
+                "tools_chars": json.str(str.from_i32(str.len(tools_json))),
+                "system_prompt_chars": json.str(str.from_i32(str.len(system_prompt))),
+            }),
+        )
+    }
+    let mut raw = ""
+    if provider_name == "openai_compat" {
+        if runtime.config.persist_request_artifacts() == 1 {
+            log.info("provider.dispatch.openai_compat", apputil.log_fields2("component", "provider", "dispatch", "openai_compat"))
+        }
+        raw = openai_compat.request_messages_sync(messages_json, tools_json, system_prompt, max_tokens)
+    } else {
+        if runtime.config.persist_request_artifacts() == 1 {
+            log.info("provider.dispatch.anthropic", apputil.log_fields2("component", "provider", "dispatch", "anthropic"))
+        }
+        raw = anthropic.request_messages_sync(messages_json, tools_json, system_prompt, max_tokens)
+    }
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.write_file(
+            "/tmp/fzyagent/provider.dispatch.result.json",
+            json.object(#{
+                "provider": json.str(provider_name),
+                "http_status": json.str(str.from_i32(http.last_status())),
+                "last_error": json.str(http.last_error()),
+                "raw_chars": json.str(str.from_i32(str.len(raw))),
+            }),
+        )
+    }
+    normalize_response()
+    return raw
+}
+
+fn last_status() -> i32 {
+    return http.last_status()
+}
+
+fn last_error() -> str {
+    return http.last_error()
+}
+
+fn current_status_label(status: i32) -> str {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return openai_compat.status_label(status),
+        _ => return anthropic.status_label(status),
+    }
+    return anthropic.status_label(status)
+}
+
+fn smoke() -> i32 {
+    let kind = current_provider_kind()
+    match kind {
+        ProviderKind::ProviderOpenAICompat => return openai_compat.smoke(),
+        _ => return anthropic.smoke(),
+    }
+    return anthropic.smoke()
 }

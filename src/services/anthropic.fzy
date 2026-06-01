@@ -1,7 +1,7 @@
 use core.http;
 use core.time;
-use core.thread;
 use core.log;
+use core.fs;
 
 enum ModelClass {
     ClaudeHaiku45,
@@ -38,60 +38,55 @@ fn queue_headers() -> i32 {
     return 0
 }
 
-fn queue_stream_headers() -> i32 {
-    discard queue_headers()
-    discard http.header_set("accept", "text/event-stream")
-    return 0
-}
-
-fn smoke_haiku() -> i32 {
-    log.info("anthropic.smoke_haiku start", util.log_fields2("component", "anthropic", "phase", "smoke_start"))
-    let model = default_model_name()
-    let message = util.json_obj2("role", json.str("user"), "content", json.str("Give a short agent runtime status update"))
-    let messages = util.json_arr1(message)
-    let body = util.json_obj3("model", json.str(model), "max_tokens", json.raw("128"), "messages", messages)
-
-    provider.anthropic_transport()
-    provider.normalize_request()
-    provider.translate_tool_calls()
-    provider.stream_completion()
-
+fn smoke() -> i32 {
+    log.info("anthropic.smoke start", apputil.log_fields2("component", "anthropic", "phase", "smoke_start"))
+    let message = apputil.json_obj2("role", json.str("user"), "content", json.str("Give a short agent runtime status update"))
+    let messages = apputil.json_arr1(message)
+    let body = build_request_payload(messages, "[]", "You are the fzyagent runtime.", "128")
     queue_headers()
     discard http.post_json_capture(endpoint(), body)
     let status = http.last_status()
     let status_text = status_label(status)
-    log.info("anthropic.smoke_haiku response", util.log_fields3("component", "anthropic", "phase", "smoke_response", "status", status_text))
-
-    provider.normalize_response()
+    log.info("anthropic.smoke response", apputil.log_fields3("component", "anthropic", "phase", "smoke_response", "status", status_text))
     time.sleep_ms(8)
     return status
 }
 
-fn request_messages_sync(payload: str) -> str {
-    provider.anthropic_transport()
-    provider.normalize_request()
-    provider.translate_tool_calls()
-    provider.stream_completion()
-    queue_headers()
-    let out = http.post_json_capture(endpoint(), payload)
-    provider.normalize_response()
-    return out
+fn request_max_tokens() -> str {
+    let configured = env.get("ANTHROPIC_MAX_TOKENS")
+    if configured == "" {
+        return "8192"
+    }
+    return configured
 }
 
-fn finish_message_stream() -> i32 {
-    provider.normalize_response()
-    return 0
+fn build_request_payload(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "model", json.str(default_model_name()))
+    discard map.set(payload, "system", json.str(system_prompt))
+    discard map.set(payload, "max_tokens", json.raw(max_tokens))
+    discard map.set(payload, "stream", json.raw("false"))
+    discard map.set(payload, "messages", json.raw(messages_json))
+    discard map.set(payload, "tools", json.raw(tools_json))
+    return json.object(payload)
 }
 
-async fn request_messages(payload: str) -> str {
-    await provider.anthropic_transport_async()
-    await provider.normalize_request_async()
-    await provider.translate_tool_calls_async()
-    await provider.stream_completion_async()
-
+fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
     queue_headers()
+    let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent/provider.debug")
+        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
+    }
     let out = http.post_json_capture(endpoint(), payload)
-    await provider.normalize_response_async()
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent/provider.debug")
+        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.response.raw", out)
+        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.response.meta.json", json.object(#{
+            "status": json.str(str.from_i32(http.last_status())),
+            "error": json.str(http.last_error()),
+        }))
+    }
     return out
 }
 
@@ -122,7 +117,15 @@ fn default_model_class() -> ModelClass {
 }
 
 fn default_model_name() -> str {
-    return env.get("ANTHROPIC_MODEL")
+    let configured = env.get("AGENT_MODEL")
+    if configured != "" {
+        return configured
+    }
+    let model = env.get("ANTHROPIC_MODEL")
+    if model != "" {
+        return model
+    }
+    return "claude-haiku-4-5-20251001"
 }
 
 fn model_code(model: ModelClass) -> i32 {
@@ -139,26 +142,4 @@ fn model_name(model: ModelClass) -> str {
         _ => return env.get("ANTHROPIC_MODEL"),
     }
     return env.get("ANTHROPIC_MODEL")
-}
-
-fn provider_fallback() -> i32 {
-    provider_class_code(resolve_provider(1))
-    provider.map_provider_error()
-    time.sleep_ms(4)
-    return 0
-}
-
-fn resolve_provider(use_fallback: i32) -> ProviderClass {
-    if use_fallback == 1 {
-        return ProviderClass::AnthropicFallback
-    }
-    return ProviderClass::AnthropicPrimary
-}
-
-fn provider_class_code(provider_class: ProviderClass) -> i32 {
-    match provider_class {
-        ProviderClass::AnthropicPrimary => return 1,
-        _ => return 2,
-    }
-    return 2
 }

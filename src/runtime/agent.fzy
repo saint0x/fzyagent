@@ -47,18 +47,20 @@ fn transcript_context(session_id: str) -> str {
 fn build_turn_prompt(session_id: str, prompt: str) -> str {
     let system_prompt = load_system_prompt()
     let transcript = transcript_context(session_id)
+    let longrange_context = services.longrange.prompt_context(session_id)
     return str.concat(
         "SYSTEM PROMPT\n",
         system_prompt,
         "\n\nSESSION TRANSCRIPT\n",
         transcript,
+        if longrange_context == "" { "" } else { str.concat("\n\nLONG RANGE CONTEXT\n", longrange_context) },
         "\n\nLATEST USER MESSAGE\n",
         prompt,
     )
 }
 
 fn initial_messages_json(session_id: str, prompt: str) -> str {
-    let message = util.json_obj2("role", json.str("user"), "content", json.str(build_turn_prompt(session_id, prompt)))
+    let message = apputil.json_obj2("role", json.str("user"), "content", json.str(build_turn_prompt(session_id, prompt)))
     let items = list.new()
     discard list.push(items, message)
     return json.array(items)
@@ -115,7 +117,7 @@ fn content_block_tool_input_raw(parsed: JsonHandle, index: str) -> str {
 fn content_block_json(parsed: JsonHandle, index: str) -> str {
     let block_type = content_block_type(parsed, index)
     if block_type == "text" {
-        return util.json_obj2("type", json.str("text"), "text", json.str(content_block_text(parsed, index)))
+        return apputil.json_obj2("type", json.str("text"), "text", json.str(content_block_text(parsed, index)))
     }
     if block_type == "tool_use" {
         let payload = map.new()
@@ -142,7 +144,7 @@ fn assistant_message_json(parsed: JsonHandle) -> str {
     discard maybe_push_content_block(items, parsed, "1")
     discard maybe_push_content_block(items, parsed, "2")
     discard maybe_push_content_block(items, parsed, "3")
-    return util.json_obj2("role", json.str("assistant"), "content", json.raw(json.array(items)))
+    return apputil.json_obj2("role", json.str("assistant"), "content", json.raw(json.array(items)))
 }
 
 fn content_block_text_or_empty(parsed: JsonHandle, index: str) -> str {
@@ -170,25 +172,6 @@ fn extract_text_block(parsed: JsonHandle) -> str {
         return text3
     }
     return json.get_str(parsed, "completion")
-}
-
-fn request_max_tokens() -> str {
-    let configured = env.get("ANTHROPIC_MAX_TOKENS")
-    if configured == "" {
-        return "8192"
-    }
-    return configured
-}
-
-fn request_payload_for(messages_json: str, tools_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "model", json.str(services.anthropic.default_model_name()))
-    discard map.set(payload, "system", json.str(load_system_prompt()))
-    discard map.set(payload, "max_tokens", json.raw(request_max_tokens()))
-    discard map.set(payload, "stream", json.raw("true"))
-    discard map.set(payload, "messages", json.raw(messages_json))
-    discard map.set(payload, "tools", json.raw(tools_json))
-    return json.object(payload)
 }
 
 struct StreamBlock {
@@ -279,7 +262,7 @@ fn stream_block_apply_delta(block: StreamBlock, delta: JsonHandle) -> StreamBloc
 
 fn stream_block_json(block: StreamBlock) -> str {
     if block.block_type == "text" {
-        return util.json_obj2("type", json.str("text"), "text", json.str(block.text))
+        return apputil.json_obj2("type", json.str("text"), "text", json.str(block.text))
     }
     if block.block_type == "tool_use" {
         let payload = map.new()
@@ -338,27 +321,10 @@ fn parsed_message_has_content(parsed: JsonHandle) -> i32 {
 }
 
 fn upstream_error_raw_response(payload: str, streamed_raw: str) -> str {
-    if streamed_raw != "" && streamed_raw != empty_streamed_response_json() {
-        return streamed_raw
-    }
-    let captured = services.anthropic.request_messages_sync(payload)
-    if captured != "" {
-        return captured
-    }
     return streamed_raw
 }
 
 fn final_response_raw_response(payload: str, streamed_raw: str) -> str {
-    if streamed_raw != "" {
-        let parsed = json.parse(streamed_raw)
-        if parsed_message_has_content(parsed) == 1 {
-            return streamed_raw
-        }
-    }
-    let captured = services.anthropic.request_messages_sync(payload)
-    if captured != "" {
-        return captured
-    }
     return streamed_raw
 }
 
@@ -400,15 +366,20 @@ fn turn_tool_events_raw(parsed: JsonHandle) -> str {
 }
 
 fn turn_error_json(message: str, raw_response: str, transport_error: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.control_error_status(), "anthropic", "", raw_response, "", tool_events_json, http_status, message, transport_error)
+    return model.types.turn_result_json(model.types.control_error_status(), services.provider.current_provider_name(), "", raw_response, "", tool_events_json, http_status, message, transport_error)
 }
 
 fn turn_success_json(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.control_ok_status(), "anthropic", assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
+    return model.types.turn_result_json(model.types.control_ok_status(), services.provider.current_provider_name(), assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
 }
 
 fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id: str) -> str {
-    let normalized = api.rpc.single_request_json(request_id, tool_id, if input_raw == "" { "{}" } else { input_raw })
+    let normalized = apputil.json_obj4(
+        "request_id", json.str(request_id),
+        "tool_id", json.str(tool_id),
+        "input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
+        "session_id", json.str(session_id),
+    )
     let tool_status = services.tools.dispatch_tool_request(tool_id, normalized)
 
     let result = services.tools.last_run_json(tool_id)
@@ -486,13 +457,14 @@ fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str
 }
 
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32) -> str {
-    let payload = request_payload_for(messages_json, services.registry.list_tool_definitions_json())
-    let raw = services.anthropic.request_messages_sync(payload)
-    let status = services.anthropic.last_status()
+    let payload = messages_json
+    let raw = services.provider.request_messages_sync(messages_json, services.registry.list_tool_definitions_json(), load_system_prompt())
+    let status = services.provider.last_status()
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
     if status < 200 || status >= 300 {
         let upstream_raw = upstream_error_raw_response(payload, raw)
-        return turn_error_json("", upstream_raw, raw, accumulated_events_json, str.from_i32(status))
+        let transport_error = if raw == "" { services.provider.last_error() } else { raw }
+        return turn_error_json("", upstream_raw, transport_error, accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)
@@ -508,7 +480,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
         }
         let response_text = extract_text_block(final_parsed)
         let assistant_text = if response_text == "" { final_raw } else { response_text }
-        discard services.sessions.record_assistant_for(session_id, assistant_text, request_id, "anthropic_latest", str.from_i32(depth))
+        discard services.sessions.record_assistant_for(session_id, assistant_text, request_id, services.provider.latest_model_label(), str.from_i32(depth))
         return turn_success_json(assistant_text, final_raw, json.get_str(final_parsed, "stop_reason"), accumulated_events_json, str.from_i32(status))
     }
 
@@ -518,7 +490,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     let bundle_parsed = json.parse(tool_bundle)
     let tool_results_array = json.get_str(json.get(bundle_parsed, "tool_results"), "raw")
     let tool_events_array = json.get_str(json.get(bundle_parsed, "tool_events"), "raw")
-    let tool_result_message = util.json_obj2("role", json.str("user"), "content", json.raw(tool_results_array))
+    let tool_result_message = apputil.json_obj2("role", json.str("user"), "content", json.raw(tool_results_array))
     write_debug("tool_result_message.json", tool_result_message)
     let next_messages = append_message_json(append_message_json(messages_json, assistant_message), tool_result_message)
     write_debug("next_messages.json", next_messages)
@@ -537,7 +509,7 @@ fn run_session_turn_streamed(session_id: str, prompt: str, request_id: str) -> s
 }
 
 fn run_loop() -> i32 {
-    log.info("runtime.agent started", util.log_fields2("component", "runtime.agent", "phase", "loop_start"))
+    log.info("runtime.agent started", apputil.log_fields2("component", "runtime.agent", "phase", "loop_start"))
     loop {
         turn_begin()
         checkpoint()
@@ -551,7 +523,7 @@ fn turn_begin() -> i32 {
 }
 
 fn dispatch_parallel_tools() -> i32 {
-    log.info("runtime.agent dispatching tools", util.log_fields2("component", "runtime.agent", "phase", "dispatch_parallel_tools"))
+    log.info("runtime.agent dispatching tools", apputil.log_fields2("component", "runtime.agent", "phase", "dispatch_parallel_tools"))
     services.tools.run_parallel()
     checkpoint()
     return 0

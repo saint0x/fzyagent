@@ -14,6 +14,10 @@ fn anthropic_tools_array_path() -> str {
     return "/tmp/fzyagent/registry.anthropic.tools.json"
 }
 
+fn openai_tools_array_path() -> str {
+    return "/tmp/fzyagent/registry.openai_compat.tools.json"
+}
+
 fn summary_path() -> str {
     return "/tmp/fzyagent/registry.summary.json"
 }
@@ -28,6 +32,14 @@ fn hints_path() -> str {
 
 fn audit_path() -> str {
     return "/tmp/fzyagent/registry.audit.log"
+}
+
+fn configured_provider_name() -> str {
+    let provider = env.get("AGENT_PROVIDER")
+    if provider == "openai" || provider == "openai_compat" || provider == "local" || provider == "local_openai" {
+        return "openai_compat"
+    }
+    return "anthropic"
 }
 
 fn ensure_state_dir() -> i32 {
@@ -47,15 +59,15 @@ fn default_input_schema() -> str {
 }
 
 fn schema_string_json() -> str {
-    return util.json_obj1("type", json.str("string"))
+    return apputil.json_obj1("type", json.str("string"))
 }
 
 fn schema_object_json() -> str {
-    return util.json_obj1("type", json.str("object"))
+    return apputil.json_obj1("type", json.str("object"))
 }
 
 fn schema_array_items_json(items_json: str) -> str {
-    return util.json_obj2("type", json.str("array"), "items", json.raw(items_json))
+    return apputil.json_obj2("type", json.str("array"), "items", json.raw(items_json))
 }
 
 fn required1(a: str) -> ListHandle {
@@ -82,13 +94,18 @@ fn anthropic_tool_json(tool_id: str, description: str, input_schema_json: str) -
     return model.types.provider_tool_json(tool_id, description, input_schema_json)
 }
 
+fn openai_tool_json(tool_id: str, description: str, input_schema_json: str) -> str {
+    return model.types.provider_tool_json_openai(tool_id, description, input_schema_json)
+}
+
 fn custom_tool_json(tool_id: str, description: str, kind: str, mode: str, input_schema_json: str) -> str {
     return model.types.registry_tool_json(tool_id, description, kind, "ready", mode, "custom", "single", "true", "true", api.rpc.tool_protocol_version(), "http+native-rpc", input_schema_json)
 }
 
-fn append_tool_pair(tools: ListHandle, anthropic: ListHandle, tool_json: str, anthropic_json: str) -> i32 {
+fn append_tool_triplet(tools: ListHandle, anthropic: ListHandle, openai: ListHandle, tool_json: str, anthropic_json: str, openai_json: str) -> i32 {
     discard list.push(tools, json.raw(tool_json))
     discard list.push(anthropic, json.raw(anthropic_json))
+    discard list.push(openai, json.raw(openai_json))
     return 0
 }
 
@@ -164,7 +181,58 @@ fn tool_schema_runtime_control() -> str {
     return default_input_schema()
 }
 
-fn append_builtin_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
+fn plan_step_schema() -> str {
+    let properties = map.new()
+    discard map.set(properties, "step_id", json.raw(schema_string_json()))
+    discard map.set(properties, "title", json.raw(schema_string_json()))
+    discard map.set(properties, "description", json.raw(schema_string_json()))
+    discard map.set(properties, "status", json.raw(schema_string_json()))
+    discard map.set(properties, "done_criteria", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("step_id"))
+}
+
+fn tool_schema_plan_write() -> str {
+    let properties = map.new()
+    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "goal_summary", json.raw(schema_string_json()))
+    discard map.set(properties, "finished_definition", json.raw(schema_string_json()))
+    discard map.set(properties, "difficulty", json.raw(schema_string_json()))
+    discard map.set(properties, "estimated_effort", json.raw(schema_string_json()))
+    discard map.set(properties, "current_step_id", json.raw(schema_string_json()))
+    discard map.set(properties, "plan_summary", json.raw(schema_string_json()))
+    discard map.set(properties, "steps", json.raw(schema_array_items_json(plan_step_schema())))
+    return object_schema_json(properties, required1("goal_summary"))
+}
+
+fn tool_schema_goal_complete() -> str {
+    let properties = map.new()
+    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "summary", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("summary"))
+}
+
+fn tool_schema_longrange_start() -> str {
+    let properties = map.new()
+    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    discard map.set(properties, "goal", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("goal"))
+}
+
+fn tool_schema_longrange_message() -> str {
+    let properties = map.new()
+    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "message", json.raw(schema_string_json()))
+    discard map.set(properties, "interrupt", json.raw(schema_string_json()))
+    return object_schema_json(properties, required1("message"))
+}
+
+fn tool_schema_longrange_select() -> str {
+    let properties = map.new()
+    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    return object_schema_json(properties, list.new())
+}
+
+fn append_builtin_tools(tools: ListHandle, anthropic: ListHandle, openai: ListHandle) -> i32 {
     let empty_schema = default_input_schema()
     let command_schema = tool_schema_command()
     let grep_schema = tool_schema_grep()
@@ -175,50 +243,66 @@ fn append_builtin_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
     let promptsmith_schema = tool_schema_promptsmith()
     let fzydoc_schema = tool_schema_fzydoc()
     let runtime_control_schema = tool_schema_runtime_control()
+    let plan_write_schema = tool_schema_plan_write()
+    let goal_complete_schema = tool_schema_goal_complete()
+    let longrange_start_schema = tool_schema_longrange_start()
+    let longrange_message_schema = tool_schema_longrange_message()
+    let longrange_select_schema = tool_schema_longrange_select()
 
-    discard append_tool_pair(tools, anthropic, built_tool_json("bash", "Run a shell command in the shared workspace.", "process", "single", "single", "true", "true", command_schema), anthropic_tool_json("bash", "Run a shell command in the shared workspace.", command_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("parallel_bash", "Run two shell commands in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_bash", "Run two shell commands in parallel.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("grep_search", "Search the workspace with grep.", "process", "search", "single", "true", "true", grep_schema), anthropic_tool_json("grep_search", "Search the workspace with grep.", grep_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("queue_status", "Inspect the background queue control-plane state.", "workflow", "control", "single", "true", "true", empty_schema), anthropic_tool_json("queue_status", "Inspect the background queue control-plane state.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("queue_enqueue", "Queue a tool request for later background execution.", "workflow", "control", "single", "true", "false", queue_enqueue_schema), anthropic_tool_json("queue_enqueue", "Queue a tool request for later background execution.", queue_enqueue_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("queue_spawn", "Spawn detached background processing for queued work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_spawn", "Spawn detached background processing for queued work.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("queue_process", "Drain queued work through the background executor.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_process", "Drain queued work through the background executor.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("queue_cancel", "Request cancellation for queued background work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_cancel", "Request cancellation for queued background work.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("parallel_grep", "Run two grep searches in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_grep", "Run two grep searches in parallel.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", "workflow", "sequence", "sequential", "true", "false", steps_schema), anthropic_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", steps_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", "workflow", "parallel", "parallel", "false", "true", steps_schema), anthropic_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", steps_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("release_audit", "Run a release-oriented multi-signal workflow.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("release_audit", "Run a release-oriented multi-signal workflow.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("timeout_probe", "Intentionally probe timeout and error behavior.", "process", "bounded", "single", "true", "true", empty_schema), anthropic_tool_json("timeout_probe", "Intentionally probe timeout and error behavior.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("workspace_digest", "Summarize the current workspace.", "process", "analysis", "single", "true", "true", empty_schema), anthropic_tool_json("workspace_digest", "Summarize the current workspace.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("project_seed", "Assemble a richer project context bundle.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("project_seed", "Assemble a richer project context bundle.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("aegis", "Use the Aegis browser runtime.", "browser", "headless", "single", "true", "true", aegis_schema), anthropic_tool_json("aegis", "Use the Aegis browser runtime.", aegis_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("browser_ops_seed", "Assemble a browser-oriented context bundle.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("browser_ops_seed", "Assemble a browser-oriented context bundle.", empty_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("toolsmith", "Create and inspect custom runtime tools.", "workflow", "authoring", "single", "true", "false", toolsmith_schema), anthropic_tool_json("toolsmith", "Create and inspect custom runtime tools.", toolsmith_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("promptsmith", "Inspect and update the agent system prompt.", "workflow", "authoring", "single", "true", "false", promptsmith_schema), anthropic_tool_json("promptsmith", "Inspect and update the agent system prompt.", promptsmith_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("fzydoc", "Search local FZY docs and showcase material.", "docs", "analysis", "single", "true", "true", fzydoc_schema), anthropic_tool_json("fzydoc", "Search local FZY docs and showcase material.", fzydoc_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", runtime_control_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", runtime_control_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", runtime_control_schema))
-    discard append_tool_pair(tools, anthropic, built_tool_json("all", "Run the default parallel tool set.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("all", "Run the default parallel tool set.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("bash", "Run a shell command in the shared workspace.", "process", "single", "single", "true", "true", command_schema), anthropic_tool_json("bash", "Run a shell command in the shared workspace.", command_schema), openai_tool_json("bash", "Run a shell command in the shared workspace.", command_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("parallel_bash", "Run two shell commands in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_bash", "Run two shell commands in parallel.", empty_schema), openai_tool_json("parallel_bash", "Run two shell commands in parallel.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("grep_search", "Search the workspace with grep.", "process", "search", "single", "true", "true", grep_schema), anthropic_tool_json("grep_search", "Search the workspace with grep.", grep_schema), openai_tool_json("grep_search", "Search the workspace with grep.", grep_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("queue_status", "Inspect the background queue control-plane state.", "workflow", "control", "single", "true", "true", empty_schema), anthropic_tool_json("queue_status", "Inspect the background queue control-plane state.", empty_schema), openai_tool_json("queue_status", "Inspect the background queue control-plane state.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("queue_enqueue", "Queue a tool request for later background execution.", "workflow", "control", "single", "true", "false", queue_enqueue_schema), anthropic_tool_json("queue_enqueue", "Queue a tool request for later background execution.", queue_enqueue_schema), openai_tool_json("queue_enqueue", "Queue a tool request for later background execution.", queue_enqueue_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("queue_spawn", "Spawn detached background processing for queued work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_spawn", "Spawn detached background processing for queued work.", empty_schema), openai_tool_json("queue_spawn", "Spawn detached background processing for queued work.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("queue_process", "Drain queued work through the background executor.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_process", "Drain queued work through the background executor.", empty_schema), openai_tool_json("queue_process", "Drain queued work through the background executor.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("queue_cancel", "Request cancellation for queued background work.", "workflow", "control", "single", "true", "false", empty_schema), anthropic_tool_json("queue_cancel", "Request cancellation for queued background work.", empty_schema), openai_tool_json("queue_cancel", "Request cancellation for queued background work.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("parallel_grep", "Run two grep searches in parallel.", "process", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("parallel_grep", "Run two grep searches in parallel.", empty_schema), openai_tool_json("parallel_grep", "Run two grep searches in parallel.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", "workflow", "sequence", "sequential", "true", "false", steps_schema), anthropic_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", steps_schema), openai_tool_json("tool_sequence", "Run multiple tools in a deterministic sequence and capture each step result by id.", steps_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", "workflow", "parallel", "parallel", "false", "true", steps_schema), anthropic_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", steps_schema), openai_tool_json("tool_parallel", "Run multiple tools in parallel and return each step result by id.", steps_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("release_audit", "Run a release-oriented multi-signal workflow.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("release_audit", "Run a release-oriented multi-signal workflow.", empty_schema), openai_tool_json("release_audit", "Run a release-oriented multi-signal workflow.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("timeout_probe", "Intentionally probe timeout and error behavior.", "process", "bounded", "single", "true", "true", empty_schema), anthropic_tool_json("timeout_probe", "Intentionally probe timeout and error behavior.", empty_schema), openai_tool_json("timeout_probe", "Intentionally probe timeout and error behavior.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("workspace_digest", "Summarize the current workspace.", "process", "analysis", "single", "true", "true", empty_schema), anthropic_tool_json("workspace_digest", "Summarize the current workspace.", empty_schema), openai_tool_json("workspace_digest", "Summarize the current workspace.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("project_seed", "Assemble a richer project context bundle.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("project_seed", "Assemble a richer project context bundle.", empty_schema), openai_tool_json("project_seed", "Assemble a richer project context bundle.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("aegis", "Use the Aegis browser runtime.", "browser", "headless", "single", "true", "true", aegis_schema), anthropic_tool_json("aegis", "Use the Aegis browser runtime.", aegis_schema), openai_tool_json("aegis", "Use the Aegis browser runtime.", aegis_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("browser_ops_seed", "Assemble a browser-oriented context bundle.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("browser_ops_seed", "Assemble a browser-oriented context bundle.", empty_schema), openai_tool_json("browser_ops_seed", "Assemble a browser-oriented context bundle.", empty_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("toolsmith", "Create and inspect custom runtime tools.", "workflow", "authoring", "single", "true", "false", toolsmith_schema), anthropic_tool_json("toolsmith", "Create and inspect custom runtime tools.", toolsmith_schema), openai_tool_json("toolsmith", "Create and inspect custom runtime tools.", toolsmith_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("promptsmith", "Inspect and update the agent system prompt.", "workflow", "authoring", "single", "true", "false", promptsmith_schema), anthropic_tool_json("promptsmith", "Inspect and update the agent system prompt.", promptsmith_schema), openai_tool_json("promptsmith", "Inspect and update the agent system prompt.", promptsmith_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("fzydoc", "Search local FZY docs and showcase material.", "docs", "analysis", "single", "true", "true", fzydoc_schema), anthropic_tool_json("fzydoc", "Search local FZY docs and showcase material.", fzydoc_schema), openai_tool_json("fzydoc", "Search local FZY docs and showcase material.", fzydoc_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", runtime_control_schema), openai_tool_json("runtime_checkpoint", "Persist the current runtime checkpoint and supervisor state.", runtime_control_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", runtime_control_schema), openai_tool_json("runtime_recover", "Restore the current runtime checkpoint and refresh inflight control-plane state.", runtime_control_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", "workflow", "control", "single", "true", "false", runtime_control_schema), anthropic_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", runtime_control_schema), openai_tool_json("runtime_shutdown", "Request graceful runtime shutdown and persist shutdown artifacts.", runtime_control_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("longrange_start", "Start an autonomous long-range run for a goal.", "workflow", "control", "single", "true", "false", longrange_start_schema), anthropic_tool_json("longrange_start", "Start an autonomous long-range run for a goal.", longrange_start_schema), openai_tool_json("longrange_start", "Start an autonomous long-range run for a goal.", longrange_start_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("longrange_status", "Inspect the active autonomous long-range run.", "workflow", "control", "single", "true", "false", longrange_select_schema), anthropic_tool_json("longrange_status", "Inspect the active autonomous long-range run.", longrange_select_schema), openai_tool_json("longrange_status", "Inspect the active autonomous long-range run.", longrange_select_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("longrange_cancel", "Cancel the active autonomous long-range run.", "workflow", "control", "single", "true", "false", longrange_select_schema), anthropic_tool_json("longrange_cancel", "Cancel the active autonomous long-range run.", longrange_select_schema), openai_tool_json("longrange_cancel", "Cancel the active autonomous long-range run.", longrange_select_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("longrange_steer", "Queue or interrupt the next autonomous long-range turn with a steering message.", "workflow", "control", "single", "true", "false", longrange_message_schema), anthropic_tool_json("longrange_steer", "Queue or interrupt the next autonomous long-range turn with a steering message.", longrange_message_schema), openai_tool_json("longrange_steer", "Queue or interrupt the next autonomous long-range turn with a steering message.", longrange_message_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("plan_create", "Create the durable plan and success criteria for the active long-range run.", "workflow", "planning", "single", "true", "false", plan_write_schema), anthropic_tool_json("plan_create", "Create the durable plan and success criteria for the active long-range run.", plan_write_schema), openai_tool_json("plan_create", "Create the durable plan and success criteria for the active long-range run.", plan_write_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("plan_update", "Update the durable plan and current step for the active long-range run.", "workflow", "planning", "single", "true", "false", plan_write_schema), anthropic_tool_json("plan_update", "Update the durable plan and current step for the active long-range run.", plan_write_schema), openai_tool_json("plan_update", "Update the durable plan and current step for the active long-range run.", plan_write_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("plan_view", "Read the durable plan for the active long-range run.", "workflow", "planning", "single", "true", "false", longrange_select_schema), anthropic_tool_json("plan_view", "Read the durable plan for the active long-range run.", longrange_select_schema), openai_tool_json("plan_view", "Read the durable plan for the active long-range run.", longrange_select_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("goal_complete", "Mark the active long-range run fully complete.", "workflow", "planning", "single", "true", "false", goal_complete_schema), anthropic_tool_json("goal_complete", "Mark the active long-range run fully complete.", goal_complete_schema), openai_tool_json("goal_complete", "Mark the active long-range run fully complete.", goal_complete_schema))
+    discard append_tool_triplet(tools, anthropic, openai, built_tool_json("all", "Run the default parallel tool set.", "workflow", "parallel", "parallel", "false", "true", empty_schema), anthropic_tool_json("all", "Run the default parallel tool set.", empty_schema), openai_tool_json("all", "Run the default parallel tool set.", empty_schema))
     return 0
 }
 
-fn append_custom_tools(tools: ListHandle, anthropic: ListHandle) -> i32 {
+fn append_custom_tools(tools: ListHandle, anthropic: ListHandle, openai: ListHandle) -> i32 {
     if fs.exists(custom_tools_root()) == 0 {
         return 0
     }
     discard tools
     discard anthropic
+    discard openai
     return 0
 }
 
 fn build_registry_payload() -> str {
     let tools = list.new()
     let anthropic = list.new()
-    discard append_builtin_tools(tools, anthropic)
-    discard append_custom_tools(tools, anthropic)
-    let meta = model.types.registry_meta_json("2026-05-27", "anthropic", "true", "fzyagent")
+    let openai = list.new()
+    discard append_builtin_tools(tools, anthropic, openai)
+    discard append_custom_tools(tools, anthropic, openai)
+    let meta = model.types.registry_meta_json("2026-05-27", configured_provider_name(), "true", "fzyagent")
     fs.write_file(anthropic_tools_array_path(), json.array(anthropic))
+    fs.write_file(openai_tools_array_path(), json.array(openai))
     return model.types.registry_payload_json(json.array(tools), meta)
 }
 
@@ -447,7 +531,6 @@ fn list_tools_json() -> str {
 
 fn refresh_runtime() -> i32 {
     discard rebuild_registry()
-    fs.flush()
     discard record_audit("refresh_runtime")
     return 0
 }
@@ -459,7 +542,8 @@ fn hot_reload() -> i32 {
 
 fn list_tool_definitions_json() -> str {
     discard list_tools()
-    let payload = fs.read_file(anthropic_tools_array_path())
+    let path = if configured_provider_name() == "openai_compat" { openai_tools_array_path() } else { anthropic_tools_array_path() }
+    let payload = fs.read_file(path)
     if payload == "" {
         return "[]"
     }
@@ -467,7 +551,6 @@ fn list_tool_definitions_json() -> str {
 }
 
 fn evict_stale() -> i32 {
-    fs.flush()
     discard audit_evict()
     return 0
 }
@@ -507,7 +590,6 @@ fn summary_json() -> str {
 fn heartbeat() -> i32 {
     discard export_index_and_summary()
     discard record_audit("heartbeat")
-    fs.flush()
     return 0
 }
 

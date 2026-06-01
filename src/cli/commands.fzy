@@ -114,7 +114,15 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
         discard render.print_error("prompt denied by safety policy")
         return 13
     }
-    discard services.sessions.post_message_for(session_id, filtered, request_id, "anthropic_latest")
+    if services.longrange.has_active_run_for_session(session_id) == 1 {
+        let run_id = services.longrange.enqueue_steer_for_session(session_id, filtered, request_id, 0)
+        if run_id != "" {
+            discard runtime.longrange.kick()
+            discard render.print_info(str.concat("queued for long-range run ", run_id))
+            return 0
+        }
+    }
+    discard services.sessions.post_message_for(session_id, filtered, request_id, services.provider.latest_model_label())
     let raw = runtime.agent.run_session_turn_streamed(session_id, filtered, request_id)
     let parsed = json.parse(raw)
     if runtime.agent.turn_response_is_ok(parsed) == 1 {
@@ -130,7 +138,7 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
 fn chat_banner() -> i32 {
     discard render.title(
         "fzyagent",
-        str.concat("chat | session=", session_name(), " | model=", services.anthropic.default_model_name()),
+        str.concat("chat | session=", session_name(), " | provider=", services.provider.current_provider_name(), " | model=", services.provider.default_model_name()),
     )
     discard render.print_info("type /exit to quit, /reset to clear saved history")
     return 0

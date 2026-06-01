@@ -20,6 +20,7 @@ fn save_checkpoint() -> i32 {
         fs.read_file(runtime.sandbox.sandbox_path()),
         fs.read_file(runtime.supervisor.supervisor_state_path()),
         services.tools.queue_summary_json(),
+        services.longrange.summary_json(),
     )
     fs.write_file(checkpoint_path(), payload)
     return 0
@@ -42,6 +43,5 @@ fn recover_inflight_jobs() -> i32 {
     discard restore_checkpoint()
     discard services.tools.monitor_background()
     discard runtime.supervisor.refresh_state()
-    fs.flush()
     return 0
 }

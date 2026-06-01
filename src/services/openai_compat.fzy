@@ -1,0 +1,412 @@
+use core.http;
+use core.time;
+use core.log;
+use core.fs;
+
+fn env_or(key: str, fallback: str) -> str {
+    let value = env.get(key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+fn endpoint() -> str {
+    let configured = env_or("OPENAI_COMPAT_ENDPOINT", "")
+    if configured != "" {
+        if str.ends_with(configured, "/chat/completions") == 1 {
+            return configured
+        }
+        if str.ends_with(configured, "/v1") == 1 {
+            return str.concat(configured, "/chat/completions")
+        }
+        return str.concat(configured, "/v1/chat/completions")
+    }
+    return "http://127.0.0.1:1234/v1/chat/completions"
+}
+
+fn api_key() -> str {
+    let configured = env_or("OPENAI_COMPAT_API_KEY", "")
+    if configured != "" {
+        return configured
+    }
+    return env_or("OPENAI_API_KEY", "")
+}
+
+fn default_model_name() -> str {
+    let configured = env_or("AGENT_MODEL", "")
+    if configured != "" {
+        return configured
+    }
+    let compat = env_or("OPENAI_COMPAT_MODEL", "")
+    if compat != "" {
+        return compat
+    }
+    let openai = env_or("OPENAI_MODEL", "")
+    if openai != "" {
+        return openai
+    }
+    return "local-model"
+}
+
+fn request_max_tokens() -> str {
+    let configured = env_or("OPENAI_COMPAT_MAX_TOKENS", "")
+    if configured != "" {
+        return configured
+    }
+    let generic = env_or("OPENAI_MAX_TOKENS", "")
+    if generic != "" {
+        return generic
+    }
+    return "8192"
+}
+
+fn queue_headers() -> i32 {
+    discard http.header_set("content-type", "application/json")
+    let key = api_key()
+    if key != "" {
+        discard http.header_set("authorization", str.concat("Bearer ", key))
+    }
+    return 0
+}
+
+fn internal_message(parsed: JsonHandle, idx: i32) -> JsonHandle {
+    return json.get(parsed, str.from_i32(idx))
+}
+
+fn internal_role(messages: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_message(messages, idx), "role")
+}
+
+fn internal_content_text(messages: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_message(messages, idx), "content")
+}
+
+fn internal_content_array(messages: JsonHandle, idx: i32) -> JsonHandle {
+    return json.get(internal_message(messages, idx), "content")
+}
+
+fn internal_block(content: JsonHandle, idx: i32) -> JsonHandle {
+    return json.get(content, str.from_i32(idx))
+}
+
+fn internal_block_type(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "type")
+}
+
+fn internal_block_text(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "text")
+}
+
+fn internal_block_tool_id(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "id")
+}
+
+fn internal_block_tool_name(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "name")
+}
+
+fn internal_block_tool_input(content: JsonHandle, idx: i32) -> str {
+    let payload = json.get(internal_block(content, idx), "input")
+    let raw = json.get_str(payload, "raw")
+    if raw == "" {
+        return "{}"
+    }
+    return raw
+}
+
+fn internal_block_tool_result_id(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "tool_use_id")
+}
+
+fn internal_block_tool_result_content(content: JsonHandle, idx: i32) -> str {
+    return json.get_str(internal_block(content, idx), "content")
+}
+
+fn openai_tool_call_json(blocks: JsonHandle, idx: i32) -> str {
+    let function_obj = map.new()
+    discard map.set(function_obj, "name", json.str(internal_block_tool_name(blocks, idx)))
+    discard map.set(function_obj, "arguments", json.str(internal_block_tool_input(blocks, idx)))
+    let payload = map.new()
+    discard map.set(payload, "id", json.str(internal_block_tool_id(blocks, idx)))
+    discard map.set(payload, "type", json.str("function"))
+    discard map.set(payload, "function", json.raw(json.object(function_obj)))
+    return json.object(payload)
+}
+
+fn append_openai_tool_call(tool_calls: ListHandle, blocks: JsonHandle, idx: i32) -> i32 {
+    if internal_block_type(blocks, idx) != "tool_use" {
+        return 0
+    }
+    discard list.push(tool_calls, json.raw(openai_tool_call_json(blocks, idx)))
+    return 0
+}
+
+fn append_text_part(parts: ListHandle, blocks: JsonHandle, idx: i32) -> i32 {
+    if internal_block_type(blocks, idx) != "text" {
+        return 0
+    }
+    let text = internal_block_text(blocks, idx)
+    if text != "" {
+        discard list.push(parts, json.str(text))
+    }
+    return 0
+}
+
+fn join_text_parts(parts: ListHandle) -> str {
+    let raw = json.array(parts)
+    let parsed = json.parse(raw)
+    let a = json.get_str(parsed, "0")
+    let b = json.get_str(parsed, "1")
+    let c = json.get_str(parsed, "2")
+    let d = json.get_str(parsed, "3")
+    if b == "" && c == "" && d == "" {
+        return a
+    }
+    return str.concat(a, str.concat(b, str.concat(c, d)))
+}
+
+fn append_openai_user_message(out: ListHandle, content_text: str) -> i32 {
+    let payload = map.new()
+    discard map.set(payload, "role", json.str("user"))
+    discard map.set(payload, "content", json.str(content_text))
+    discard list.push(out, json.raw(json.object(payload)))
+    return 0
+}
+
+fn append_openai_assistant_message(out: ListHandle, blocks: JsonHandle) -> i32 {
+    let text_parts = list.new()
+    let tool_calls = list.new()
+    discard append_text_part(text_parts, blocks, 0)
+    discard append_text_part(text_parts, blocks, 1)
+    discard append_text_part(text_parts, blocks, 2)
+    discard append_text_part(text_parts, blocks, 3)
+    discard append_openai_tool_call(tool_calls, blocks, 0)
+    discard append_openai_tool_call(tool_calls, blocks, 1)
+    discard append_openai_tool_call(tool_calls, blocks, 2)
+    discard append_openai_tool_call(tool_calls, blocks, 3)
+    let payload = map.new()
+    discard map.set(payload, "role", json.str("assistant"))
+    let text = join_text_parts(text_parts)
+    discard map.set(payload, "content", json.str(text))
+    if list.len(tool_calls) > 0 {
+        discard map.set(payload, "tool_calls", json.raw(json.array(tool_calls)))
+    }
+    discard list.push(out, json.raw(json.object(payload)))
+    return 0
+}
+
+fn append_openai_tool_result_message(out: ListHandle, blocks: JsonHandle, idx: i32) -> i32 {
+    if internal_block_type(blocks, idx) != "tool_result" {
+        return 0
+    }
+    let payload = map.new()
+    discard map.set(payload, "role", json.str("tool"))
+    discard map.set(payload, "tool_call_id", json.str(internal_block_tool_result_id(blocks, idx)))
+    discard map.set(payload, "content", json.str(internal_block_tool_result_content(blocks, idx)))
+    discard list.push(out, json.raw(json.object(payload)))
+    return 0
+}
+
+fn append_openai_messages(out: ListHandle, messages: JsonHandle, idx: i32) -> i32 {
+    let role = internal_role(messages, idx)
+    if role == "" {
+        return 0
+    }
+    let content_text = internal_content_text(messages, idx)
+    if content_text != "" {
+        if role == "assistant" {
+            let payload = map.new()
+            discard map.set(payload, "role", json.str("assistant"))
+            discard map.set(payload, "content", json.str(content_text))
+            discard list.push(out, json.raw(json.object(payload)))
+            return 0
+        }
+        return append_openai_user_message(out, content_text)
+    }
+    let blocks = internal_content_array(messages, idx)
+    if role == "assistant" {
+        return append_openai_assistant_message(out, blocks)
+    }
+    discard append_openai_tool_result_message(out, blocks, 0)
+    discard append_openai_tool_result_message(out, blocks, 1)
+    discard append_openai_tool_result_message(out, blocks, 2)
+    discard append_openai_tool_result_message(out, blocks, 3)
+    return 0
+}
+
+fn openai_messages_json(messages_json: str, system_prompt: str) -> str {
+    let items = list.new()
+    let system_message = map.new()
+    discard map.set(system_message, "role", json.str("system"))
+    discard map.set(system_message, "content", json.str(system_prompt))
+    discard list.push(items, json.raw(json.object(system_message)))
+    let parsed = json.parse(messages_json)
+    discard append_openai_messages(items, parsed, 0)
+    discard append_openai_messages(items, parsed, 1)
+    discard append_openai_messages(items, parsed, 2)
+    discard append_openai_messages(items, parsed, 3)
+    discard append_openai_messages(items, parsed, 4)
+    discard append_openai_messages(items, parsed, 5)
+    discard append_openai_messages(items, parsed, 6)
+    discard append_openai_messages(items, parsed, 7)
+    return json.array(items)
+}
+
+fn build_request_payload(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "model", json.str(default_model_name()))
+    discard map.set(payload, "messages", json.raw(openai_messages_json(messages_json, system_prompt)))
+    discard map.set(payload, "tools", json.raw(tools_json))
+    discard map.set(payload, "tool_choice", json.str("auto"))
+    discard map.set(payload, "stream", json.raw("false"))
+    discard map.set(payload, "max_tokens", json.raw(max_tokens))
+    return json.object(payload)
+}
+
+fn choice_handle(parsed: JsonHandle) -> JsonHandle {
+    return json.get(json.get(parsed, "choices"), "0")
+}
+
+fn finish_reason(parsed: JsonHandle) -> str {
+    return json.get_str(choice_handle(parsed), "finish_reason")
+}
+
+fn message_handle(parsed: JsonHandle) -> JsonHandle {
+    return json.get(choice_handle(parsed), "message")
+}
+
+fn message_content(parsed: JsonHandle) -> str {
+    return json.get_str(message_handle(parsed), "content")
+}
+
+fn tool_call_handle(parsed: JsonHandle, idx: str) -> JsonHandle {
+    return json.get(json.get(message_handle(parsed), "tool_calls"), idx)
+}
+
+fn tool_call_id(parsed: JsonHandle, idx: str) -> str {
+    return json.get_str(tool_call_handle(parsed, idx), "id")
+}
+
+fn tool_call_name(parsed: JsonHandle, idx: str) -> str {
+    return json.get_str(json.get(tool_call_handle(parsed, idx), "function"), "name")
+}
+
+fn tool_call_arguments(parsed: JsonHandle, idx: str) -> str {
+    let raw = json.get_str(json.get(tool_call_handle(parsed, idx), "function"), "arguments")
+    if raw == "" {
+        return "{}"
+    }
+    return raw
+}
+
+fn tool_use_block_json(parsed: JsonHandle, idx: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "type", json.str("tool_use"))
+    discard map.set(payload, "id", json.str(tool_call_id(parsed, idx)))
+    discard map.set(payload, "name", json.str(tool_call_name(parsed, idx)))
+    discard map.set(payload, "input", json.raw(tool_call_arguments(parsed, idx)))
+    return json.object(payload)
+}
+
+fn append_normalized_tool_block(items: ListHandle, parsed: JsonHandle, idx: str) -> i32 {
+    if tool_call_id(parsed, idx) == "" {
+        return 0
+    }
+    discard list.push(items, json.raw(tool_use_block_json(parsed, idx)))
+    return 0
+}
+
+fn normalize_response(raw: str) -> str {
+    let parsed = json.parse(raw)
+    if json.get_str(parsed, "error") != "" {
+        return raw
+    }
+    let items = list.new()
+    let content = message_content(parsed)
+    if content != "" {
+        discard list.push(items, json.raw(apputil.json_obj2("type", json.str("text"), "text", json.str(content))))
+    }
+    discard append_normalized_tool_block(items, parsed, "0")
+    discard append_normalized_tool_block(items, parsed, "1")
+    discard append_normalized_tool_block(items, parsed, "2")
+    discard append_normalized_tool_block(items, parsed, "3")
+    let payload = map.new()
+    discard map.set(payload, "type", json.str("message"))
+    discard map.set(payload, "role", json.str("assistant"))
+    discard map.set(payload, "content", json.raw(json.array(items)))
+    let finish = finish_reason(parsed)
+    discard map.set(payload, "stop_reason", json.str(if finish == "tool_calls" { "tool_use" } else { finish }))
+    return json.object(payload)
+}
+
+fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
+    queue_headers()
+    let resolved_endpoint = endpoint()
+    let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent")
+        fs.mkdir("/tmp/fzyagent/provider.debug")
+        fs.write_file("/tmp/fzyagent/provider.debug/openai_compat.request.json", payload)
+        fs.write_file(
+            "/tmp/fzyagent/provider.debug/openai_compat.request.meta.json",
+            json.object(#{
+                "endpoint": json.str(resolved_endpoint),
+                "payload_chars": json.str(str.from_i32(str.len(payload))),
+                "messages_chars": json.str(str.from_i32(str.len(messages_json))),
+                "tools_chars": json.str(str.from_i32(str.len(tools_json))),
+                "system_prompt_chars": json.str(str.from_i32(str.len(system_prompt))),
+                "max_tokens": json.str(max_tokens),
+            }),
+        )
+        log.info(
+            "openai_compat.request",
+            apputil.log_fields3("component", "openai_compat", "endpoint", resolved_endpoint, "payload_chars", str.from_i32(str.len(payload))),
+        )
+    }
+    let raw = http.post_json_capture(resolved_endpoint, payload)
+    let status = http.last_status()
+    let error = http.last_error()
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent")
+        fs.mkdir("/tmp/fzyagent/provider.debug")
+        fs.write_file("/tmp/fzyagent/provider.debug/openai_compat.response.raw", raw)
+        fs.write_file(
+            "/tmp/fzyagent/provider.debug/openai_compat.response.meta.json",
+            json.object(#{
+                "status": json.str(str.from_i32(status)),
+                "error": json.str(error),
+                "raw_chars": json.str(str.from_i32(str.len(raw))),
+            }),
+        )
+        log.info(
+            "openai_compat.response",
+            apputil.log_fields3("component", "openai_compat", "status", str.from_i32(status), "raw_chars", str.from_i32(str.len(raw))),
+        )
+    }
+    if status < 200 || status >= 300 {
+        return raw
+    }
+    return normalize_response(raw)
+}
+
+fn status_label(status: i32) -> str {
+    if status >= 200 {
+        if status < 300 {
+            return "ok"
+        }
+        return "upstream_error"
+    }
+    return "transport_error"
+}
+
+fn smoke() -> i32 {
+    log.info("openai_compat.smoke start", apputil.log_fields2("component", "openai_compat", "phase", "smoke_start"))
+    let user_message = apputil.json_obj2("role", json.str("user"), "content", json.str("Give a short agent runtime status update"))
+    let messages = apputil.json_arr1(user_message)
+    let body = build_request_payload(messages, "[]", "You are the fzyagent runtime.", "128")
+    queue_headers()
+    discard http.post_json_capture(endpoint(), body)
+    time.sleep_ms(8)
+    return http.last_status()
+}

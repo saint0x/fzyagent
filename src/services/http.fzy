@@ -12,7 +12,7 @@ fn configure_server() -> i32 {
 }
 
 fn start_server() -> i32 {
-    log.info("http.start_server", util.log_fields2("component", "http", "phase", "start_server"))
+    log.info("http.start_server", apputil.log_fields2("component", "http", "phase", "start_server"))
     web.start_listener()
     return 0
 }
@@ -38,7 +38,6 @@ fn accept_once() -> i32 {
     let conn_owned: HttpHandle = http.accept()
     http.read(conn_owned)
     discard http.write(conn_owned, 200, "ok")
-    discard http.close(conn_owned)
     return 0
 }
 
@@ -206,7 +205,7 @@ fn message_turn_error_json(session_id: str, request_id: str, data_json: str) -> 
 
 fn handle_sessions(conn: HttpHandle) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_sessions", util.log_fields2("component", "http", "handler", "sessions_create"))
+        log.info("http.handle_sessions", apputil.log_fields2("component", "http", "handler", "sessions_create"))
     }
     let request = http.body_json(conn)
     let requested = requested_session_id(request)
@@ -226,7 +225,7 @@ fn handle_sessions(conn: HttpHandle) -> i32 {
 
 fn handle_session_get(conn: HttpHandle, path: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_session_get", util.log_fields2("component", "http", "handler", "session_get"))
+        log.info("http.handle_session_get", apputil.log_fields2("component", "http", "handler", "session_get"))
     }
     let session_id = session_id_from_session_path(path)
     discard sessions.get_session_for(session_id)
@@ -242,7 +241,7 @@ fn handle_session_get(conn: HttpHandle, path: str) -> i32 {
 
 fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_messages start", util.log_fields3("component", "http", "handler", "messages_post", "phase", "start"))
+        log.info("http.handle_messages start", apputil.log_fields3("component", "http", "handler", "messages_post", "phase", "start"))
     }
     let session_id = session_id_from_message_path(path)
     let request_id = http.request_id(conn)
@@ -252,8 +251,16 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
         http.write_json(conn, 403, denied)
         return 0
     }
+    if longrange.has_active_run_for_session(session_id) == 1 {
+        let run_id = longrange.enqueue_steer_for_session(session_id, prompt, request_id, 0)
+        if run_id != "" {
+            discard runtime.longrange.kick()
+            http.write_json(conn, 202, model.types.longrange_tool_payload_json("session_message", model.types.control_ok_label(), run_id, "message queued for active long-range run", longrange.load_state_json(run_id), longrange.load_plan_json(run_id), longrange.summary_json(), str.from_i32(longrange.queue_depth_for(run_id))))
+            return 0
+        }
+    }
 
-    discard sessions.post_message_for(session_id, prompt, request_id, "anthropic_latest")
+    discard sessions.post_message_for(session_id, prompt, request_id, provider.latest_model_label())
     let result = runtime.agent.run_session_turn(session_id, prompt, request_id)
     let parsed = json.parse(result)
     let provider_payload = message_response_payload(parsed)
@@ -279,7 +286,7 @@ fn prompt_from_request(conn: HttpHandle) -> str {
 
 fn message_response_payload(parsed: JsonHandle) -> str {
     return model.types.provider_payload_json(
-        "anthropic",
+        provider.current_provider_name(),
         safety.filter_tool_response_text(runtime.agent.turn_assistant_text(parsed)),
         runtime.agent.turn_raw_response_text(parsed),
         runtime.agent.turn_tool_events_raw(parsed),
@@ -288,7 +295,7 @@ fn message_response_payload(parsed: JsonHandle) -> str {
 
 fn handle_tools_register(conn: HttpHandle) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_tools_register", util.log_fields2("component", "http", "handler", "tools_register"))
+        log.info("http.handle_tools_register", apputil.log_fields2("component", "http", "handler", "tools_register"))
     }
     post_tools()
     let body = model.types.api_event_tools_json("tool_registered", registry.list_tools_json())
@@ -298,7 +305,7 @@ fn handle_tools_register(conn: HttpHandle) -> i32 {
 
 fn handle_tools_list(conn: HttpHandle) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_tools_list", util.log_fields2("component", "http", "handler", "tools_list"))
+        log.info("http.handle_tools_list", apputil.log_fields2("component", "http", "handler", "tools_list"))
     }
     get_tools()
     http.write_json(conn, 200, registry.list_tools_json())
@@ -307,7 +314,7 @@ fn handle_tools_list(conn: HttpHandle) -> i32 {
 
 fn handle_tools_delete(conn: HttpHandle, path: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_tools_delete", util.log_fields2("component", "http", "handler", "tools_delete"))
+        log.info("http.handle_tools_delete", apputil.log_fields2("component", "http", "handler", "tools_delete"))
     }
     delete_tool()
     let tool_id = tool_id_from_tool_path(path)
@@ -318,7 +325,7 @@ fn handle_tools_delete(conn: HttpHandle, path: str) -> i32 {
 
 fn handle_tools_run(conn: HttpHandle, path: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_tools_run start", util.log_fields3("component", "http", "handler", "tools_run", "phase", "start"))
+        log.info("http.handle_tools_run start", apputil.log_fields3("component", "http", "handler", "tools_run", "phase", "start"))
     }
     let tool_id = tool_id_from_run_path(path)
     let raw_body = http.body(conn)
@@ -358,7 +365,7 @@ fn handle_tools_run(conn: HttpHandle, path: str) -> i32 {
 
 fn handle_runs(conn: HttpHandle, path: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_runs", util.log_fields2("component", "http", "handler", "runs_get"))
+        log.info("http.handle_runs", apputil.log_fields2("component", "http", "handler", "runs_get"))
     }
     get_run()
     let run_id = run_id_from_path(path)
@@ -369,10 +376,10 @@ fn handle_runs(conn: HttpHandle, path: str) -> i32 {
 
 fn handle_health(conn: HttpHandle) -> i32 {
     if runtime.config.persist_request_artifacts() == 1 {
-        log.info("http.handle_health", util.log_fields2("component", "http", "handler", "health"))
+        log.info("http.handle_health", apputil.log_fields2("component", "http", "handler", "health"))
     }
-    let model_name = anthropic.default_model_name()
-    let body = model.types.health_payload_json("agent_runtime", "anthropic", model_name)
+    let model_name = provider.default_model_name()
+    let body = model.types.health_payload_json("agent_runtime", provider.current_provider_name(), model_name)
     http.write_json(conn, 200, body)
     return 0
 }
