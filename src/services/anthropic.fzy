@@ -61,31 +61,68 @@ fn request_max_tokens() -> str {
 }
 
 fn build_request_payload(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "model", json.str(default_model_name()))
-    discard map.set(payload, "system", json.str(system_prompt))
-    discard map.set(payload, "max_tokens", json.raw(max_tokens))
-    discard map.set(payload, "stream", json.raw("false"))
-    discard map.set(payload, "messages", json.raw(messages_json))
-    discard map.set(payload, "tools", json.raw(tools_json))
-    return json.object(payload)
+    let mut payload = "{\"model\":"
+    payload = str.concat(payload, json.str(default_model_name()))
+    payload = str.concat(payload, str.concat(",\"system\":", json.str(system_prompt)))
+    payload = str.concat(payload, str.concat(",\"max_tokens\":", max_tokens))
+    payload = str.concat(payload, ",\"stream\":false")
+    payload = str.concat(payload, str.concat(",\"messages\":", messages_json))
+    payload = str.concat(payload, str.concat(",\"tools\":", tools_json))
+    return str.concat(payload, "}")
+}
+
+fn response_meta_json() -> str {
+    return apputil.json_obj2(
+        "status", json.str(str.from_i32(http.last_status())),
+        "error", json.str(http.last_error()),
+    )
 }
 
 fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
     queue_headers()
     let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
+    let stamp = str.from_i32(time.now())
+    let meta_payload = apputil.json_obj5(
+        "stamp", json.str(stamp),
+        "message_bytes", json.str(str.from_i32(str.len(messages_json))),
+        "tool_bytes", json.str(str.from_i32(str.len(tools_json))),
+        "system_bytes", json.str(str.from_i32(str.len(system_prompt))),
+        "payload_bytes", json.str(str.from_i32(str.len(payload))),
+    )
+    log.info(
+        "anthropic.request",
+        apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "payload_bytes", str.from_i32(str.len(payload)))
+    )
     if runtime.config.persist_request_artifacts() == 1 {
         fs.mkdir("/tmp/fzyagent/provider.debug")
-        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
+        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.meta.current.json", meta_payload)
+        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.meta.", str.concat(stamp, ".json")), meta_payload)
+    }
+    if messages_json == "" || payload == "" {
+        log.error(
+            "anthropic.request.empty_payload",
+            apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "tool_bytes", str.from_i32(str.len(tools_json)))
+        )
+        if runtime.config.persist_request_artifacts() == 1 {
+            fs.mkdir("/tmp/fzyagent/provider.debug")
+            discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
+            discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".json")), payload)
+            discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".meta.json")), apputil.json_obj3("status", json.str("error"), "message_bytes", json.str(str.from_i32(str.len(messages_json))), "tool_bytes", json.str(str.from_i32(str.len(tools_json)))))
+        }
+        return ""
+    }
+    if runtime.config.persist_request_artifacts() == 1 {
+        fs.mkdir("/tmp/fzyagent/provider.debug")
+        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
+        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".json")), payload)
     }
     let out = http.post_json_capture(endpoint(), payload)
     if runtime.config.persist_request_artifacts() == 1 {
         fs.mkdir("/tmp/fzyagent/provider.debug")
-        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.response.raw", out)
-        fs.write_file("/tmp/fzyagent/provider.debug/anthropic.response.meta.json", json.object(#{
-            "status": json.str(str.from_i32(http.last_status())),
-            "error": json.str(http.last_error()),
-        }))
+        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.response.raw", out)
+        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.response.meta.json", response_meta_json())
+        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.response.", str.concat(stamp, ".raw")), out)
+        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.response.", str.concat(stamp, ".meta.json")), response_meta_json())
     }
     return out
 }

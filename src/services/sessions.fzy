@@ -75,6 +75,25 @@ fn post_message_for(session_id: str, prompt: str, request_id: str, run_id: str) 
     return 0
 }
 
+fn post_automation_message_for(session_id: str, summary_text: str, request_id: str, run_id: str) -> i32 {
+    let id = persistence.normalize_session_id(session_id)
+    boot_session(id)
+    discard persistence.mark_session_turn(id)
+    let current = persistence.load_session_json_for(id)
+    let parsed = json.parse(current)
+    discard persistence.sync_session_summary(
+        id,
+        "active",
+        run_id,
+        summary_text,
+        persistence.session_last_assistant_message_value(parsed),
+        request_id,
+    )
+    persistence.save_session_event_current(id, "post_automation_message", "active")
+    telemetry.emit_turn_latency()
+    return 0
+}
+
 fn record_assistant_for(session_id: str, content: str, request_id: str, run_id: str, tool_count: str) -> i32 {
     let id = persistence.normalize_session_id(session_id)
     boot_session(id)

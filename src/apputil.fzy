@@ -1,67 +1,65 @@
 fn log_fields2(k1: str, v1: str, k2: str, v2: str) -> str {
-    let fields = map.new()
-    discard map.set(fields, k1, v1)
-    discard map.set(fields, k2, v2)
-    return json.object(fields)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", json.str(v1))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", json.str(v2)))))
+    return str.concat(payload, "}")
 }
 
 fn log_fields3(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str) -> str {
-    let fields = map.new()
-    discard map.set(fields, k1, v1)
-    discard map.set(fields, k2, v2)
-    discard map.set(fields, k3, v3)
-    return json.object(fields)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", json.str(v1))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", json.str(v2)))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k3), str.concat(":", json.str(v3)))))
+    return str.concat(payload, "}")
 }
 
 fn json_obj1(k1: str, v1: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    return json.object(obj)
+    return str.concat("{", str.concat(json.str(k1), str.concat(":", str.concat(v1, "}"))))
 }
 
 fn json_obj2(k1: str, v1: str, k2: str, v2: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    discard map.set(obj, k2, v2)
-    return json.object(obj)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", v1)))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", v2))))
+    return str.concat(payload, "}")
 }
 
 fn json_obj3(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    discard map.set(obj, k2, v2)
-    discard map.set(obj, k3, v3)
-    return json.object(obj)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", v1)))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", v2))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k3), str.concat(":", v3))))
+    return str.concat(payload, "}")
 }
 
 fn json_obj4(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str, k4: str, v4: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    discard map.set(obj, k2, v2)
-    discard map.set(obj, k3, v3)
-    discard map.set(obj, k4, v4)
-    return json.object(obj)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", v1)))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", v2))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k3), str.concat(":", v3))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k4), str.concat(":", v4))))
+    return str.concat(payload, "}")
 }
 
 fn json_obj5(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str, k4: str, v4: str, k5: str, v5: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    discard map.set(obj, k2, v2)
-    discard map.set(obj, k3, v3)
-    discard map.set(obj, k4, v4)
-    discard map.set(obj, k5, v5)
-    return json.object(obj)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", v1)))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", v2))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k3), str.concat(":", v3))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k4), str.concat(":", v4))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k5), str.concat(":", v5))))
+    return str.concat(payload, "}")
 }
 
 fn json_obj6(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str, k4: str, v4: str, k5: str, v5: str, k6: str, v6: str) -> str {
-    let obj = map.new()
-    discard map.set(obj, k1, v1)
-    discard map.set(obj, k2, v2)
-    discard map.set(obj, k3, v3)
-    discard map.set(obj, k4, v4)
-    discard map.set(obj, k5, v5)
-    discard map.set(obj, k6, v6)
-    return json.object(obj)
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat(json.str(k1), str.concat(":", v1)))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k2), str.concat(":", v2))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k3), str.concat(":", v3))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k4), str.concat(":", v4))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k5), str.concat(":", v5))))
+    payload = str.concat(payload, str.concat(",", str.concat(json.str(k6), str.concat(":", v6))))
+    return str.concat(payload, "}")
 }
 
 fn json_arr1(v1: str) -> str {
@@ -112,4 +110,64 @@ fn parse_i32(text: str) -> i32 {
         idx = idx + 1
     }
     return out
+}
+
+fn lowercase_ascii(ch: str) -> str {
+    if ch == "A" { return "a" }
+    if ch == "B" { return "b" }
+    if ch == "C" { return "c" }
+    if ch == "D" { return "d" }
+    if ch == "E" { return "e" }
+    if ch == "F" { return "f" }
+    if ch == "G" { return "g" }
+    if ch == "H" { return "h" }
+    if ch == "I" { return "i" }
+    if ch == "J" { return "j" }
+    if ch == "K" { return "k" }
+    if ch == "L" { return "l" }
+    if ch == "M" { return "m" }
+    if ch == "N" { return "n" }
+    if ch == "O" { return "o" }
+    if ch == "P" { return "p" }
+    if ch == "Q" { return "q" }
+    if ch == "R" { return "r" }
+    if ch == "S" { return "s" }
+    if ch == "T" { return "t" }
+    if ch == "U" { return "u" }
+    if ch == "V" { return "v" }
+    if ch == "W" { return "w" }
+    if ch == "X" { return "x" }
+    if ch == "Y" { return "y" }
+    if ch == "Z" { return "z" }
+    return ch
+}
+
+fn lower_ascii(text: str) -> str {
+    let mut out = ""
+    let mut idx: i32 = 0
+    while idx < str.len(text) {
+        out = str.concat(out, lowercase_ascii(str.slice(text, idx, idx + 1)))
+        idx = idx + 1
+    }
+    return out
+}
+
+fn excerpt_head(text: str, max_chars: i32) -> str {
+    if max_chars <= 0 {
+        return ""
+    }
+    if str.len(text) <= max_chars {
+        return text
+    }
+    return str.slice(text, 0, max_chars)
+}
+
+fn excerpt_tail(text: str, max_chars: i32) -> str {
+    if max_chars <= 0 {
+        return ""
+    }
+    if str.len(text) <= max_chars {
+        return text
+    }
+    return str.slice(text, str.len(text) - max_chars, str.len(text))
 }

@@ -1,0 +1,630 @@
+use core.fs;
+use core.log;
+use core.proc;
+use core.time;
+
+fn db_dir() -> str {
+    return "/tmp/fzyagent"
+}
+
+fn error_dir() -> str {
+    return "/tmp/fzyagent/sqlite_errors"
+}
+
+fn mirror_dir() -> str {
+    return "/tmp/fzyagent/sqlite_mirror"
+}
+
+pub fn db_path() -> str {
+    return "/tmp/fzyagent/runtime.sqlite3"
+}
+
+fn helper_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/scripts/sqlite_kv.py"
+}
+
+fn python_path() -> str {
+    return "/usr/bin/python3"
+}
+
+fn default_env() -> ProcessEnv {
+    let env_map: ProcessEnv = proc.env_new()
+    discard proc.env_set(env_map, "TERM", "dumb")
+    return env_map
+}
+
+fn shell_argv(command: str) -> ProcessArgv {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, "-lc")
+    discard proc.argv_push(argv, command)
+    return argv
+}
+
+fn helper_argv2(op: str, db: str) -> ProcessArgv {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, op)
+    discard proc.argv_push(argv, db)
+    return argv
+}
+
+fn helper_argv3(op: str, db: str, a: str) -> ProcessArgv {
+    let argv = helper_argv2(op, db)
+    discard proc.argv_push(argv, a)
+    return argv
+}
+
+fn helper_argv4(op: str, db: str, a: str, b: str) -> ProcessArgv {
+    let argv = helper_argv3(op, db, a)
+    discard proc.argv_push(argv, b)
+    return argv
+}
+
+fn helper_argv5(op: str, db: str, a: str, b: str, c: str) -> ProcessArgv {
+    let argv = helper_argv4(op, db, a, b)
+    discard proc.argv_push(argv, c)
+    return argv
+}
+
+fn helper_result_failed(op: str, exit_code: i32, stderr: str, stdout: str, detail: str) -> i32 {
+    fs.mkdir(error_dir())
+    let mut payload = "ts="
+    payload = str.concat(payload, str.from_i32(time.now()))
+    payload = str.concat(payload, str.concat(" | op=", op))
+    payload = str.concat(payload, str.concat(" | exit_code=", str.from_i32(exit_code)))
+    payload = str.concat(payload, str.concat(" | detail=", detail))
+    payload = str.concat(payload, str.concat(" | stderr=", stderr))
+    payload = str.concat(payload, str.concat(" | stdout=", stdout))
+    payload = str.concat(payload, "\n")
+    let existing = if fs.exists("/tmp/fzyagent/sqlite_helper_errors.log") == 1 { fs.read_file("/tmp/fzyagent/sqlite_helper_errors.log") } else { "" }
+    discard fs.write_file("/tmp/fzyagent/sqlite_helper_errors.log", str.concat(existing, payload))
+    discard fs.write_file("/tmp/fzyagent/sqlite_helper_last_failure.txt", payload)
+    let mut snapshot = "{"
+    snapshot = str.concat(snapshot, str.concat(json.str("op"), str.concat(":", json.str(op))))
+    snapshot = str.concat(snapshot, str.concat(",", str.concat(json.str("exit_code"), str.concat(":", json.str(str.from_i32(exit_code))))))
+    snapshot = str.concat(snapshot, str.concat(",", str.concat(json.str("detail"), str.concat(":", json.str(detail)))))
+    snapshot = str.concat(snapshot, str.concat(",", str.concat(json.str("stderr"), str.concat(":", json.str(stderr)))))
+    snapshot = str.concat(snapshot, str.concat(",", str.concat(json.str("stdout"), str.concat(":", json.str(stdout)))))
+    snapshot = str.concat(snapshot, "}")
+    discard fs.write_file(str.concat3(error_dir(), "/", str.concat(str.from_i32(time.now()), ".json")), snapshot)
+    log.error(
+        "services.sqlite_store helper_failed",
+        apputil.log_fields3("op", op, "exit_code", str.from_i32(exit_code), "detail", apputil.excerpt_head(detail, 220))
+    )
+    if stderr != "" {
+        log.error("services.sqlite_store helper_stderr", apputil.log_fields2("op", op, "stderr", apputil.excerpt_head(stderr, 220)))
+    }
+    if stdout != "" {
+        log.error("services.sqlite_store helper_stdout", apputil.log_fields2("op", op, "stdout", apputil.excerpt_head(stdout, 220)))
+    }
+    return 1
+}
+
+fn key_retries_on_empty(key: str) -> i32 {
+    if str.starts_with(key, "kv:longrange:run:") == 1 {
+        if str.ends_with(key, ":queue") == 1 {
+            return 0
+        }
+        return 1
+    }
+    if str.starts_with(key, "kv:longrange:session:") == 1 && str.ends_with(key, ":active_run") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn is_longrange_key(key: str) -> i32 {
+    if str.starts_with(key, "kv:longrange:") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn run_helper_stdout(argv: ProcessArgv, op: str, detail: str, timeout_ms: i32) -> str {
+    let env_map = default_env()
+    let handle = proc.spawn_cmd(python_path(), argv, env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, timeout_ms)
+    let exit_code = proc.exit_code(handle)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        discard helper_result_failed(op, exit_code, stderr, stdout, detail)
+        return "__FZY_SQLITE_FAILED__"
+    }
+    return stdout
+}
+
+fn run_helper_status(argv: ProcessArgv, op: str, detail: str, timeout_ms: i32) -> i32 {
+    let env_map = default_env()
+    let handle = proc.spawn_cmd(python_path(), argv, env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, timeout_ms)
+    let exit_code = proc.exit_code(handle)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        return helper_result_failed(op, exit_code, stderr, stdout, detail)
+    }
+    return 0
+}
+
+fn run_getfile_shell(key: str, out_path: str) -> i32 {
+    return run_helper_status(helper_argv4("getfile", db_path(), key, out_path), "getfile", key, 5000)
+}
+
+fn run_put_shell(key: str, value: str) -> i32 {
+    return run_helper_status(helper_argv4("put", db_path(), key, value), "put", key, 5000)
+}
+
+fn run_delete_shell(key: str) -> i32 {
+    return run_helper_status(helper_argv3("delete", db_path(), key), "delete", key, 5000)
+}
+
+fn run_longrange_update_turn_shell(
+    state_key: str,
+    progress_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    run_status: str,
+    plan_status: str,
+    task_class: str,
+    turns_completed: str,
+    failure_count: str,
+    last_progress_score: str,
+    consecutive_low_score: str,
+    last_evidence_count: str,
+    completed_step_count: str,
+    auto_continue_pending: str,
+    active_message_kind: str,
+    latest_summary: str,
+    created_at: str,
+    updated_at: str,
+    current_step_id: str,
+    last_request_id: str,
+    completed_at: str,
+    progress_phase: str,
+    progress_message_kind: str,
+    progress_recorded_at: str,
+    progress_score: str,
+    progress_evidence_count: str,
+    progress_request_id: str,
+    progress_detail: str,
+) -> i32 {
+    let debug_payload = apputil.json_obj6(
+        "run_id", json.str(run_id),
+        "run_status", json.str(run_status),
+        "plan_status", json.str(plan_status),
+        "progress_phase", json.str(progress_phase),
+        "last_request_id", json.str(last_request_id),
+        "progress_request_id", json.str(progress_request_id),
+    )
+    discard fs.atomic_write("/tmp/fzyagent/last_longrange_update_turn_spawn.json", debug_payload)
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, "longrange_update_turn")
+    discard proc.argv_push(argv, db_path())
+    discard proc.argv_push(argv, state_key)
+    discard proc.argv_push(argv, progress_key)
+    discard proc.argv_push(argv, run_id)
+    discard proc.argv_push(argv, session_id)
+    discard proc.argv_push(argv, goal)
+    discard proc.argv_push(argv, run_status)
+    discard proc.argv_push(argv, plan_status)
+    discard proc.argv_push(argv, task_class)
+    discard proc.argv_push(argv, turns_completed)
+    discard proc.argv_push(argv, failure_count)
+    discard proc.argv_push(argv, last_progress_score)
+    discard proc.argv_push(argv, consecutive_low_score)
+    discard proc.argv_push(argv, last_evidence_count)
+    discard proc.argv_push(argv, completed_step_count)
+    discard proc.argv_push(argv, auto_continue_pending)
+    discard proc.argv_push(argv, active_message_kind)
+    discard proc.argv_push(argv, latest_summary)
+    discard proc.argv_push(argv, created_at)
+    discard proc.argv_push(argv, updated_at)
+    discard proc.argv_push(argv, current_step_id)
+    discard proc.argv_push(argv, last_request_id)
+    discard proc.argv_push(argv, completed_at)
+    discard proc.argv_push(argv, progress_phase)
+    discard proc.argv_push(argv, progress_message_kind)
+    discard proc.argv_push(argv, progress_recorded_at)
+    discard proc.argv_push(argv, progress_score)
+    discard proc.argv_push(argv, progress_evidence_count)
+    discard proc.argv_push(argv, progress_request_id)
+    discard proc.argv_push(argv, progress_detail)
+    let handle = proc.spawn_cmd(python_path(), argv, default_env(), "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 5000)
+    let exit_code = proc.exit_code(handle)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        return helper_result_failed("longrange_update_turn", exit_code, stderr, stdout, run_id)
+    }
+    return 0
+}
+
+fn run_longrange_bootstrap_run_shell(
+    state_key: str,
+    progress_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    task_class: str,
+    completion_mode: str,
+    expected_total_turns: str,
+    execution_outlook: str,
+    planning_style: str,
+    request_id: str,
+    created_at: str,
+) -> i32 {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, "longrange_bootstrap_run")
+    discard proc.argv_push(argv, db_path())
+    discard proc.argv_push(argv, state_key)
+    discard proc.argv_push(argv, progress_key)
+    discard proc.argv_push(argv, run_id)
+    discard proc.argv_push(argv, session_id)
+    discard proc.argv_push(argv, goal)
+    discard proc.argv_push(argv, task_class)
+    discard proc.argv_push(argv, completion_mode)
+    discard proc.argv_push(argv, expected_total_turns)
+    discard proc.argv_push(argv, execution_outlook)
+    discard proc.argv_push(argv, planning_style)
+    discard proc.argv_push(argv, request_id)
+    discard proc.argv_push(argv, created_at)
+    let handle = proc.spawn_cmd(python_path(), argv, default_env(), "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 5000)
+    let exit_code = proc.exit_code(handle)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        return helper_result_failed("longrange_bootstrap_run", exit_code, stderr, stdout, run_id)
+    }
+    return 0
+}
+
+fn run_longrange_rebuild_projection_shell() -> i32 {
+    return run_helper_status(helper_argv2("longrange_rebuild_projection", db_path()), "longrange_rebuild_projection", db_path(), 5000)
+}
+
+fn run_longrange_terminalize_shell(
+    state_key: str,
+    progress_key: str,
+    session_active_key: str,
+    summary_key: str,
+    active_runs_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    run_status: str,
+    plan_status: str,
+    task_class: str,
+    turns_completed: str,
+    failure_count: str,
+    last_progress_score: str,
+    consecutive_low_score: str,
+    last_evidence_count: str,
+    completed_step_count: str,
+    active_message_kind: str,
+    latest_summary: str,
+    created_at: str,
+    current_step_id: str,
+    last_request_id: str,
+    progress_phase: str,
+    progress_message_kind: str,
+    progress_score: str,
+    progress_evidence_count: str,
+    progress_request_id: str,
+    progress_detail: str,
+) -> i32 {
+    let env_map = default_env()
+    discard proc.env_set(env_map, "FZY_DB_PATH", db_path())
+    discard proc.env_set(env_map, "FZY_STATE_KEY", state_key)
+    discard proc.env_set(env_map, "FZY_PROGRESS_KEY", progress_key)
+    discard proc.env_set(env_map, "FZY_SESSION_ACTIVE_KEY", session_active_key)
+    discard proc.env_set(env_map, "FZY_SUMMARY_KEY", summary_key)
+    discard proc.env_set(env_map, "FZY_ACTIVE_RUNS_KEY", active_runs_key)
+    discard proc.env_set(env_map, "FZY_RUN_ID", run_id)
+    discard proc.env_set(env_map, "FZY_SESSION_ID", session_id)
+    discard proc.env_set(env_map, "FZY_GOAL", goal)
+    discard proc.env_set(env_map, "FZY_RUN_STATUS", run_status)
+    discard proc.env_set(env_map, "FZY_PLAN_STATUS", plan_status)
+    discard proc.env_set(env_map, "FZY_TASK_CLASS", task_class)
+    discard proc.env_set(env_map, "FZY_TURNS_COMPLETED", turns_completed)
+    discard proc.env_set(env_map, "FZY_FAILURE_COUNT", failure_count)
+    discard proc.env_set(env_map, "FZY_LAST_PROGRESS_SCORE", last_progress_score)
+    discard proc.env_set(env_map, "FZY_CONSECUTIVE_LOW_SCORE", consecutive_low_score)
+    discard proc.env_set(env_map, "FZY_LAST_EVIDENCE_COUNT", last_evidence_count)
+    discard proc.env_set(env_map, "FZY_COMPLETED_STEP_COUNT", completed_step_count)
+    discard proc.env_set(env_map, "FZY_ACTIVE_MESSAGE_KIND", active_message_kind)
+    discard proc.env_set(env_map, "FZY_LATEST_SUMMARY", latest_summary)
+    discard proc.env_set(env_map, "FZY_CREATED_AT", created_at)
+    discard proc.env_set(env_map, "FZY_CURRENT_STEP_ID", current_step_id)
+    discard proc.env_set(env_map, "FZY_LAST_REQUEST_ID", last_request_id)
+    discard proc.env_set(env_map, "FZY_PROGRESS_PHASE", progress_phase)
+    discard proc.env_set(env_map, "FZY_PROGRESS_MESSAGE_KIND", progress_message_kind)
+    discard proc.env_set(env_map, "FZY_PROGRESS_SCORE", progress_score)
+    discard proc.env_set(env_map, "FZY_PROGRESS_EVIDENCE_COUNT", progress_evidence_count)
+    discard proc.env_set(env_map, "FZY_PROGRESS_REQUEST_ID", progress_request_id)
+    discard proc.env_set(env_map, "FZY_PROGRESS_DETAIL", progress_detail)
+    let command = str.concat3(python_path(), " ", helper_path())
+    let shell_cmd = str.concat(
+        command,
+        " longrange_terminalize \"$FZY_DB_PATH\" \"$FZY_STATE_KEY\" \"$FZY_PROGRESS_KEY\" \"$FZY_SESSION_ACTIVE_KEY\" \"$FZY_SUMMARY_KEY\" \"$FZY_ACTIVE_RUNS_KEY\" \"$FZY_RUN_ID\" \"$FZY_SESSION_ID\" \"$FZY_GOAL\" \"$FZY_RUN_STATUS\" \"$FZY_PLAN_STATUS\" \"$FZY_TASK_CLASS\" \"$FZY_TURNS_COMPLETED\" \"$FZY_FAILURE_COUNT\" \"$FZY_LAST_PROGRESS_SCORE\" \"$FZY_CONSECUTIVE_LOW_SCORE\" \"$FZY_LAST_EVIDENCE_COUNT\" \"$FZY_COMPLETED_STEP_COUNT\" \"$FZY_ACTIVE_MESSAGE_KIND\" \"$FZY_LATEST_SUMMARY\" \"$FZY_CREATED_AT\" \"$FZY_CURRENT_STEP_ID\" \"$FZY_LAST_REQUEST_ID\" \"$FZY_PROGRESS_PHASE\" \"$FZY_PROGRESS_MESSAGE_KIND\" \"$FZY_PROGRESS_SCORE\" \"$FZY_PROGRESS_EVIDENCE_COUNT\" \"$FZY_PROGRESS_REQUEST_ID\" \"$FZY_PROGRESS_DETAIL\""
+    )
+    let handle = proc.spawn_cmd("/bin/sh", shell_argv(shell_cmd), env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 5000)
+    let exit_code = proc.exit_code(handle)
+    let stdout = proc.stdout(handle)
+    let stderr = proc.stderr(handle)
+    if exit_code != 0 {
+        return helper_result_failed("longrange_terminalize", exit_code, stderr, stdout, run_id)
+    }
+    return 0
+}
+
+fn get_scratch_dir() -> str {
+    return "/tmp/fzyagent/sqlite_get"
+}
+
+fn get_scratch_path(key: str) -> str {
+    fs.mkdir(get_scratch_dir())
+    return str.concat3(get_scratch_dir(), "/", str.concat(str.from_i32(time.now()), ".json"))
+}
+
+fn refresh_mirror_from_db(key: str) -> i32 {
+    let scratch = get_scratch_path(key)
+    let rc = run_getfile_shell(key, scratch)
+    if rc != 0 {
+        return rc
+    }
+    let value = str.trim(fs.read_file(scratch))
+    return fs.atomic_write(mirror_path(key), value)
+}
+
+fn mirror_path(key: str) -> str {
+    fs.mkdir(mirror_dir())
+    return str.concat3(mirror_dir(), "/", key)
+}
+
+pub fn boot() -> i32 {
+    fs.mkdir(db_dir())
+    fs.mkdir(error_dir())
+    fs.mkdir(mirror_dir())
+    return run_helper_status(helper_argv2("boot", db_path()), "boot", db_path(), 5000)
+}
+
+pub fn kv_get(key: str) -> str {
+    if key == "" {
+        return ""
+    }
+    if is_longrange_key(key) == 1 {
+        let mut attempt: i32 = 0
+        while attempt < 4 {
+            let scratch = get_scratch_path(key)
+            let rc = run_getfile_shell(key, scratch)
+            if rc != 0 {
+                return ""
+            }
+            let trimmed = str.trim(fs.read_file(scratch))
+            if trimmed != "" || key_retries_on_empty(key) == 0 {
+                return trimmed
+            }
+            attempt = attempt + 1
+            discard time.sleep_ms(20 * attempt)
+        }
+        return ""
+    }
+    let mirror = mirror_path(key)
+    if fs.exists(mirror) == 1 {
+        let cached = str.trim(fs.read_file(mirror))
+        if cached != "" || key_retries_on_empty(key) == 0 {
+            return cached
+        }
+    }
+    let mut attempt: i32 = 0
+    while attempt < 4 {
+        let scratch = get_scratch_path(key)
+        let rc = run_getfile_shell(key, scratch)
+        if rc != 0 {
+            return ""
+        }
+        let trimmed = str.trim(fs.read_file(scratch))
+        discard fs.atomic_write(mirror, trimmed)
+        if trimmed != "" || key_retries_on_empty(key) == 0 {
+            return trimmed
+        }
+        attempt = attempt + 1
+        discard time.sleep_ms(20 * attempt)
+    }
+    return ""
+}
+
+pub fn kv_put(key: str, value: str) -> i32 {
+    if key == "" {
+        return 1
+    }
+    let rc = run_put_shell(key, value)
+    if rc == 0 && is_longrange_key(key) == 0 {
+        discard fs.atomic_write(mirror_path(key), value)
+    }
+    return rc
+}
+
+pub fn kv_delete(key: str) -> i32 {
+    if key == "" {
+        return 0
+    }
+    let rc = run_delete_shell(key)
+    if rc == 0 && is_longrange_key(key) == 0 {
+        discard fs.remove_file(mirror_path(key))
+    }
+    return rc
+}
+
+pub fn longrange_update_turn(
+    state_key: str,
+    progress_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    run_status: str,
+    plan_status: str,
+    task_class: str,
+    turns_completed: str,
+    failure_count: str,
+    last_progress_score: str,
+    consecutive_low_score: str,
+    last_evidence_count: str,
+    completed_step_count: str,
+    auto_continue_pending: str,
+    active_message_kind: str,
+    latest_summary: str,
+    created_at: str,
+    updated_at: str,
+    current_step_id: str,
+    last_request_id: str,
+    completed_at: str,
+    progress_phase: str,
+    progress_message_kind: str,
+    progress_recorded_at: str,
+    progress_score: str,
+    progress_evidence_count: str,
+    progress_request_id: str,
+    progress_detail: str,
+) -> i32 {
+    let rc = run_longrange_update_turn_shell(
+        state_key,
+        progress_key,
+        run_id,
+        session_id,
+        goal,
+        run_status,
+        plan_status,
+        task_class,
+        turns_completed,
+        failure_count,
+        last_progress_score,
+        consecutive_low_score,
+        last_evidence_count,
+        completed_step_count,
+        auto_continue_pending,
+        active_message_kind,
+        latest_summary,
+        created_at,
+        updated_at,
+        current_step_id,
+        last_request_id,
+        completed_at,
+        progress_phase,
+        progress_message_kind,
+        progress_recorded_at,
+        progress_score,
+        progress_evidence_count,
+        progress_request_id,
+        progress_detail,
+    )
+    return rc
+}
+
+pub fn longrange_bootstrap_run(
+    state_key: str,
+    progress_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    task_class: str,
+    completion_mode: str,
+    expected_total_turns: str,
+    execution_outlook: str,
+    planning_style: str,
+    request_id: str,
+    created_at: str,
+) -> i32 {
+    return run_longrange_bootstrap_run_shell(
+        state_key,
+        progress_key,
+        run_id,
+        session_id,
+        goal,
+        task_class,
+        completion_mode,
+        expected_total_turns,
+        execution_outlook,
+        planning_style,
+        request_id,
+        created_at,
+    )
+}
+
+pub fn longrange_rebuild_projection() -> i32 {
+    return run_longrange_rebuild_projection_shell()
+}
+
+pub fn longrange_terminalize(
+    state_key: str,
+    progress_key: str,
+    session_active_key: str,
+    summary_key: str,
+    active_runs_key: str,
+    run_id: str,
+    session_id: str,
+    goal: str,
+    run_status: str,
+    plan_status: str,
+    task_class: str,
+    turns_completed: str,
+    failure_count: str,
+    last_progress_score: str,
+    consecutive_low_score: str,
+    last_evidence_count: str,
+    completed_step_count: str,
+    active_message_kind: str,
+    latest_summary: str,
+    created_at: str,
+    current_step_id: str,
+    last_request_id: str,
+    progress_phase: str,
+    progress_message_kind: str,
+    progress_score: str,
+    progress_evidence_count: str,
+    progress_request_id: str,
+    progress_detail: str,
+) -> i32 {
+    return run_longrange_terminalize_shell(
+        state_key,
+        progress_key,
+        session_active_key,
+        summary_key,
+        active_runs_key,
+        run_id,
+        session_id,
+        goal,
+        run_status,
+        plan_status,
+        task_class,
+        turns_completed,
+        failure_count,
+        last_progress_score,
+        consecutive_low_score,
+        last_evidence_count,
+        completed_step_count,
+        active_message_kind,
+        latest_summary,
+        created_at,
+        current_step_id,
+        last_request_id,
+        progress_phase,
+        progress_message_kind,
+        progress_score,
+        progress_evidence_count,
+        progress_request_id,
+        progress_detail,
+    )
+}

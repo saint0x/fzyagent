@@ -1,4 +1,5 @@
 use core.fs;
+use core.log;
 use core.process;
 use core.term;
 use core.thread;
@@ -53,19 +54,59 @@ fn once_prompt() -> str {
     return flag_value("--once", "")
 }
 
+fn longrange_goal() -> str {
+    return flag_value("--goal", "")
+}
+
 pub fn print_help() -> i32 {
     discard render.title("fzyagent", "native chat")
     discard render.blank()
     discard render.print_help_section("modes")
     discard render.print_help_row("serve", "run the HTTP agent runtime")
     discard render.print_help_row("chat --session <name>", "run the native terminal chat client")
+    discard render.print_help_row("longrange-start --session <name> --goal <text>", "start a long-range run directly")
     discard render.blank()
     discard render.print_help_section("chat flags")
     discard render.print_help_row("--session <name>", "select durable session id")
     discard render.print_help_row("--once <prompt>", "run one turn and exit")
     discard render.print_help_row("--reset", "clear the durable session before chat")
+    discard render.print_help_row("--goal <text>", "goal text for direct long-range start")
     discard render.print_help_row("--help", "show this help")
     return 0
+}
+
+pub fn run_longrange_start_cli() -> i32 {
+    let session_id = session_name()
+    let goal = longrange_goal()
+    if goal == "" {
+        discard render.print_error("--goal is required")
+        return 13
+    }
+    discard services.sessions.create_session_for(session_id, services.longrange.fresh_label())
+    discard services.longrange.boot()
+    let run_id = services.longrange.create_run(session_id, goal, services.longrange.fresh_label())
+    if run_id == "" {
+        discard render.print_error("long-range run could not be created")
+        return 13
+    }
+    discard runtime.longrange.drain_run(run_id)
+    let final_status = services.longrange.run_status(run_id)
+    if final_status == "planning" || final_status == "active" {
+        let request_id = str.concat("cli-drain-", services.longrange.fresh_label())
+        discard services.longrange.record_terminal_failure_event(run_id, "direct_harness_incomplete_drain", request_id)
+        discard services.longrange.refresh_summary(run_id, "failed")
+    }
+    let stable_status = services.longrange.run_status(run_id)
+    let exit_code = if stable_status == "planning" || stable_status == "active" { 13 } else { 0 }
+    discard render.print_info(
+        apputil.json_obj4(
+            "tool", json.str("longrange_start"),
+            "run_id", json.str(run_id),
+            "status", json.str(stable_status),
+            "summary", json.str(services.longrange.latest_summary(run_id)),
+        )
+    )
+    return exit_code
 }
 
 fn render_tool_event(parsed: JsonHandle, index: str) -> i32 {
@@ -75,9 +116,10 @@ fn render_tool_event(parsed: JsonHandle, index: str) -> i32 {
         return 0
     }
     let input_raw = json.get_str(json.get(event, "input"), "raw")
-    let outcome = json.get(event, "outcome")
-    let status = json.get_str(outcome, "status")
-    let result_raw = json.get_str(json.get(outcome, "result"), "raw")
+    let outcome_raw = json.get_str(json.get(event, "outcome"), "raw")
+    let outcome = json.parse(if outcome_raw == "" { "{}" } else { outcome_raw })
+    let status = api.rpc.response_status_text(outcome)
+    let result_raw = api.rpc.response_result_raw(outcome)
     discard render.print_tool_call(tool_name, input_raw)
     discard render.print_tool_result(tool_name, status, result_raw)
     return 0
@@ -107,6 +149,62 @@ fn assistant_text(result: JsonHandle) -> str {
     return "(empty response)"
 }
 
+fn drain_run_id_from_tool_events(tool_events_raw: str) -> str {
+    if tool_events_raw == "" || tool_events_raw == "[]" {
+        return ""
+    }
+    let parsed = json.parse(tool_events_raw)
+    let mut idx: i32 = 0
+    while idx < 8 {
+        let event = json.get(parsed, str.from_i32(idx))
+        if json.get_str(event, "tool") == "longrange_start" && json.get_str(event, "outcome_status") == "ok" {
+            let result_excerpt = json.get_str(event, "result_excerpt")
+            let run_id = if result_excerpt != "" { json.get_str(json.parse(result_excerpt), "run_id") } else { "" }
+            if run_id != "" {
+                return run_id
+            }
+            let artifact_run_id = json.get_str(event, "outcome_run_id")
+            if artifact_run_id != "" && artifact_run_id != "longrange_start_latest" {
+                return artifact_run_id
+            }
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn longrange_start_succeeded(tool_events_raw: str) -> i32 {
+    if tool_events_raw == "" || tool_events_raw == "[]" {
+        return 0
+    }
+    let parsed = json.parse(tool_events_raw)
+    let mut idx: i32 = 0
+    while idx < 8 {
+        let event = json.get(parsed, str.from_i32(idx))
+        if json.get_str(event, "tool") == "longrange_start" && json.get_str(event, "outcome_status") == "ok" {
+            return 1
+        }
+        idx = idx + 1
+    }
+    return 0
+}
+
+fn should_drain_after_turn(parsed: JsonHandle, raw: str, candidate_run_id: str) -> i32 {
+    if candidate_run_id == "" {
+        return 0
+    }
+    if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(raw) == 1 {
+        return 1
+    }
+    let tool_events_raw = runtime.agent.turn_tool_events_raw(parsed)
+    let control_tool = runtime.agent.first_control_tool_name(tool_events_raw)
+    let control_outcome = runtime.agent.first_control_tool_outcome(tool_events_raw)
+    if control_tool != "" && control_outcome == "ok" {
+        return 1
+    }
+    return 0
+}
+
 fn run_chat_turn(session_id: str, prompt: str) -> i32 {
     let request_id = str.concat("cli-", str.from_i32(time.now()))
     let filtered = services.safety.filter_prompt_text(prompt)
@@ -117,7 +215,7 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
     if services.longrange.has_active_run_for_session(session_id) == 1 {
         let run_id = services.longrange.enqueue_steer_for_session(session_id, filtered, request_id, 0)
         if run_id != "" {
-            discard runtime.longrange.kick()
+            discard runtime.longrange.drain_run(run_id)
             discard render.print_info(str.concat("queued for long-range run ", run_id))
             return 0
         }
@@ -125,8 +223,27 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
     discard services.sessions.post_message_for(session_id, filtered, request_id, services.provider.latest_model_label())
     let raw = runtime.agent.run_session_turn_streamed(session_id, filtered, request_id)
     let parsed = json.parse(raw)
-    if runtime.agent.turn_response_is_ok(parsed) == 1 {
-        if assistant_text(parsed) == "" {
+    let tool_events_raw = runtime.agent.turn_tool_events_raw(parsed)
+    let drain_run_id = if drain_run_id_from_tool_events(tool_events_raw) != "" {
+        drain_run_id_from_tool_events(tool_events_raw)
+    } else if longrange_start_succeeded(tool_events_raw) == 1 {
+        session_id
+    } else {
+        services.longrange.active_run_id_for_session(session_id)
+    }
+    if should_drain_after_turn(parsed, raw, drain_run_id) == 1 {
+        if drain_run_id != "" {
+            log.info(
+                "cli.commands draining session run",
+                apputil.log_fields3("session_id", session_id, "request_id", request_id, "run_id", drain_run_id)
+            )
+            discard runtime.longrange.drain_run(drain_run_id)
+        }
+        if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(raw) == 1 {
+            if assistant_text(parsed) == "" {
+                discard render.print_assistant("(empty response)")
+            }
+        } else if drain_run_id != "" {
             discard render.print_assistant("(empty response)")
         }
         return 0
@@ -189,6 +306,9 @@ fn chat_repl() -> i32 {
 pub fn run_chat() -> i32 {
     if has_flag("--help") == 1 {
         return print_help()
+    }
+    if mode() == "longrange-start" {
+        return run_longrange_start_cli()
     }
     if once_prompt() != "" {
         return chat_once()

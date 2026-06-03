@@ -196,11 +196,11 @@ fn message_denied_response_json(session_id: str) -> str {
 }
 
 fn message_turn_success_json(session_id: str, request_id: str, data_json: str) -> str {
-    return model.types.message_turn_response_json(model.types.control_ok_status(), session_id, request_id, data_json)
+    return model.types.message_turn_response_label_json(model.types.control_ok_label(), session_id, request_id, data_json)
 }
 
 fn message_turn_error_json(session_id: str, request_id: str, data_json: str) -> str {
-    return model.types.message_turn_response_json(model.types.control_error_status(), session_id, request_id, data_json)
+    return model.types.message_turn_response_label_json(model.types.control_error_label(), session_id, request_id, data_json)
 }
 
 fn handle_sessions(conn: HttpHandle) -> i32 {
@@ -255,7 +255,7 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
         let run_id = longrange.enqueue_steer_for_session(session_id, prompt, request_id, 0)
         if run_id != "" {
             discard runtime.longrange.kick()
-            http.write_json(conn, 202, model.types.longrange_tool_payload_json("session_message", model.types.control_ok_label(), run_id, "message queued for active long-range run", longrange.load_state_json(run_id), longrange.load_plan_json(run_id), longrange.summary_json(), str.from_i32(longrange.queue_depth_for(run_id))))
+            http.write_json(conn, 202, model.types.longrange_tool_payload_json("session_message", model.types.control_ok_label(), run_id, "message queued for active long-range run", longrange.tool_success_guidance("longrange_steer", run_id), longrange.tool_next_step(run_id), longrange.load_state_json(run_id), longrange.load_plan_json(run_id), longrange.summary_json(), str.from_i32(longrange.queue_depth_for(run_id))))
             return 0
         }
     }
@@ -264,7 +264,7 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
     let result = runtime.agent.run_session_turn(session_id, prompt, request_id)
     let parsed = json.parse(result)
     let provider_payload = message_response_payload(parsed)
-    if runtime.agent.turn_response_is_ok(parsed) == 1 {
+    if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(result) == 1 {
         let body = message_turn_success_json(session_id, request_id, provider_payload)
         http.write_json(conn, 200, body)
         return 0

@@ -188,6 +188,11 @@ fn plan_step_schema() -> str {
     discard map.set(properties, "description", json.raw(schema_string_json()))
     discard map.set(properties, "status", json.raw(schema_string_json()))
     discard map.set(properties, "done_criteria", json.raw(schema_string_json()))
+    discard map.set(properties, "step_type", json.raw(schema_string_json()))
+    discard map.set(properties, "evidence_mode", json.raw(schema_string_json()))
+    discard map.set(properties, "completion_signal", json.raw(schema_string_json()))
+    discard map.set(properties, "step_outlook", json.raw(schema_string_json()))
+    discard map.set(properties, "target_turns", json.raw(schema_string_json()))
     return object_schema_json(properties, required1("step_id"))
 }
 
@@ -198,10 +203,27 @@ fn tool_schema_plan_write() -> str {
     discard map.set(properties, "finished_definition", json.raw(schema_string_json()))
     discard map.set(properties, "difficulty", json.raw(schema_string_json()))
     discard map.set(properties, "estimated_effort", json.raw(schema_string_json()))
+    discard map.set(properties, "task_class", json.raw(schema_string_json()))
+    discard map.set(properties, "completion_mode", json.raw(schema_string_json()))
+    discard map.set(properties, "expected_total_turns", json.raw(schema_string_json()))
+    discard map.set(properties, "execution_outlook", json.raw(schema_string_json()))
+    discard map.set(properties, "planning_style", json.raw(schema_string_json()))
     discard map.set(properties, "current_step_id", json.raw(schema_string_json()))
     discard map.set(properties, "plan_summary", json.raw(schema_string_json()))
     discard map.set(properties, "steps", json.raw(schema_array_items_json(plan_step_schema())))
     return object_schema_json(properties, required1("goal_summary"))
+}
+
+fn tool_schema_plan_update_compact() -> str {
+    let properties = map.new()
+    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "current_step_id", json.raw(schema_string_json()))
+    discard map.set(properties, "plan_summary", json.raw(schema_string_json()))
+    discard map.set(properties, "execution_outlook", json.raw(schema_string_json()))
+    discard map.set(properties, "planning_style", json.raw(schema_string_json()))
+    discard map.set(properties, "expected_total_turns", json.raw(schema_string_json()))
+    discard map.set(properties, "steps", json.raw(schema_array_items_json(plan_step_schema())))
+    return object_schema_json(properties, list.new())
 }
 
 fn tool_schema_goal_complete() -> str {
@@ -548,6 +570,36 @@ fn list_tool_definitions_json() -> str {
         return "[]"
     }
     return payload
+}
+
+fn append_provider_tool(items: ListHandle, tool_id: str, description: str, input_schema_json: str) -> i32 {
+    let encoded = if configured_provider_name() == "openai_compat" {
+        openai_tool_json(tool_id, description, input_schema_json)
+    } else {
+        anthropic_tool_json(tool_id, description, input_schema_json)
+    }
+    discard list.push(items, json.raw(encoded))
+    return 0
+}
+
+fn longrange_planning_tool_definitions_json() -> str {
+    let items = list.new()
+    let plan_write_schema = tool_schema_plan_write()
+    discard append_provider_tool(items, "plan_create", "Create the durable plan and success criteria for the active long-range run.", plan_write_schema)
+    return json.array(items)
+}
+
+fn longrange_execution_tool_definitions_json() -> str {
+    let items = list.new()
+    let command_schema = tool_schema_command()
+    let grep_schema = tool_schema_grep()
+    let plan_update_schema = tool_schema_plan_update_compact()
+    let goal_complete_schema = tool_schema_goal_complete()
+    discard append_provider_tool(items, "bash", "Run a shell command in the shared workspace.", command_schema)
+    discard append_provider_tool(items, "grep_search", "Search the workspace with grep.", grep_schema)
+    discard append_provider_tool(items, "plan_update", "Update the durable plan and current step for the active long-range run.", plan_update_schema)
+    discard append_provider_tool(items, "goal_complete", "Mark the active long-range run fully complete.", goal_complete_schema)
+    return json.array(items)
 }
 
 fn evict_stale() -> i32 {

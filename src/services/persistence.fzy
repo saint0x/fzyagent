@@ -67,6 +67,17 @@ fn ensure_state() -> i32 {
     return 0
 }
 
+fn atomic_write_text(path: str, payload: str) -> i32 {
+    return fs.atomic_write(path, payload)
+}
+
+fn json_doc_missing_or_corrupt(payload: str) -> i32 {
+    if payload == "" || str.trim(payload) == "{}" {
+        return 1
+    }
+    return 0
+}
+
 fn ensure_session(session_id: str) -> i32 {
     ensure_state()
     fs.mkdir(session_dir(session_id))
@@ -125,13 +136,13 @@ fn default_session_doc_for(session_id: str) -> str {
 
 fn write_session_index(session_id: str, state: str) -> i32 {
     let payload = model.types.session_index_json(normalize_session_id(session_id), state, now_label(), session_state_path(session_id))
-    fs.write_file(static_index_path(), payload)
+    discard atomic_write_text(static_index_path(), payload)
     return 0
 }
 
 fn save_session_for(session_id: str, payload: str) -> i32 {
     ensure_session(session_id)
-    fs.write_file(session_state_path(session_id), payload)
+    discard atomic_write_text(session_state_path(session_id), payload)
     write_session_index(session_id, session_state_value(json.parse(payload)))
     return 0
 }
@@ -142,8 +153,13 @@ fn save_session() -> i32 {
 }
 
 fn append_line(path: str, line: str) -> i32 {
-    discard storage.atomic_append(path, line)
-    return 0
+    let current = if fs.exists(path) == 1 { fs.read_file(path) } else { "" }
+    let next = if current == "" {
+        str.concat(line, "\n")
+    } else {
+        str.concat3(current, line, "\n")
+    }
+    return atomic_write_text(path, next)
 }
 
 fn count_lines(text_value: str) -> i32 {
@@ -226,7 +242,7 @@ fn save_session_event(session_id: str, event: str, state: str, turn_count: str) 
     let tool_count = session_tool_count(session_id)
     let payload = session_doc_for(session_id, state, turn_count, last_run_id, last_user, last_assistant, last_request_id, tool_count)
     let event_line = model.types.session_event_json(event, state, turn_count, now_label())
-    fs.write_file(session_state_path(session_id), payload)
+    discard atomic_write_text(session_state_path(session_id), payload)
     append_line(session_turns_path(session_id), event_line)
     write_session_index(session_id, state)
     return 0
@@ -251,7 +267,7 @@ fn load_session() -> i32 {
 fn load_session_json_for(session_id: str) -> str {
     load_session_for(session_id)
     let payload = fs.read_file(session_state_path(session_id))
-    if payload == "" {
+    if json_doc_missing_or_corrupt(payload) == 1 {
         return default_session_doc_for(session_id)
     }
     return payload
@@ -347,14 +363,14 @@ fn transcript_excerpt(session_id: str) -> str {
 fn save_tool_run() -> i32 {
     ensure_state()
     let payload = tools.last_run_json("all")
-    fs.write_file(run_path("latest"), payload)
+    discard atomic_write_text(run_path("latest"), payload)
     return 0
 }
 
 fn save_named_run(run_id: str, payload: str) -> i32 {
     ensure_state()
-    fs.write_file(run_path(run_id), payload)
-    fs.write_file(run_path("latest"), payload)
+    discard atomic_write_text(run_path(run_id), payload)
+    discard atomic_write_text(run_path("latest"), payload)
     return 0
 }
 

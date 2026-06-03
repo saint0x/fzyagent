@@ -8,6 +8,14 @@ fn system_prompt_path() -> str {
     return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
 }
 
+fn runtime_overlay_prompt_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config/prompt_overlay.runtime.md"
+}
+
+fn longrange_overlay_prompt_path() -> str {
+    return "/Users/deepsaint/Desktop/fzyagent/config/prompt_overlay.longrange.md"
+}
+
 fn debug_dir() -> str {
     return "/tmp/fzyagent/agent.debug"
 }
@@ -21,17 +29,44 @@ fn write_debug(name: str, payload: str) -> i32 {
         return 0
     }
     fs.mkdir(debug_dir())
-    fs.write_file(debug_path(name), payload)
+    discard fs.atomic_write(debug_path(name), payload)
     return 0
 }
 
-fn load_system_prompt() -> str {
-    if fs.exists(system_prompt_path()) == 0 {
-        return "You are the fzyagent runtime. Be concise, grounded, and tool-aware."
+fn read_prompt_or_empty(path: str) -> str {
+    if fs.exists(path) == 0 {
+        return ""
     }
-    let text = fs.read_file(system_prompt_path())
+    let text = fs.read_file(path)
+    if text == "" {
+        return ""
+    }
+    return text
+}
+
+fn base_system_prompt() -> str {
+    let text = read_prompt_or_empty(system_prompt_path())
     if text == "" {
         return "You are the fzyagent runtime. Be concise, grounded, and tool-aware."
+    }
+    return text
+}
+
+fn append_prompt_section(base: str, addition: str) -> str {
+    if addition == "" {
+        return base
+    }
+    if base == "" {
+        return addition
+    }
+    return str.concat(base, str.concat("\n\n", addition))
+}
+
+fn load_system_prompt_for(prompt: str) -> str {
+    let mut text = base_system_prompt()
+    text = append_prompt_section(text, read_prompt_or_empty(runtime_overlay_prompt_path()))
+    if is_automated_longrange_prompt(prompt) == 1 {
+        text = append_prompt_section(text, read_prompt_or_empty(longrange_overlay_prompt_path()))
     }
     return text
 }
@@ -44,14 +79,55 @@ fn transcript_context(session_id: str) -> str {
     return excerpt
 }
 
+fn prompt_excerpt(text_value: str, max_chars: i32) -> str {
+    if str.len(text_value) <= max_chars {
+        return text_value
+    }
+    return str.slice(text_value, str.len(text_value) - max_chars, str.len(text_value))
+}
+
+fn compact_transcript_value(text_value: str) -> str {
+    if text_value == "" {
+        return ""
+    }
+    if str.starts_with(text_value, "AUTOMATED LONG RANGE MESSAGE") == 1 {
+        return "[automated long-range continuation omitted; rely on LONG RANGE CONTEXT]"
+    }
+    return prompt_excerpt(text_value, 400)
+}
+
+fn compact_longrange_transcript(session_id: str) -> str {
+    let session = json.parse(services.persistence.load_session_json_for(session_id))
+    let last_user = compact_transcript_value(services.persistence.session_last_user_message_value(session))
+    let last_assistant = prompt_excerpt(services.persistence.session_last_assistant_message_value(session), 400)
+    let turn_count = services.persistence.session_turn_count_value(session)
+    let mut out = "Compact session summary for autonomous continuation.\n"
+    out = str.concat(out, str.concat("turn_count: ", turn_count))
+    if last_user != "" {
+        out = str.concat(out, str.concat("\nlast_user: ", last_user))
+    }
+    if last_assistant != "" {
+        out = str.concat(out, str.concat("\nlast_assistant: ", last_assistant))
+    }
+    return out
+}
+
+fn is_automated_longrange_prompt(prompt: str) -> i32 {
+    if str.starts_with(prompt, "AUTOMATED LONG RANGE MESSAGE") == 1 {
+        return 1
+    }
+    return 0
+}
+
 fn build_turn_prompt(session_id: str, prompt: str) -> str {
-    let system_prompt = load_system_prompt()
-    let transcript = transcript_context(session_id)
     let longrange_context = services.longrange.prompt_context(session_id)
+    let transcript = if longrange_context != "" && is_automated_longrange_prompt(prompt) == 1 {
+        compact_longrange_transcript(session_id)
+    } else {
+        transcript_context(session_id)
+    }
     return str.concat(
-        "SYSTEM PROMPT\n",
-        system_prompt,
-        "\n\nSESSION TRANSCRIPT\n",
+        "SESSION TRANSCRIPT\n",
         transcript,
         if longrange_context == "" { "" } else { str.concat("\n\nLONG RANGE CONTEXT\n", longrange_context) },
         "\n\nLATEST USER MESSAGE\n",
@@ -88,6 +164,89 @@ fn append_array_json(left_json: str, right_json: str) -> str {
     return str.concat(str.concat(left_prefix, ","), right_tail)
 }
 
+fn text_index_of(hay: str, needle: str) -> i32 {
+    if needle == "" {
+        return 0
+    }
+    if str.len(needle) > str.len(hay) {
+        return -1
+    }
+    let mut idx: i32 = 0
+    while idx + str.len(needle) <= str.len(hay) {
+        if str.slice(hay, idx, idx + str.len(needle)) == needle {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return -1
+}
+
+fn quoted_raw_field(raw: str, key: str) -> str {
+    if raw == "" || key == "" {
+        return ""
+    }
+    let marker = str.concat3("\"", key, "\":\"")
+    let start = text_index_of(raw, marker)
+    if start < 0 {
+        return ""
+    }
+    let mut idx: i32 = start + str.len(marker)
+    let mut out = ""
+    while idx < str.len(raw) {
+        let ch = str.slice(raw, idx, idx + 1)
+        if ch == "\"" {
+            return out
+        }
+        out = str.concat(out, ch)
+        idx = idx + 1
+    }
+    return out
+}
+
+fn extract_balanced_json(raw: str, start_idx: i32) -> str {
+    if raw == "" || start_idx < 0 || start_idx >= str.len(raw) {
+        return ""
+    }
+    let opener = str.slice(raw, start_idx, start_idx + 1)
+    let closer = if opener == "{" { "}" } else { if opener == "[" { "]" } else { "" } }
+    if closer == "" {
+        return ""
+    }
+    let mut idx: i32 = start_idx
+    let mut depth: i32 = 0
+    let mut in_string: i32 = 0
+    let mut escaping: i32 = 0
+    while idx < str.len(raw) {
+        let ch = str.slice(raw, idx, idx + 1)
+        if in_string == 1 {
+            if escaping == 1 {
+                escaping = 0
+            } else if ch == "\\" {
+                escaping = 1
+            } else if ch == "\"" {
+                in_string = 0
+            }
+        } else {
+            if ch == "\"" {
+                in_string = 1
+            } else if ch == opener {
+                depth = depth + 1
+            } else if ch == closer {
+                depth = depth - 1
+                if depth == 0 {
+                    return str.slice(raw, start_idx, idx + 1)
+                }
+            }
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn content_raw(parsed: JsonHandle) -> str {
+    return json.get_str(json.get(parsed, "content"), "raw")
+}
+
 fn content_block(parsed: JsonHandle, index: str) -> JsonHandle {
     let content = json.get(parsed, "content")
     return json.get(content, index)
@@ -112,6 +271,116 @@ fn content_block_tool_id(parsed: JsonHandle, index: str) -> str {
 fn content_block_tool_input_raw(parsed: JsonHandle, index: str) -> str {
     let input = json.get(content_block(parsed, index), "input")
     return json.get_str(input, "raw")
+}
+
+fn max_content_blocks() -> i32 {
+    return 8
+}
+
+fn max_recursive_tool_depth() -> i32 {
+    return 4
+}
+
+fn is_longrange_control_tool(tool_name: str) -> i32 {
+    if tool_name == "longrange_start" || tool_name == "longrange_status" || tool_name == "longrange_cancel" || tool_name == "longrange_steer" || tool_name == "plan_create" || tool_name == "plan_update" || tool_name == "plan_view" || tool_name == "goal_complete" {
+        return 1
+    }
+    return 0
+}
+
+fn control_tool_name_or_empty(parsed: JsonHandle, index: str) -> str {
+    if content_block_type(parsed, index) != "tool_use" {
+        return ""
+    }
+    let tool_name = content_block_tool_name(parsed, index)
+    if is_longrange_control_tool(tool_name) == 1 {
+        return tool_name
+    }
+    return ""
+}
+
+fn terminating_control_tool_name(parsed: JsonHandle) -> str {
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let name = control_tool_name_or_empty(parsed, str.from_i32(idx))
+        if name != "" {
+            return name
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn successful_control_tool_summary(tool_events_json: str) -> str {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return ""
+    }
+    let parsed = json.parse(tool_events_json)
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let event = json.get(parsed, str.from_i32(idx))
+        let tool_name = json.get_str(event, "tool")
+        if tool_name == "" {
+            idx = idx + 1
+            continue
+        }
+        if is_longrange_control_tool(tool_name) == 1 {
+            let outcome_status = json.get_str(event, "outcome_status")
+            if outcome_status == "ok" {
+                return str.concat("control_plane_tool_executed:", tool_name)
+            }
+            if outcome_status == "error" {
+                return str.concat("control_plane_tool_failed:", tool_name)
+            }
+            return ""
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn has_longrange_start_event(tool_events_json: str) -> i32 {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return 0
+    }
+    if str.contains(tool_events_json, "\"tool\":\"longrange_start\"") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn first_control_tool_name(tool_events_json: str) -> str {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return ""
+    }
+    let parsed = json.parse(tool_events_json)
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let event = json.get(parsed, str.from_i32(idx))
+        let tool_name = json.get_str(event, "tool")
+        if tool_name != "" && is_longrange_control_tool(tool_name) == 1 {
+            return tool_name
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn first_control_tool_outcome(tool_events_json: str) -> str {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return ""
+    }
+    let parsed = json.parse(tool_events_json)
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let event = json.get(parsed, str.from_i32(idx))
+        let tool_name = json.get_str(event, "tool")
+        if tool_name != "" && is_longrange_control_tool(tool_name) == 1 {
+            return json.get_str(event, "outcome_status")
+        }
+        idx = idx + 1
+    }
+    return ""
 }
 
 fn content_block_json(parsed: JsonHandle, index: str) -> str {
@@ -139,11 +408,19 @@ fn maybe_push_content_block(items: ListHandle, parsed: JsonHandle, index: str) -
 }
 
 fn assistant_message_json(parsed: JsonHandle) -> str {
+    let raw = content_raw(parsed)
+    if raw != "" {
+        let payload = map.new()
+        discard map.set(payload, "role", json.str("assistant"))
+        discard map.set(payload, "content", json.raw(raw))
+        return json.object(payload)
+    }
     let items = list.new()
-    discard maybe_push_content_block(items, parsed, "0")
-    discard maybe_push_content_block(items, parsed, "1")
-    discard maybe_push_content_block(items, parsed, "2")
-    discard maybe_push_content_block(items, parsed, "3")
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        discard maybe_push_content_block(items, parsed, str.from_i32(idx))
+        idx = idx + 1
+    }
     return apputil.json_obj2("role", json.str("assistant"), "content", json.raw(json.array(items)))
 }
 
@@ -155,21 +432,17 @@ fn content_block_text_or_empty(parsed: JsonHandle, index: str) -> str {
 }
 
 fn extract_text_block(parsed: JsonHandle) -> str {
-    let text0 = content_block_text_or_empty(parsed, "0")
-    if text0 != "" {
-        return text0
+    let mut out = ""
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let text = content_block_text_or_empty(parsed, str.from_i32(idx))
+        if text != "" {
+            out = str.concat(out, text)
+        }
+        idx = idx + 1
     }
-    let text1 = content_block_text_or_empty(parsed, "1")
-    if text1 != "" {
-        return text1
-    }
-    let text2 = content_block_text_or_empty(parsed, "2")
-    if text2 != "" {
-        return text2
-    }
-    let text3 = content_block_text_or_empty(parsed, "3")
-    if text3 != "" {
-        return text3
+    if out != "" {
+        return out
     }
     return json.get_str(parsed, "completion")
 }
@@ -305,16 +578,161 @@ fn parsed_message_has_content(parsed: JsonHandle) -> i32 {
     if extract_text_block(parsed) != "" {
         return 1
     }
-    if content_block_type(parsed, "0") != "" {
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        if content_block_type(parsed, str.from_i32(idx)) != "" {
+            return 1
+        }
+        idx = idx + 1
+    }
+    return 0
+}
+
+fn tool_event_summary(parsed: JsonHandle) -> str {
+    let tool_id = json.get_str(parsed, "tool")
+    if tool_id == "bash" {
+        let command = json.get_str(json.get(parsed, "input"), "command")
+        if command != "" {
+            if is_read_only_bash_command(command) == 1 {
+                if str.contains(apputil.lower_ascii(command), "readme") == 1 {
+                    return "bash:readme_inspect"
+                }
+                return "bash:read_only_inspect"
+            }
+            return "bash:command"
+        }
+        return "bash"
+    }
+    if tool_id == "grep_search" {
+        let query = json.get_str(json.get(parsed, "input"), "query")
+        if query != "" {
+            return "grep_search:query"
+        }
+        return "grep_search"
+    }
+    if tool_id != "" {
+        return tool_id
+    }
+    return tool_id
+}
+
+fn synthetic_assistant_summary(tool_events_json: str) -> str {
+    let parsed = json.parse(tool_events_json)
+    let mut action_count: i32 = 0
+    let mut items = list.new()
+    let mut idx: i32 = 0
+    while idx < 16 {
+        let event = json.get(parsed, str.from_i32(idx))
+        let summary = tool_event_summary(event)
+        let tool_id = json.get_str(event, "tool")
+        let outcome_request = if json.get_str(event, "outcome_request_id") != "" {
+            json.get_str(event, "outcome_request_id")
+        } else {
+            json.get_str(json.get(event, "outcome"), "request_id")
+        }
+        if summary == "" && tool_id == "" && outcome_request == "" {
+            break
+        }
+        action_count = action_count + 1
+        if summary != "" && list.len(items) < 5 {
+            discard list.push(items, summary)
+        }
+        idx = idx + 1
+    }
+    let mut joined = ""
+    let mut item_idx: i32 = 0
+    while item_idx < list.len(items) {
+        let part = list.get(items, item_idx)
+        if joined == "" {
+            joined = part
+        } else {
+            joined = str.concat(joined, str.concat(" | ", part))
+        }
+        item_idx = item_idx + 1
+    }
+    let mut detail = str.concat(str.from_i32(action_count), " tool actions completed")
+    if joined != "" {
+        let mut suffix = ""
+        if action_count > list.len(items) {
+            suffix = str.concat(" +", str.from_i32(action_count - list.len(items)))
+        }
+        detail = str.concat(str.concat(str.from_i32(action_count), " tool actions completed; recent_tools="), str.concat(joined, suffix))
+    }
+    return str.concat("tool_work_completed_without_final_message: ", str.concat(detail, "; synthesize findings now"))
+}
+
+fn planning_required_prompt(messages_json: str) -> i32 {
+    if messages_json == "" {
+        return 0
+    }
+    if str.contains(messages_json, "No durable plan exists yet for this goal.") == 1 {
         return 1
     }
-    if content_block_type(parsed, "1") != "" {
+    if str.contains(messages_json, "Your next control-plane action must be `plan_create`.") == 1 {
         return 1
     }
-    if content_block_type(parsed, "2") != "" {
+    return 0
+}
+
+fn planning_required_summary() -> str {
+    return "planning_required_before_tool_use: create the durable plan with plan_create before non-control work"
+}
+
+fn automated_longrange_prompt(messages_json: str) -> i32 {
+    if messages_json == "" {
+        return 0
+    }
+    if str.contains(messages_json, "AUTOMATED LONG RANGE MESSAGE") == 1 {
         return 1
     }
-    if content_block_type(parsed, "3") != "" {
+    return 0
+}
+
+fn tool_definitions_for(messages_json: str) -> str {
+    if planning_required_prompt(messages_json) == 1 {
+        return services.registry.longrange_planning_tool_definitions_json()
+    }
+    if automated_longrange_prompt(messages_json) == 1 {
+        return services.registry.longrange_execution_tool_definitions_json()
+    }
+    return services.registry.list_tool_definitions_json()
+}
+
+fn is_read_only_bash_command(command: str) -> i32 {
+    let lowered = apputil.lower_ascii(command)
+    if str.contains(lowered, "rm ") == 1 || str.contains(lowered, "mv ") == 1 || str.contains(lowered, "cp ") == 1 || str.contains(lowered, "touch ") == 1 || str.contains(lowered, "mkdir ") == 1 || str.contains(lowered, ">>") == 1 || str.contains(lowered, "> ") == 1 {
+        return 0
+    }
+    if str.contains(lowered, "readme") == 1 || str.contains(lowered, "cat ") == 1 || str.contains(lowered, "head ") == 1 || str.contains(lowered, "wc ") == 1 || str.contains(lowered, "find ") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn read_only_bash_saturation(tool_events_json: str) -> i32 {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return 0
+    }
+    let parsed = json.parse(tool_events_json)
+    let mut idx: i32 = 0
+    let mut seen: i32 = 0
+    while idx < max_content_blocks() {
+        let event = json.get(parsed, str.from_i32(idx))
+        let tool_name = json.get_str(event, "tool")
+        if tool_name == "" {
+            break
+        }
+        if tool_name != "bash" {
+            return 0
+        }
+        let command = json.get_str(json.get(event, "input"), "command")
+        if is_read_only_bash_command(command) == 0 {
+            return 0
+        }
+        seen = seen + 1
+        idx = idx + 1
+    }
+    if seen > 0 {
         return 1
     }
     return 0
@@ -334,7 +752,12 @@ enum TurnResponseKind {
 }
 
 fn turn_response_status(parsed: JsonHandle) -> TurnResponseKind {
-    if json.get_str(parsed, "status") == "ok" {
+    let status_text = json.get_str(parsed, "status")
+    if status_text == "ok" {
+        return TurnResponseKind::TurnResponseOk
+    }
+    let raw = json.get_str(parsed, "raw")
+    if raw != "" && str.contains(raw, "\"status\":\"ok\"") == 1 {
         return TurnResponseKind::TurnResponseOk
     }
     return TurnResponseKind::TurnResponseError
@@ -345,6 +768,13 @@ fn turn_response_is_ok(parsed: JsonHandle) -> i32 {
     match kind {
         TurnResponseKind::TurnResponseOk => return 1,
         _ => return 0,
+    }
+    return 0
+}
+
+fn turn_response_text_is_ok(raw: str) -> i32 {
+    if raw != "" && str.contains(raw, "\"status\":\"ok\"") == 1 {
+        return 1
     }
     return 0
 }
@@ -366,11 +796,15 @@ fn turn_tool_events_raw(parsed: JsonHandle) -> str {
 }
 
 fn turn_error_json(message: str, raw_response: str, transport_error: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.control_error_status(), services.provider.current_provider_name(), "", raw_response, "", tool_events_json, http_status, message, transport_error)
+    return model.types.turn_result_json(model.types.control_error_status(), services.provider.current_provider_name(), "", raw_response, "", tool_events_json, http_status, message, transport_error, "error", "", "")
 }
 
-fn turn_success_json(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str) -> str {
-    return model.types.turn_result_json(model.types.control_ok_status(), services.provider.current_provider_name(), assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "")
+fn turn_success_json(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str, result_kind: str, control_tool: str, control_outcome: str) -> str {
+    return model.types.turn_result_json(model.types.control_ok_status(), services.provider.current_provider_name(), assistant_text, raw_response, stop_reason, tool_events_json, http_status, "", "", result_kind, control_tool, control_outcome)
+}
+
+fn turn_success_default(assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str) -> str {
+    return turn_success_json(assistant_text, raw_response, stop_reason, tool_events_json, http_status, "assistant", "", "")
 }
 
 fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id: str) -> str {
@@ -391,34 +825,137 @@ fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id
     return response
 }
 
-fn tool_result_content(outcome_json: str) -> str {
-    let parsed = json.parse(outcome_json)
-    let result_raw = api.rpc.response_result_raw(parsed)
-    if api.rpc.response_is_ok(parsed) == 1 {
-        return result_raw
+fn compact_longrange_tool_result_content(result_raw: str) -> str {
+    let tool = quoted_raw_field(result_raw, "tool")
+    if is_longrange_control_tool(tool) == 0 {
+        return ""
     }
-    return str.concat("tool_error ", result_raw)
+    let status = quoted_raw_field(result_raw, "status")
+    let message = quoted_raw_field(result_raw, "message")
+    let guidance = quoted_raw_field(result_raw, "guidance")
+    let next_step = quoted_raw_field(result_raw, "next_step")
+    let mut payload = "{\"tool\":"
+    payload = str.concat(payload, json.str(tool))
+    payload = str.concat(payload, str.concat(",\"status\":", json.str(status)))
+    if message != "" {
+        payload = str.concat(payload, str.concat(",\"message\":", json.str(message)))
+    }
+    if guidance != "" {
+        payload = str.concat(payload, str.concat(",\"guidance\":", json.str(guidance)))
+    }
+    if next_step != "" {
+        payload = str.concat(payload, str.concat(",\"next_step\":", json.str(next_step)))
+    }
+    return str.concat(payload, "}")
+}
+
+fn tool_result_content(outcome_json: str) -> str {
+    let safe_outcome = if str.trim(outcome_json) == "" { missing_tool_outcome_json("") } else { outcome_json }
+    let parsed = json.parse(safe_outcome)
+    let result_raw = api.rpc.response_result_raw(parsed)
+    let compact_control = compact_longrange_tool_result_content(result_raw)
+    if compact_control != "" {
+        if api.rpc.response_is_ok(parsed) == 1 {
+            return compact_control
+        }
+        return str.concat("tool_error ", compact_control)
+    }
+    let compact_result = compact_tool_result_content(result_raw)
+    if api.rpc.response_is_ok(parsed) == 1 {
+        return compact_result
+    }
+    return str.concat("tool_error ", compact_result)
+}
+
+fn missing_tool_outcome_json(tool_id: str) -> str {
+    return apputil.json_obj3(
+        "status", json.str("error"),
+        "tool", json.str(tool_id),
+        "message", json.str("tool artifact payload was empty"),
+    )
+}
+
+fn tool_result_content_limit() -> i32 {
+    return 2400
+}
+
+fn compact_tool_result_content(raw: str) -> str {
+    if raw == "" {
+        return ""
+    }
+    if str.len(raw) <= tool_result_content_limit() {
+        return raw
+    }
+    let head = apputil.excerpt_head(raw, 1400)
+    let tail = apputil.excerpt_tail(raw, 600)
+    return apputil.json_obj4(
+        "status", json.str("truncated"),
+        "raw_chars", json.str(str.from_i32(str.len(raw))),
+        "head", json.str(head),
+        "tail", json.str(tail),
+    )
 }
 
 fn tool_result_block_json(tool_use_id: str, outcome_json: str) -> str {
     let parsed = json.parse(outcome_json)
     let is_error = if api.rpc.response_is_ok(parsed) == 1 { "false" } else { "true" }
-    let block = map.new()
-    discard map.set(block, "type", json.str("tool_result"))
-    discard map.set(block, "tool_use_id", json.str(tool_use_id))
-    discard map.set(block, "content", json.str(tool_result_content(outcome_json)))
-    discard map.set(block, "is_error", json.raw(is_error))
-    return json.object(block)
+    return apputil.json_obj4(
+        "type", json.str("tool_result"),
+        "tool_use_id", json.str(tool_use_id),
+        "content", json.str(tool_result_content(outcome_json)),
+        "is_error", json.raw(is_error),
+    )
+}
+
+fn compact_tool_event_outcome_json(tool_id: str, outcome_json: str) -> str {
+    let safe_outcome = if str.trim(outcome_json) == "" { missing_tool_outcome_json(tool_id) } else { outcome_json }
+    let parsed = json.parse(safe_outcome)
+    let result_raw = api.rpc.response_result_raw(parsed)
+    let artifact_path = json.get_str(parsed, "artifact_path")
+    let request_id = json.get_str(parsed, "request_id")
+    let run_id = json.get_str(parsed, "run_id")
+    let mut payload = "{\"request_id\":"
+    payload = str.concat(payload, json.str(request_id))
+    payload = str.concat(payload, str.concat(",\"status\":", json.str(api.rpc.response_status_text(parsed))))
+    if run_id != "" {
+        payload = str.concat(payload, str.concat(",\"run_id\":", json.str(run_id)))
+    }
+    if artifact_path != "" {
+        payload = str.concat(payload, str.concat(",\"artifact_path\":", json.str(artifact_path)))
+    }
+    if result_raw != "" {
+        payload = str.concat(payload, str.concat(",\"result_excerpt\":", json.str(apputil.excerpt_head(tool_result_content(safe_outcome), 320))))
+    }
+    return str.concat(payload, "}")
 }
 
 fn tool_event_json(tool_id: str, tool_use_id: str, input_raw: str, outcome_json: str) -> str {
-    let event = map.new()
     let safe_input = if input_raw == "" { "{}" } else { input_raw }
-    discard map.set(event, "tool", json.str(tool_id))
-    discard map.set(event, "tool_use_id", json.str(tool_use_id))
-    discard map.set(event, "input", json.raw(safe_input))
-    discard map.set(event, "outcome", json.raw(outcome_json))
-    return json.object(event)
+    let safe_outcome = if str.trim(outcome_json) == "" { missing_tool_outcome_json(tool_id) } else { outcome_json }
+    let parsed_outcome = json.parse(safe_outcome)
+    let compact_outcome = json.parse(compact_tool_event_outcome_json(tool_id, safe_outcome))
+    let mut payload = "{"
+    payload = str.concat(payload, str.concat("\"tool\":", json.str(tool_id)))
+    payload = str.concat(payload, str.concat(",\"tool_use_id\":", json.str(tool_use_id)))
+    payload = str.concat(payload, str.concat(",\"input\":", json.raw(safe_input)))
+    payload = str.concat(payload, str.concat(",\"outcome_status\":", json.str(api.rpc.response_status_text(parsed_outcome))))
+    let outcome_request_id = json.get_str(compact_outcome, "request_id")
+    if outcome_request_id != "" {
+        payload = str.concat(payload, str.concat(",\"outcome_request_id\":", json.str(outcome_request_id)))
+    }
+    let outcome_run_id = json.get_str(compact_outcome, "run_id")
+    if outcome_run_id != "" {
+        payload = str.concat(payload, str.concat(",\"outcome_run_id\":", json.str(outcome_run_id)))
+    }
+    let artifact_path = json.get_str(compact_outcome, "artifact_path")
+    if artifact_path != "" {
+        payload = str.concat(payload, str.concat(",\"artifact_path\":", json.str(artifact_path)))
+    }
+    let result_excerpt = json.get_str(compact_outcome, "result_excerpt")
+    if result_excerpt != "" {
+        payload = str.concat(payload, str.concat(",\"result_excerpt\":", json.str(result_excerpt)))
+    }
+    return str.concat(payload, "}")
 }
 
 fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHandle, index: str, session_id: str, request_id: str, stream_mode: i32) -> i32 {
@@ -439,73 +976,241 @@ fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHan
     return 1
 }
 
-fn build_tool_result_bundle(parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> str {
-    let tool_results = list.new()
-    let tool_events = list.new()
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "0", session_id, request_id, stream_mode)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "1", session_id, request_id, stream_mode)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "2", session_id, request_id, stream_mode)
-    discard maybe_push_tool_result(tool_results, tool_events, parsed, "3", session_id, request_id, stream_mode)
-    let payload = map.new()
-    let tool_results_json = json.array(tool_results)
-    let tool_events_json = json.array(tool_events)
-    write_debug("tool_results.json", tool_results_json)
-    write_debug("tool_events.json", tool_events_json)
-    discard map.set(payload, "tool_results", json.raw(tool_results_json))
-    discard map.set(payload, "tool_events", json.raw(tool_events_json))
-    return json.object(payload)
+fn collect_tool_results_and_events(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> i32 {
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        discard maybe_push_tool_result(tool_results, tool_events, parsed, str.from_i32(idx), session_id, request_id, stream_mode)
+        idx = idx + 1
+    }
+    if list.len(tool_events) == 0 {
+        discard collect_tool_results_from_raw_content(tool_results, tool_events, parsed, session_id, request_id, stream_mode)
+    }
+    return 0
 }
 
-fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32) -> str {
+fn raw_tool_use_block(content_json: str) -> str {
+    let marker = "\"type\":\"tool_use\""
+    let marker_idx = text_index_of(content_json, marker)
+    if marker_idx < 0 {
+        return ""
+    }
+    let mut start = marker_idx
+    while start > 0 {
+        let probe = str.slice(content_json, start, start + 1)
+        if probe == "{" {
+            return extract_balanced_json(content_json, start)
+        }
+        start = start - 1
+    }
+    return ""
+}
+
+fn raw_tool_input(block_raw: str) -> str {
+    let marker = "\"input\":"
+    let start = text_index_of(block_raw, marker)
+    if start < 0 {
+        return ""
+    }
+    let mut idx: i32 = start + str.len(marker)
+    while idx < str.len(block_raw) {
+        let ch = str.slice(block_raw, idx, idx + 1)
+        if ch == "{" || ch == "[" {
+            return extract_balanced_json(block_raw, idx)
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn collect_tool_results_from_raw_content(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> i32 {
+    let raw = content_raw(parsed)
+    let block_raw = raw_tool_use_block(raw)
+    if block_raw == "" {
+        return 0
+    }
+    let name = quoted_raw_field(block_raw, "name")
+    let tool_use_id = quoted_raw_field(block_raw, "id")
+    let input_raw = raw_tool_input(block_raw)
+    if name == "" || tool_use_id == "" {
+        return 0
+    }
+    let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
+    if stream_mode == 1 {
+        let outcome_parsed = json.parse(outcome)
+        discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
+        discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
+    }
+    discard list.push(tool_results, tool_result_block_json(tool_use_id, outcome))
+    discard list.push(tool_events, tool_event_json(name, tool_use_id, input_raw, outcome))
+    return 1
+}
+
+fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32, system_prompt: str) -> str {
     let payload = messages_json
-    let raw = services.provider.request_messages_sync(messages_json, services.registry.list_tool_definitions_json(), load_system_prompt())
+    let tool_defs = tool_definitions_for(messages_json)
+    write_debug(str.concat("messages_", str.concat(request_id, str.concat("_", str.concat(str.from_i32(depth), ".json")))), messages_json)
+    write_debug(str.concat("tools_", str.concat(request_id, str.concat("_", str.concat(str.from_i32(depth), ".json")))), tool_defs)
+    log.info(
+        "runtime.agent turn request",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "depth", str.from_i32(depth))
+    )
+    let raw = services.provider.request_messages_sync(messages_json, tool_defs, system_prompt)
     let status = services.provider.last_status()
     write_debug(str.concat("raw_response_", str.from_i32(depth), ".json"), raw)
+    log.info(
+        "runtime.agent turn response",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "status", str.from_i32(status))
+    )
     if status < 200 || status >= 300 {
+        let error_message = if raw == "" && services.provider.last_error() == "" { "provider_request_failed_before_response" } else { "" }
         let upstream_raw = upstream_error_raw_response(payload, raw)
         let transport_error = if raw == "" { services.provider.last_error() } else { raw }
-        return turn_error_json("", upstream_raw, transport_error, accumulated_events_json, str.from_i32(status))
+        log.warn(
+            "runtime.agent upstream error",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "transport_error", apputil.excerpt_head(transport_error, 220))
+        )
+        return turn_error_json(error_message, upstream_raw, transport_error, accumulated_events_json, str.from_i32(status))
     }
 
     let parsed = json.parse(raw)
     if json.get_str(parsed, "status") == "error" {
+        log.warn(
+            "runtime.agent provider status error",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "error", apputil.excerpt_head(json.get_str(parsed, "error"), 220))
+        )
         return turn_error_json("", raw, json.get_str(parsed, "error"), accumulated_events_json, str.from_i32(status))
     }
     let stop_reason = json.get_str(parsed, "stop_reason")
+    log.info(
+        "runtime.agent parsed response",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "stop_reason", stop_reason)
+    )
     if stop_reason != "tool_use" {
         let final_raw = final_response_raw_response(payload, raw)
         let final_parsed = json.parse(final_raw)
         if parsed_message_has_content(final_parsed) == 0 {
+            if accumulated_events_json != "[]" {
+                let synthetic = synthetic_assistant_summary(accumulated_events_json)
+                log.warn(
+                    "runtime.agent synthetic fallback",
+                    apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", apputil.excerpt_head(synthetic, 220))
+                )
+                discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+                return turn_success_json(synthetic, final_raw, json.get_str(final_parsed, "stop_reason"), accumulated_events_json, str.from_i32(status), "synthetic_assistant", "", "")
+            }
+            log.warn(
+                "runtime.agent empty assistant",
+                apputil.log_fields3("session_id", session_id, "request_id", request_id, "stop_reason", json.get_str(final_parsed, "stop_reason"))
+            )
             return turn_error_json("empty_assistant_response", final_raw, "", accumulated_events_json, str.from_i32(status))
         }
         let response_text = extract_text_block(final_parsed)
         let assistant_text = if response_text == "" { final_raw } else { response_text }
+        log.info(
+            "runtime.agent assistant text",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "excerpt", apputil.excerpt_head(assistant_text, 220))
+        )
         discard services.sessions.record_assistant_for(session_id, assistant_text, request_id, services.provider.latest_model_label(), str.from_i32(depth))
-        return turn_success_json(assistant_text, final_raw, json.get_str(final_parsed, "stop_reason"), accumulated_events_json, str.from_i32(status))
+        return turn_success_default(assistant_text, final_raw, json.get_str(final_parsed, "stop_reason"), accumulated_events_json, str.from_i32(status))
     }
 
+    let tool_results = list.new()
+    let tool_events = list.new()
+    discard collect_tool_results_and_events(tool_results, tool_events, parsed, session_id, request_id, stream_mode)
+    let tool_events_array = json.array(tool_events)
+    write_debug("tool_events.json", tool_events_array)
+    log.info(
+        "runtime.agent tool results",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "tool_events", apputil.excerpt_head(tool_events_array, 220))
+    )
+    let control_summary = successful_control_tool_summary(tool_events_array)
+    if planning_required_prompt(messages_json) == 1 && control_summary == "" {
+        let synthetic = planning_required_summary()
+        log.warn(
+            "runtime.agent planning contract",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", synthetic)
+        )
+        discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+        return turn_success_json(synthetic, raw, "planning_contract", tool_events_array, str.from_i32(status), "planning_required", "", "")
+    }
+    if depth >= 1 && read_only_bash_saturation(tool_events_array) == 1 {
+        let synthetic = synthetic_assistant_summary(tool_events_array)
+        log.warn(
+            "runtime.agent read-only saturation",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", apputil.excerpt_head(synthetic, 220))
+        )
+        discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+        return turn_success_json(synthetic, raw, "tool_read_saturation", tool_events_array, str.from_i32(status), "tool_read_saturation", "", "")
+    }
+    log.info(
+        "runtime.agent control summary",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "control_summary", control_summary)
+    )
+    if control_summary == "" && depth == 0 && has_longrange_start_event(tool_events_array) == 1 && services.longrange.active_run_id_for_session(session_id) != "" {
+        let synthetic = synthetic_assistant_summary(tool_events_array)
+        log.warn(
+            "runtime.agent longrange start handoff",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", apputil.excerpt_head(synthetic, 220))
+        )
+        discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+        return turn_success_json(synthetic, raw, "tool_use", tool_events_array, str.from_i32(status), "tool_handoff", "longrange_start", "ok")
+    }
+    if control_summary != "" {
+        return turn_success_json(control_summary, raw, "tool_use", tool_events_array, str.from_i32(status), "control_tool", first_control_tool_name(tool_events_array), first_control_tool_outcome(tool_events_array))
+    }
+    if automated_longrange_prompt(messages_json) == 1 {
+        let synthetic = synthetic_assistant_summary(tool_events_array)
+        log.info(
+            "runtime.agent automated longrange handoff",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", apputil.excerpt_head(synthetic, 220))
+        )
+        discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+        return turn_success_json(synthetic, raw, "tool_use", tool_events_array, str.from_i32(status), "tool_handoff", "", "")
+    }
+    let next_events = append_array_json(accumulated_events_json, tool_events_array)
     let assistant_message = assistant_message_json(parsed)
     write_debug("assistant_message.json", assistant_message)
-    let tool_bundle = build_tool_result_bundle(parsed, session_id, request_id, stream_mode)
-    let bundle_parsed = json.parse(tool_bundle)
-    let tool_results_array = json.get_str(json.get(bundle_parsed, "tool_results"), "raw")
-    let tool_events_array = json.get_str(json.get(bundle_parsed, "tool_events"), "raw")
+    let tool_results_array = json.array(tool_results)
+    write_debug("tool_results.json", tool_results_array)
     let tool_result_message = apputil.json_obj2("role", json.str("user"), "content", json.raw(tool_results_array))
     write_debug("tool_result_message.json", tool_result_message)
     let next_messages = append_message_json(append_message_json(messages_json, assistant_message), tool_result_message)
     write_debug("next_messages.json", next_messages)
-    let next_events = append_array_json(accumulated_events_json, tool_events_array)
-    return run_session_turn_loop(session_id, request_id, next_messages, depth + 1, next_events, stream_mode)
+    if depth + 1 >= max_recursive_tool_depth() {
+        let synthetic = synthetic_assistant_summary(next_events)
+        log.warn(
+            "runtime.agent tool depth limit",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "summary", apputil.excerpt_head(synthetic, 220))
+        )
+        discard services.sessions.record_assistant_for(session_id, synthetic, request_id, services.provider.latest_model_label(), str.from_i32(depth))
+        return turn_success_json(synthetic, raw, "tool_depth_limit", next_events, str.from_i32(status), "tool_depth_limit", "", "")
+    }
+    log.info(
+        "runtime.agent recurse",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "next_depth", str.from_i32(depth + 1))
+    )
+    return run_session_turn_loop(session_id, request_id, next_messages, depth + 1, next_events, stream_mode, system_prompt)
 }
 
 fn run_session_turn(session_id: str, prompt: str, request_id: str) -> str {
     let messages_json = initial_messages_json(session_id, prompt)
-    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 0)
+    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 0, load_system_prompt_for(prompt))
+}
+
+fn direct_prompt_messages_json(prompt: str) -> str {
+    let message = apputil.json_obj2("role", json.str("user"), "content", json.str(prompt))
+    let items = list.new()
+    discard list.push(items, message)
+    return json.array(items)
+}
+
+fn run_automated_longrange_turn(session_id: str, prompt: str, request_id: str) -> str {
+    return run_session_turn_loop(session_id, request_id, direct_prompt_messages_json(prompt), 0, "[]", 0, load_system_prompt_for(prompt))
 }
 
 fn run_session_turn_streamed(session_id: str, prompt: str, request_id: str) -> str {
     let messages_json = initial_messages_json(session_id, prompt)
-    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 1)
+    return run_session_turn_loop(session_id, request_id, messages_json, 0, "[]", 1, load_system_prompt_for(prompt))
 }
 
 fn run_loop() -> i32 {

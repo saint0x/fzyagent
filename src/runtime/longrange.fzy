@@ -1,41 +1,278 @@
+use core.fs;
 use core.thread;
 use core.log;
 use core.time;
 
+fn text_index_of(hay: str, needle: str) -> i32 {
+    if needle == "" {
+        return 0
+    }
+    if str.len(needle) > str.len(hay) {
+        return -1
+    }
+    let mut idx: i32 = 0
+    while idx + str.len(needle) <= str.len(hay) {
+        if str.slice(hay, idx, idx + str.len(needle)) == needle {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return -1
+}
+
+fn quoted_json_field(raw: str, key: str) -> str {
+    if raw == "" || key == "" {
+        return ""
+    }
+    let marker = str.concat3("\"", key, "\":\"")
+    let start = text_index_of(raw, marker)
+    if start < 0 {
+        return ""
+    }
+    let mut idx: i32 = start + str.len(marker)
+    let mut out = ""
+    let mut escaping: i32 = 0
+    while idx < str.len(raw) {
+        let ch = str.slice(raw, idx, idx + 1)
+        if escaping == 1 {
+            if ch == "n" {
+                out = str.concat(out, "\n")
+            } else if ch == "t" {
+                out = str.concat(out, "\t")
+            } else if ch == "r" {
+                out = str.concat(out, "\r")
+            } else if ch == "\"" {
+                out = str.concat(out, "\"")
+            } else if ch == "\\" {
+                out = str.concat(out, "\\")
+            } else {
+                out = str.concat(out, ch)
+            }
+            escaping = 0
+            idx = idx + 1
+            continue
+        }
+        if ch == "\\" {
+            escaping = 1
+            idx = idx + 1
+            continue
+        }
+        if ch == "\"" {
+            return out
+        }
+        out = str.concat(out, ch)
+        idx = idx + 1
+    }
+    return out
+}
+
+fn state_field(state_raw: str, key: str) -> str {
+    return quoted_json_field(state_raw, key)
+}
+
+fn plan_field(plan_raw: str, key: str) -> str {
+    return quoted_json_field(plan_raw, key)
+}
+
+fn parsed_current_step(plan_raw: str, current_step_id: str) -> JsonHandle {
+    let parsed = json.parse(plan_raw)
+    let steps = json.get(parsed, "steps")
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let step = json.get(steps, str.from_i32(idx))
+        let step_id = json.get_str(step, "step_id")
+        if step_id == "" {
+            return step
+        }
+        if step_id == current_step_id {
+            return step
+        }
+        idx = idx + 1
+    }
+    return json.parse("{}")
+}
+
+fn current_step_id_from_docs(state_raw: str, plan_raw: str) -> str {
+    let plan_id = plan_field(plan_raw, "current_step_id")
+    if plan_id != "" {
+        return plan_id
+    }
+    return state_field(state_raw, "current_step_id")
+}
+
+fn current_step_field(plan_raw: str, state_raw: str, field: str) -> str {
+    let step = parsed_current_step(plan_raw, current_step_id_from_docs(state_raw, plan_raw))
+    return json.get_str(step, field)
+}
+
+fn current_step_target_turns_from_docs(plan_raw: str, state_raw: str) -> str {
+    let target = current_step_field(plan_raw, state_raw, "target_turns")
+    if target == "" {
+        return "1"
+    }
+    return target
+}
+
+fn first_non_empty2(primary: str, fallback: str) -> str {
+    if primary != "" {
+        return primary
+    }
+    return fallback
+}
+
+fn clamp_text(text_value: str, max_chars: i32) -> str {
+    if max_chars <= 0 {
+        return ""
+    }
+    if str.len(text_value) <= max_chars {
+        return text_value
+    }
+    return str.concat(str.slice(text_value, 0, max_chars), "...")
+}
+
 fn auto_prompt_for(run_id: str) -> str {
-    let goal = services.longrange.run_goal(run_id)
-    let goal_summary = services.longrange.goal_summary(run_id)
-    let finished_definition = services.longrange.finished_definition(run_id)
-    let difficulty = services.longrange.difficulty(run_id)
-    let estimated_effort = services.longrange.estimated_effort(run_id)
-    let current_step_id = services.longrange.current_step_id(run_id)
-    let plan_summary = services.longrange.plan_summary(run_id)
-    let progress = services.longrange.progress_excerpt(run_id)
-    let no_plan = if services.longrange.plan_status_ready(run_id) == 1 { 0 } else { 1 }
+    let state_raw = services.longrange.state_json(run_id)
+    let plan_raw = services.longrange.plan_json(run_id)
+    let goal = state_field(state_raw, "goal")
+    let task_class = first_non_empty2(state_field(state_raw, "task_class"), plan_field(plan_raw, "task_class"))
+    let goal_summary = plan_field(plan_raw, "goal_summary")
+    let finished_definition = plan_field(plan_raw, "finished_definition")
+    let difficulty = plan_field(plan_raw, "difficulty")
+    let estimated_effort = plan_field(plan_raw, "estimated_effort")
+    let current_step_id = current_step_id_from_docs(state_raw, plan_raw)
+    let current_step_type = current_step_field(plan_raw, state_raw, "step_type")
+    let evidence_mode = current_step_field(plan_raw, state_raw, "evidence_mode")
+    let completion_signal = current_step_field(plan_raw, state_raw, "completion_signal")
+    let current_step_outlook = current_step_field(plan_raw, state_raw, "step_outlook")
+    let current_step_target_turns = current_step_target_turns_from_docs(plan_raw, state_raw)
+    let plan_summary = plan_field(plan_raw, "plan_summary")
+    let execution_outlook = plan_field(plan_raw, "execution_outlook")
+    let planning_style = plan_field(plan_raw, "planning_style")
+    let expected_total_turns = first_non_empty2(plan_field(plan_raw, "expected_total_turns"), "5")
+    let used_turns = apputil.parse_i32(first_non_empty2(state_field(state_raw, "turns_completed"), "0"))
+    let progress = clamp_text(services.longrange.progress_excerpt(run_id), 420)
+    let latest_summary = clamp_text(state_field(state_raw, "latest_summary"), 220)
+    let compact_goal = clamp_text(goal, 260)
+    let compact_goal_summary = clamp_text(goal_summary, 220)
+    let compact_finished_definition = clamp_text(finished_definition, 220)
+    let compact_difficulty = clamp_text(difficulty, 80)
+    let compact_estimated_effort = clamp_text(estimated_effort, 80)
+    let compact_plan_summary = clamp_text(plan_summary, 320)
+    let compact_execution_outlook = clamp_text(execution_outlook, 140)
+    let compact_step_outlook = clamp_text(current_step_outlook, 140)
+    let no_plan = if state_field(state_raw, "plan_status") == "ready" { 0 } else { 1 }
     if no_plan == 1 {
+        if latest_summary == "planning_required_before_tool_use: create the durable plan with plan_create before non-control work" {
+            let mut recovery_prompt = "AUTOMATED LONG RANGE MESSAGE\n"
+            recovery_prompt = str.concat(recovery_prompt, str.concat("run_id: ", run_id))
+            recovery_prompt = str.concat(recovery_prompt, str.concat("\nliteral_goal: ", compact_goal))
+            recovery_prompt = str.concat(recovery_prompt, str.concat("\nlast_turn: ", latest_summary))
+            recovery_prompt = str.concat(recovery_prompt, "\nThe previous autonomous turn attempted ordinary tool work before creating the durable plan.\n")
+            recovery_prompt = str.concat(recovery_prompt, "Rules:\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Do not call `longrange_start` again.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Do not inspect files or run non-control tools yet.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Your only valid next control-plane action is `plan_create`.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Make the plan specific to this literal goal and keep it tight if the task is small.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Set your own `expected_total_turns`, `execution_outlook`, and `planning_style` realistically.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Include ordered steps with `step_type`, `evidence_mode`, `completion_signal`, and a real first `current_step_id`.\n")
+            recovery_prompt = str.concat(recovery_prompt, "- Respect hard constraints from the literal goal exactly.\n")
+            recovery_prompt = str.concat(recovery_prompt, "Create the durable plan now and nothing else.\n")
+            return recovery_prompt
+        }
         let mut planning_prompt = "AUTOMATED LONG RANGE MESSAGE\n"
         planning_prompt = str.concat(planning_prompt, str.concat("run_id: ", run_id))
-        planning_prompt = str.concat(planning_prompt, str.concat("\nliteral_goal: ", goal))
+        planning_prompt = str.concat(planning_prompt, str.concat("\nliteral_goal: ", compact_goal))
         planning_prompt = str.concat(planning_prompt, "\nNo durable plan exists yet for this goal.\n")
-        planning_prompt = str.concat(planning_prompt, "First call `plan_create` with a complete durable plan containing goal summary, finished definition, difficulty, estimated effort, current step, and concrete steps.\n")
-        planning_prompt = str.concat(planning_prompt, "After the plan is recorded, begin executing it.\n")
-        planning_prompt = str.concat(planning_prompt, "When the goal is fully complete, respond only by calling `goal_complete`.\n")
+        planning_prompt = str.concat(planning_prompt, "Rules:\n")
+        planning_prompt = str.concat(planning_prompt, "- Do not call `longrange_start` again. The run already exists.\n")
+        planning_prompt = str.concat(planning_prompt, "- Prefer a single control-plane tool call for this turn.\n")
+        planning_prompt = str.concat(planning_prompt, "- Your next control-plane action must be `plan_create`.\n")
+        planning_prompt = str.concat(planning_prompt, str.concat("- The runtime classified this run as `", str.concat(task_class, "`.\n")))
+        planning_prompt = str.concat(planning_prompt, "- `plan_create` should create a realistic working plan, not a generic template.\n")
+        planning_prompt = str.concat(planning_prompt, "- Set your own `expected_total_turns`, `execution_outlook`, and `planning_style` to match how you want to tackle this task.\n")
+        planning_prompt = str.concat(planning_prompt, "- Every step should include `step_type`, `evidence_mode`, `completion_signal`, and preferably `step_outlook` plus `target_turns`.\n")
+        planning_prompt = str.concat(planning_prompt, "- Use `step_type` from: `inspect`, `execute`, `verify`, `summarize`.\n")
+        planning_prompt = str.concat(planning_prompt, "- Set `current_step_id` to the first step you will actually work on next.\n")
+        planning_prompt = str.concat(planning_prompt, "- Do not call `goal_complete` until the full goal is truly finished.\n")
+        planning_prompt = str.concat(planning_prompt, "- Respect hard constraints from the literal goal exactly. If it says `no file edits`, do not create or modify files.\n")
+        planning_prompt = str.concat(planning_prompt, "- If the goal is tiny, do not invent extra exploration work. Keep the plan tight and directly aligned with the requested output.\n")
+        planning_prompt = str.concat(planning_prompt, "Create the durable plan now. After that, later turns should execute the plan, and you may revise the outlook or turn budget with `plan_update` if reality changes.\n")
         return planning_prompt
+    }
+    if apputil.parse_i32(first_non_empty2(state_field(state_raw, "failure_count"), "0")) > 0 {
+        let mut retry_prompt = "AUTOMATED LONG RANGE MESSAGE\n"
+        retry_prompt = str.concat(retry_prompt, str.concat("run_id: ", run_id))
+        retry_prompt = str.concat(retry_prompt, str.concat("\ngoal_summary: ", compact_goal_summary))
+        retry_prompt = str.concat(retry_prompt, str.concat("\nfinished_definition: ", compact_finished_definition))
+    retry_prompt = str.concat(retry_prompt, str.concat("\ncurrent_step: ", current_step_id))
+    retry_prompt = str.concat(retry_prompt, str.concat("\nlast_turn: ", latest_summary))
+    retry_prompt = str.concat(retry_prompt, str.concat("\nexecution_outlook: ", compact_execution_outlook))
+    if latest_summary == "control_plane_tool_failed:goal_complete" {
+        retry_prompt = str.concat(retry_prompt, str.concat("\ngoal_complete_block_reason: ", services.longrange.goal_complete_block_reason(run_id, latest_summary)))
+    }
+    retry_prompt = str.concat(retry_prompt, "\nThe previous autonomous turn failed or produced no useful output.\n")
+        retry_prompt = str.concat(retry_prompt, "Rules:\n")
+        retry_prompt = str.concat(retry_prompt, "- Do not call `longrange_start` or `plan_create`.\n")
+        retry_prompt = str.concat(retry_prompt, "- Do not call `plan_view` unless a queued steer message explicitly asks to inspect the plan.\n")
+        retry_prompt = str.concat(retry_prompt, "- Take exactly one concrete next action toward the current step.\n")
+        retry_prompt = str.concat(retry_prompt, "- Do not create large scratch files and immediately print them back to the model. Summarize findings directly.\n")
+        retry_prompt = str.concat(retry_prompt, "- Respect hard constraints from the literal goal exactly. Do not create files if the goal forbids file edits.\n")
+        retry_prompt = str.concat(retry_prompt, "- If a plan fact changed, use `plan_update` once after the real work.\n")
+        retry_prompt = str.concat(retry_prompt, "- If the finished definition is already satisfied, call `goal_complete`.\n")
+        if latest_summary == "control_plane_tool_failed:goal_complete" {
+            retry_prompt = str.concat(retry_prompt, "- Your last completion attempt was rejected. Repair the specific missing completion condition above before retrying `goal_complete`.\n")
+        }
+        return retry_prompt
+    }
+    if services.longrange.is_tool_only_summary(latest_summary) == 1 {
+        let mut synthesis_prompt = "AUTOMATED LONG RANGE MESSAGE\n"
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("run_id: ", run_id))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\ngoal_summary: ", compact_goal_summary))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\nfinished_definition: ", compact_finished_definition))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\ncurrent_step: ", current_step_id))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\ncurrent_step_type: ", current_step_type))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\nlast_turn: ", latest_summary))
+        synthesis_prompt = str.concat(synthesis_prompt, str.concat("\nlast_evidence_count: ", first_non_empty2(state_field(state_raw, "last_evidence_count"), "0")))
+        synthesis_prompt = str.concat(synthesis_prompt, "\nThe previous autonomous turn already gathered tool evidence but did not finish with a useful synthesis.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "Rules:\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Do not call `longrange_start` or `plan_create`.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Do not restart broad file inspection if the gathered evidence is already enough to update the current step.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- First synthesize what the gathered evidence shows for the current step.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Prefer a single `plan_update` that marks concrete progress and advances the step when appropriate.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- If the finished definition is now satisfied, call `goal_complete` instead of doing more inspection.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Only use one additional targeted tool if a specific missing fact blocks synthesis.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Prefer targeted `sed` or `rg` reads over full-file `cat` on large sources.\n")
+        synthesis_prompt = str.concat(synthesis_prompt, "- Respect hard constraints from the literal goal exactly. Do not create files if the goal forbids file edits.\n")
+        return synthesis_prompt
     }
     let mut prompt = "AUTOMATED LONG RANGE MESSAGE\n"
     prompt = str.concat(prompt, str.concat("run_id: ", run_id))
-    prompt = str.concat(prompt, str.concat("\nliteral_goal: ", goal))
-    prompt = str.concat(prompt, str.concat("\ngoal_summary: ", goal_summary))
-    prompt = str.concat(prompt, str.concat("\nfinished_definition: ", finished_definition))
-    prompt = str.concat(prompt, str.concat("\ndifficulty: ", difficulty))
-    prompt = str.concat(prompt, str.concat("\nestimated_effort: ", estimated_effort))
+    prompt = str.concat(prompt, str.concat("\nliteral_goal: ", compact_goal))
     prompt = str.concat(prompt, str.concat("\ncurrent_step: ", current_step_id))
-    prompt = str.concat(prompt, str.concat("\nplan_summary: ", plan_summary))
-    prompt = str.concat(prompt, "\nrecent_progress:\n")
-    prompt = str.concat(prompt, progress)
-    prompt = str.concat(prompt, "\nContinue towards the goal. This is an automated continuation message.\n")
-    prompt = str.concat(prompt, "Use `plan_update` whenever the plan or current step changes.\n")
-    prompt = str.concat(prompt, "When the goal is fully complete, respond only by calling `goal_complete`.\n")
+    if latest_summary != "" {
+        prompt = str.concat(prompt, str.concat("\nlatest_summary: ", latest_summary))
+    }
+    prompt = str.concat(prompt, "\nExecute one concrete next action for the current step.\n")
+    prompt = str.concat(prompt, "Rules:\n")
+    prompt = str.concat(prompt, "- Never call `longrange_start` again for this run.\n")
+    prompt = str.concat(prompt, "- Do not call `plan_create` again because a plan already exists.\n")
+    prompt = str.concat(prompt, "- Do not call `plan_view` as a default next step.\n")
+    prompt = str.concat(prompt, "- Use one targeted work tool or one control-plane tool, not both, unless the work itself requires it.\n")
+    prompt = str.concat(prompt, "- Use `plan_update` only after real progress changed the durable plan or current step.\n")
+    prompt = str.concat(prompt, "- Prefer targeted inspection over broad rereads.\n")
+    prompt = str.concat(prompt, "- Avoid large scratch artifacts and avoid `cat` loops.\n")
+    prompt = str.concat(prompt, "- Respect hard constraints from the literal goal exactly. If it says `no file edits`, do not create or modify files.\n")
+    if services.longrange.is_passive_control_summary(latest_summary) == 1 {
+        prompt = str.concat(prompt, str.concat("- The previous autonomous turn stalled on ", latest_summary))
+        prompt = str.concat(prompt, ". Do not repeat that control action now.\n")
+    }
+    if task_class == "micro" && used_turns + 1 >= apputil.parse_i32(expected_total_turns) {
+        prompt = str.concat(prompt, "- You are at the edge of your declared loop budget for this small task.\n")
+        prompt = str.concat(prompt, "- If the checklist structure or requested output is already materially defined, finish the remaining synthesis now instead of doing another planning-only turn.\n")
+        prompt = str.concat(prompt, "- Prefer completing the current step and calling `goal_complete` over another `plan_update` unless a real missing piece still exists.\n")
+        prompt = str.concat(prompt, "- Do not broaden scope with extra repository inspection on this small task.\n")
+    }
+    prompt = str.concat(prompt, "- Call `goal_complete` only when the finished definition is satisfied.\n")
     return prompt
 }
 
@@ -45,29 +282,50 @@ fn next_message_json(run_id: str) -> str {
         return queued
     }
     if services.longrange.auto_continue_pending(run_id) == 1 {
-        return model.types.longrange_message_json("continue", auto_prompt_for(run_id), "", str.from_i32(time.now()), "false")
+        return model.types.longrange_message_json("continue", auto_prompt_for(run_id), "", services.longrange.fresh_label(), "false")
     }
     return ""
 }
 
-fn run_message_kind(parsed: JsonHandle) -> str {
-    return json.get_str(parsed, "kind")
+fn run_message_kind(raw: str) -> str {
+    if raw == "" {
+        return ""
+    }
+    return json.get_str(json.parse(raw), "kind")
 }
 
-fn run_message_content(parsed: JsonHandle) -> str {
-    return json.get_str(parsed, "content")
+fn run_message_content(raw: str) -> str {
+    if raw == "" {
+        return ""
+    }
+    return json.get_str(json.parse(raw), "content")
 }
 
-fn run_message_request_id(parsed: JsonHandle) -> str {
-    return json.get_str(parsed, "request_id")
+fn run_message_request_id(raw: str) -> str {
+    if raw == "" {
+        return ""
+    }
+    return json.get_str(json.parse(raw), "request_id")
 }
 
-fn next_request_id(run_id: str, parsed: JsonHandle) -> str {
-    let queued = run_message_request_id(parsed)
+fn turn_result_kind(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "result_kind")
+}
+
+fn turn_control_tool(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "control_tool")
+}
+
+fn turn_control_outcome(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "control_outcome")
+}
+
+fn next_request_id(run_id: str, raw: str) -> str {
+    let queued = run_message_request_id(raw)
     if queued != "" {
         return queued
     }
-    return str.concat3("auto-", run_id, str.concat("-", str.from_i32(time.now())))
+    return services.longrange.fresh_label()
 }
 
 fn summarize_result(parsed: JsonHandle) -> str {
@@ -82,36 +340,182 @@ fn summarize_result(parsed: JsonHandle) -> str {
     return "empty_assistant_response"
 }
 
+fn automation_session_marker(run_id: str, message_kind: str) -> str {
+    return str.concat("automated_longrange:", message_kind)
+}
+
+fn dispatch_debug_path(run_id: str, request_id: str) -> str {
+    return str.concat(str.concat("/tmp/fzyagent/longrange/runs/", run_id), str.concat("/dispatch_", str.concat(request_id, ".json")))
+}
+
+fn dispatch_current_path(run_id: str) -> str {
+    return str.concat(str.concat("/tmp/fzyagent/longrange/runs/", run_id), "/dispatch.current.json")
+}
+
+fn wake_signal_path() -> str {
+    return "/tmp/fzyagent/longrange/wake.signal"
+}
+
+fn write_dispatch_debug(run_id: str, request_id: str, session_id: str, message_kind: str, message_content: str) -> i32 {
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
+    let final_payload = apputil.json_obj6(
+        "run_id", json.str(run_id),
+        "request_id", json.str(request_id),
+        "session_id", json.str(session_id),
+        "message_kind", json.str(message_kind),
+        "message_bytes", json.str(str.from_i32(str.len(message_content))),
+        "message_content", json.str(message_content),
+    )
+    discard fs.atomic_write(dispatch_current_path(run_id), final_payload)
+    discard fs.atomic_write(dispatch_debug_path(run_id, request_id), final_payload)
+    return 0
+}
+
+fn corrective_steer_prompt(run_id: str, summary: str) -> str {
+    let mut prompt = "AUTOMATED LONG RANGE STEER\n"
+    prompt = str.concat(prompt, str.concat("run_id: ", run_id))
+    prompt = str.concat(prompt, str.concat("\ngoal_summary: ", services.longrange.goal_summary(run_id)))
+    prompt = str.concat(prompt, str.concat("\ncurrent_step: ", services.longrange.current_step_id(run_id)))
+    prompt = str.concat(prompt, str.concat("\nprevious_failure: ", summary))
+    prompt = str.concat(prompt, "\nThe previous autonomous continuation was not useful.\n")
+    prompt = str.concat(prompt, "Rules:\n")
+    prompt = str.concat(prompt, "- Do not call `longrange_start`, `plan_create`, or `plan_view`.\n")
+    prompt = str.concat(prompt, "- Make exactly one concrete step of progress on the current step now.\n")
+    prompt = str.concat(prompt, "- If a plan fact changes, use `plan_update` only after the concrete work.\n")
+    prompt = str.concat(prompt, "- If the finished definition is already satisfied, call `goal_complete`.\n")
+    return prompt
+}
+
+fn emergency_detach_run(run_id: str) -> i32 {
+    let session_id = services.longrange.run_session_id(run_id)
+    if session_id != "" {
+        discard services.longrange.clear_active_run_for_session(session_id, run_id)
+    }
+    discard services.longrange.remove_active_run(run_id)
+    return 0
+}
+
 fn process_run(run_id: str) -> i32 {
     let status = services.longrange.run_status(run_id)
+    log.info(
+        "runtime.longrange process_run",
+        apputil.log_fields3("run_id", run_id, "status", status, "plan_status", if services.longrange.plan_status_ready(run_id) == 1 { "ready" } else { "missing" })
+    )
     if status == "completed" || status == "failed" || status == "cancelled" {
         return 0
     }
     let message_json = next_message_json(run_id)
     if message_json == "" {
+        log.info(
+            "runtime.longrange no message",
+            apputil.log_fields3("run_id", run_id, "status", status, "auto_continue", str.from_i32(services.longrange.auto_continue_pending(run_id)))
+        )
         return 0
     }
-    let parsed_message = json.parse(message_json)
-    let message_kind = run_message_kind(parsed_message)
-    let message_content = run_message_content(parsed_message)
-    let request_id = next_request_id(run_id, parsed_message)
+    let raw_message_kind = run_message_kind(message_json)
+    let raw_message_content = run_message_content(message_json)
+    let message_kind = if raw_message_kind == "" { "continue" } else { raw_message_kind }
+    let unclamped_message_content = if raw_message_content == "" && message_kind == "continue" { auto_prompt_for(run_id) } else { raw_message_content }
+    let message_content = if str.len(unclamped_message_content) > 1400 { clamp_text(unclamped_message_content, 1400) } else { unclamped_message_content }
+    log.info(
+        "runtime.longrange dispatch",
+        apputil.log_fields3("run_id", run_id, "message_kind", message_kind, "prompt_excerpt", apputil.excerpt_head(message_content, 220))
+    )
+    let request_id = if next_request_id(run_id, message_json) == "" { services.longrange.fresh_label() } else { next_request_id(run_id, message_json) }
     let session_id = services.longrange.run_session_id(run_id)
-    discard services.longrange.set_auto_continue(run_id, 0, message_kind)
-    discard services.sessions.post_message_for(session_id, message_content, request_id, run_id)
-    let result = runtime.agent.run_session_turn(session_id, message_content, request_id)
+    discard write_dispatch_debug(run_id, request_id, session_id, message_kind, message_content)
+    if message_kind != "continue" {
+        discard services.sessions.post_automation_message_for(session_id, automation_session_marker(run_id, message_kind), request_id, run_id)
+    }
+    let result = if message_kind == "continue" || str.starts_with(message_content, "AUTOMATED LONG RANGE MESSAGE") == 1 {
+        runtime.agent.run_automated_longrange_turn(session_id, message_content, request_id)
+    } else {
+        runtime.agent.run_session_turn(session_id, message_content, request_id)
+    }
     let parsed = json.parse(result)
     let summary = summarize_result(parsed)
-    if runtime.agent.turn_response_is_ok(parsed) == 1 {
+    let tool_events = runtime.agent.turn_tool_events_raw(parsed)
+    let evidence_count = services.longrange.tool_event_count(tool_events)
+    let result_kind = turn_result_kind(parsed)
+    let control_tool = turn_control_tool(parsed)
+    let control_outcome = turn_control_outcome(parsed)
+    log.info(
+        "runtime.longrange turn result",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "summary", apputil.excerpt_head(summary, 220))
+    )
+    if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(result) == 1 {
         let fresh_status = services.longrange.run_status(run_id)
+        log.info(
+            "runtime.longrange turn ok",
+            apputil.log_fields3("run_id", run_id, "request_id", request_id, "fresh_status", fresh_status)
+        )
         if fresh_status == "completed" || fresh_status == "failed" || fresh_status == "cancelled" {
-            return 1
+            discard services.longrange.refresh_summary(run_id, fresh_status)
+            return 2
         }
-        discard services.longrange.update_after_turn(run_id, request_id, summary, 1)
+        if services.longrange.update_after_turn(run_id, request_id, summary, 1, evidence_count, result_kind, control_tool, control_outcome) != 0 {
+            log.error(
+                "runtime.longrange state write failed",
+                apputil.log_fields3("run_id", run_id, "request_id", request_id, "phase", "turn_ok")
+            )
+            discard emergency_detach_run(run_id)
+            discard services.longrange.mark_failed(run_id, "longrange_state_write_failed", request_id)
+            return -1
+        }
+        if services.longrange.should_auto_complete(run_id, summary) == 1 {
+            log.info(
+                "runtime.longrange auto complete",
+                apputil.log_fields3("run_id", run_id, "request_id", request_id, "summary", apputil.excerpt_head(summary, 180))
+            )
+            discard services.longrange.mark_completed(run_id, services.longrange.auto_completion_summary(run_id), request_id)
+            discard services.longrange.refresh_summary(run_id, "completed")
+            return 2
+        }
+        if services.longrange.should_fail_for_low_progress(run_id) == 1 {
+            log.warn(
+                "runtime.longrange low progress failure",
+                apputil.log_fields3("run_id", run_id, "request_id", request_id, "summary", apputil.excerpt_head(summary, 180))
+            )
+            discard services.longrange.mark_failed(run_id, "passive_control_loop", request_id)
+            discard services.longrange.refresh_summary(run_id, "failed")
+            return 2
+        }
         return 1
     }
-    discard services.longrange.update_after_turn(run_id, request_id, summary, 0)
+    if summary == "empty_assistant_response" {
+        log.warn(
+            "runtime.longrange empty followup",
+            apputil.log_fields3("run_id", run_id, "request_id", request_id, "message_kind", message_kind)
+        )
+        if services.longrange.record_terminal_failure_event(run_id, "empty_assistant_followup", request_id) != 0 {
+            discard emergency_detach_run(run_id)
+            return -1
+        }
+        discard services.longrange.refresh_summary(run_id, "failed")
+        return 2
+    }
+    if services.longrange.update_after_turn(run_id, request_id, summary, 0, evidence_count, result_kind, control_tool, control_outcome) != 0 {
+        log.error(
+            "runtime.longrange state write failed",
+            apputil.log_fields3("run_id", run_id, "request_id", request_id, "phase", "turn_error")
+        )
+        discard emergency_detach_run(run_id)
+        discard services.longrange.mark_failed(run_id, "longrange_state_write_failed", request_id)
+        return -1
+    }
     if services.longrange.failure_count(run_id) >= 3 {
-        discard services.longrange.mark_failed(run_id, summary, request_id)
+        log.warn(
+            "runtime.longrange terminal failure",
+            apputil.log_fields3("run_id", run_id, "request_id", request_id, "detail", apputil.excerpt_head(summary, 180))
+        )
+        if services.longrange.record_terminal_failure_event(run_id, summary, request_id) != 0 {
+            discard emergency_detach_run(run_id)
+            return -1
+        }
+        discard services.longrange.refresh_summary(run_id, "failed")
+        return 2
     }
     return 1
 }
@@ -122,6 +526,12 @@ fn process_once() -> i32 {
         return 0
     }
     let processed = process_run(run_id)
+    if processed < 0 {
+        return 0
+    }
+    if processed == 2 {
+        return 0
+    }
     let status = services.longrange.run_status(run_id)
     if status == "planning" || status == "active" {
         discard services.longrange.requeue_active_run_id(run_id)
@@ -145,10 +555,55 @@ fn process_worker() -> i32 {
     }
 }
 
+fn drain_run(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    log.info(
+        "runtime.longrange drain_run",
+        apputil.log_fields2("run_id", run_id, "mode", "direct")
+    )
+    discard services.longrange.remove_active_run(run_id)
+    let mut processed_count: i32 = 0
+    loop {
+        let processed = process_run(run_id)
+        if processed < 0 {
+            return 0
+        }
+        if processed == 2 {
+            return 0
+        }
+        if processed == 0 {
+            let status = services.longrange.run_status(run_id)
+            if status == "planning" || status == "active" {
+                discard services.longrange.requeue_active_run_id(run_id)
+            }
+            return 0
+        }
+        processed_count = processed_count + 1
+        if processed_count >= 32 {
+            let status = services.longrange.run_status(run_id)
+            if status == "planning" || status == "active" {
+                discard services.longrange.requeue_active_run_id(run_id)
+            }
+            return 0
+        }
+        let status = services.longrange.run_status(run_id)
+        if status != "planning" && status != "active" {
+            return 0
+        }
+        checkpoint()
+        yield()
+    }
+}
+
+fn drain() -> i32 {
+    return process_worker()
+}
+
 fn kick() -> i32 {
-    let handle = spawn(process_worker)
-    detach(handle)
-    return 0
+    discard fs.mkdir("/tmp/fzyagent/longrange")
+    return fs.atomic_write(wake_signal_path(), services.longrange.fresh_label())
 }
 
 fn run_loop() -> i32 {

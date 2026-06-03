@@ -469,6 +469,7 @@ fn tool_response_json(request_id: str, tool_id: str, run_id: str, status_code: i
     discard map.set(payload, "run_id", json.str(run_id))
     discard map.set(payload, "artifact_path", json.str(artifact_path))
     discard map.set(payload, "result", json.raw(result_json))
+    discard map.set(payload, "result_raw", json.str(result_json))
     return json.object(payload)
 }
 
@@ -493,6 +494,10 @@ fn response_status_text(parsed: JsonHandle) -> str {
 }
 
 fn response_result_raw(parsed: JsonHandle) -> str {
+    let explicit = json.get_str(parsed, "result_raw")
+    if explicit != "" {
+        return explicit
+    }
     return json.get_str(json.get(parsed, "result"), "raw")
 }
 

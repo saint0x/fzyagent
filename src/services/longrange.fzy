@@ -1,21 +1,49 @@
 use core.fs;
+use core.log;
+use core.proc;
 use core.storage;
 use core.time;
 
-fn state_dir() -> str {
+fn runtime_root_dir() -> str {
     return "/tmp/fzyagent/longrange"
 }
 
+fn debug_root_dir() -> str {
+    return "/tmp/fzyagent/longrange_debug"
+}
+
 fn runs_dir() -> str {
-    return "/tmp/fzyagent/longrange/runs"
+    return str.concat(runtime_root_dir(), "/runs")
 }
 
 fn sessions_dir() -> str {
-    return "/tmp/fzyagent/longrange/sessions"
+    return str.concat(runtime_root_dir(), "/sessions")
+}
+
+fn debug_runs_dir() -> str {
+    return str.concat(debug_root_dir(), "/runs")
+}
+
+fn debug_sessions_dir() -> str {
+    return str.concat(debug_root_dir(), "/sessions")
+}
+
+fn ensure_local_dir(path: str) -> i32 {
+    if path == "" {
+        return 1
+    }
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, "-lc")
+    discard proc.argv_push(argv, str.concat("mkdir -p ", json.str(path)))
+    let env_map: ProcessEnv = proc.env_new()
+    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 5000)
+    return proc.exit_code(handle)
 }
 
 fn active_runs_path() -> str {
-    return "/tmp/fzyagent/longrange/active.jsonl"
+    return "/tmp/fzyagent/longrange/active_runs.txt"
 }
 
 fn summary_path() -> str {
@@ -27,19 +55,43 @@ fn run_dir(run_id: str) -> str {
 }
 
 fn run_state_path(run_id: str) -> str {
-    return str.concat(run_dir(run_id), "/state.json")
+    return str.concat("kv:longrange:state:", run_id)
 }
 
 fn run_plan_path(run_id: str) -> str {
-    return str.concat(run_dir(run_id), "/plan.json")
+    return str.concat3(run_dir(run_id), "/", "plan.json")
 }
 
 fn run_progress_path(run_id: str) -> str {
-    return str.concat(run_dir(run_id), "/progress.jsonl")
+    return str.concat("kv:longrange:progress:", run_id)
+}
+
+fn materialized_run_state_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "state.materialized.json")
+}
+
+fn materialized_run_progress_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "progress.materialized.json")
 }
 
 fn run_queue_path(run_id: str) -> str {
-    return str.concat(run_dir(run_id), "/queue.jsonl")
+    return str.concat3(run_dir(run_id), "/", "queue.jsonl")
+}
+
+fn run_meta_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "meta.json")
+}
+
+fn run_session_id_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "session_id.txt")
+}
+
+fn run_goal_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "goal.txt")
+}
+
+fn run_created_at_path(run_id: str) -> str {
+    return str.concat3(run_dir(run_id), "/", "created_at.txt")
 }
 
 fn session_dir(session_id: str) -> str {
@@ -47,18 +99,469 @@ fn session_dir(session_id: str) -> str {
 }
 
 fn session_active_run_path(session_id: str) -> str {
-    return str.concat(session_dir(session_id), "/active_run.txt")
+    return str.concat3(session_dir(session_id), "/", "active_run.txt")
+}
+
+fn label_counter_path() -> str {
+    return str.concat(runtime_root_dir(), "/label_counter.txt")
+}
+
+fn digit_text(value: i32) -> str {
+    if value == 0 { return "0" }
+    if value == 1 { return "1" }
+    if value == 2 { return "2" }
+    if value == 3 { return "3" }
+    if value == 4 { return "4" }
+    if value == 5 { return "5" }
+    if value == 6 { return "6" }
+    if value == 7 { return "7" }
+    if value == 8 { return "8" }
+    return "9"
+}
+
+fn next_decimal_text(raw: str) -> str {
+    let text = str.trim(raw)
+    if text == "" {
+        return "1"
+    }
+    let mut idx: i32 = str.len(text) - 1
+    let mut carry: i32 = 1
+    let mut out = ""
+    while idx >= 0 {
+        let ch = str.slice(text, idx, idx + 1)
+        let next = apputil.parse_i32(ch) + carry
+        if next >= 10 {
+            out = str.concat("0", out)
+            carry = 1
+        } else {
+            out = str.concat(digit_text(next), out)
+            carry = 0
+        }
+        idx = idx - 1
+    }
+    if carry == 1 {
+        return str.concat("1", out)
+    }
+    return out
+}
+
+fn next_fallback_label() -> str {
+    discard ensure_state()
+    let next = next_decimal_text(safe_read(label_counter_path()))
+    discard fs.write_file(label_counter_path(), next)
+    return next
 }
 
 fn now_label() -> str {
-    return str.from_i32(time.now())
+    let direct = str.from_i32(time.now())
+    if direct != "" {
+        return direct
+    }
+    return next_fallback_label()
+}
+
+fn fresh_label() -> str {
+    return next_fallback_label()
+}
+
+fn active_run_freshness_window_ms() -> i32 {
+    return 600000
+}
+
+fn run_id_from_state_key(path: str) -> str {
+    let direct_prefix = "kv:longrange:state:"
+    if str.starts_with(path, direct_prefix) == 1 {
+        return str.slice(path, str.len(direct_prefix), str.len(path))
+    }
+    let legacy_prefix = "kv:longrange:run:"
+    let legacy_suffix = ":state"
+    if str.starts_with(path, legacy_prefix) == 0 || str.ends_with(path, legacy_suffix) == 0 {
+        return ""
+    }
+    return str.slice(path, str.len(legacy_prefix), str.len(path) - str.len(legacy_suffix))
+}
+
+fn run_id_from_progress_key(path: str) -> str {
+    let direct_prefix = "kv:longrange:progress:"
+    if str.starts_with(path, direct_prefix) == 1 {
+        return str.slice(path, str.len(direct_prefix), str.len(path))
+    }
+    let legacy_prefix = "kv:longrange:run:"
+    let legacy_suffix = ":progress"
+    if str.starts_with(path, legacy_prefix) == 0 || str.ends_with(path, legacy_suffix) == 0 {
+        return ""
+    }
+    return str.slice(path, str.len(legacy_prefix), str.len(path) - str.len(legacy_suffix))
 }
 
 fn safe_read(path: str) -> str {
+    let state_run_id = run_id_from_state_key(path)
+    if state_run_id != "" {
+        let local = materialized_run_state_path(state_run_id)
+        if fs.exists(local) == 1 {
+            let payload = fs.read_file(local)
+            if payload != "" {
+                discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_materialized"), "bytes", json.str(str.from_i32(str.len(payload))), "path", json.str(local)))
+                return payload
+            }
+            discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_materialized_empty"), "bytes", json.str("0"), "path", json.str(local)))
+        }
+        discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_missing"), "bytes", json.str("0"), "path", json.str(local)))
+        return ""
+    }
+    let progress_run_id = run_id_from_progress_key(path)
+    if progress_run_id != "" {
+        let local = materialized_run_progress_path(progress_run_id)
+        if fs.exists(local) == 1 {
+            let payload = fs.read_file(local)
+            if payload != "" {
+                discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_materialized"), "bytes", json.str(str.from_i32(str.len(payload))), "path", json.str(local)))
+                return payload
+            }
+            discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_materialized_empty"), "bytes", json.str("0"), "path", json.str(local)))
+        }
+        discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_missing"), "bytes", json.str("0"), "path", json.str(local)))
+        return ""
+    }
+    if str.starts_with(path, "kv:") == 1 {
+        return services.sqlite_store.kv_get(path)
+    }
     if fs.exists(path) == 0 {
         return ""
     }
     return fs.read_file(path)
+}
+
+fn atomic_write_text(path: str, payload: str) -> i32 {
+    if str.starts_with(path, "kv:") == 1 {
+        return services.sqlite_store.kv_put(path, payload)
+    }
+    return fs.write_file(path, payload)
+}
+
+fn append_text_line(path: str, line: str) -> i32 {
+    let current = safe_read(path)
+    let next = if current == "" {
+        str.concat(line, "\n")
+    } else {
+        str.concat3(current, line, "\n")
+    }
+    let rc = atomic_write_text(path, next)
+    if rc != 0 {
+        log.error(
+            "services.longrange append_text_line_failed",
+            apputil.log_fields3("path", path, "code", str.from_i32(rc), "head", apputil.excerpt_head(line, 220))
+        )
+    }
+    return rc
+}
+
+fn text_index_of(hay: str, needle: str) -> i32 {
+    if needle == "" {
+        return 0
+    }
+    if str.len(needle) > str.len(hay) {
+        return -1
+    }
+    let mut idx: i32 = 0
+    while idx + str.len(needle) <= str.len(hay) {
+        if str.slice(hay, idx, idx + str.len(needle)) == needle {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return -1
+}
+
+fn quoted_json_field(raw: str, key: str) -> str {
+    if raw == "" || key == "" {
+        return ""
+    }
+    let marker = str.concat3("\"", key, "\":\"")
+    let start = text_index_of(raw, marker)
+    if start < 0 {
+        return ""
+    }
+    let mut idx: i32 = start + str.len(marker)
+    let mut out = ""
+    let mut escaping: i32 = 0
+    while idx < str.len(raw) {
+        let ch = str.slice(raw, idx, idx + 1)
+        if escaping == 1 {
+            if ch == "n" {
+                out = str.concat(out, "\n")
+            } else if ch == "t" {
+                out = str.concat(out, "\t")
+            } else if ch == "r" {
+                out = str.concat(out, "\r")
+            } else if ch == "\"" {
+                out = str.concat(out, "\"")
+            } else if ch == "\\" {
+                out = str.concat(out, "\\")
+            } else {
+                out = str.concat(out, ch)
+            }
+            escaping = 0
+            idx = idx + 1
+            continue
+        }
+        if ch == "\\" {
+            escaping = 1
+            idx = idx + 1
+            continue
+        }
+        if ch == "\"" {
+            return out
+        }
+        out = str.concat(out, ch)
+        idx = idx + 1
+    }
+    return out
+}
+
+fn corrupt_json(payload: str) -> i32 {
+    if payload == "" || str.trim(payload) == "{}" {
+        return 1
+    }
+    return 0
+}
+
+fn looks_like_object_json(payload: str) -> i32 {
+    let trimmed = str.trim(payload)
+    if trimmed == "" {
+        return 0
+    }
+    if str.slice(trimmed, 0, 1) != "{" {
+        return 0
+    }
+    if str.slice(trimmed, str.len(trimmed) - 1, str.len(trimmed)) != "}" {
+        return 0
+    }
+    return 1
+}
+
+fn looks_like_array_json(payload: str) -> i32 {
+    let trimmed = str.trim(payload)
+    if trimmed == "[]" {
+        return 1
+    }
+    if str.len(trimmed) < 2 {
+        return 0
+    }
+    if str.slice(trimmed, 0, 1) != "[" {
+        return 0
+    }
+    if str.slice(trimmed, str.len(trimmed) - 1, str.len(trimmed)) != "]" {
+        return 0
+    }
+    return 1
+}
+
+fn state_payload_valid(payload: str) -> i32 {
+    if looks_like_object_json(payload) == 0 {
+        return 0
+    }
+    if quoted_json_field(payload, "run_id") == "" {
+        return 0
+    }
+    if quoted_json_field(payload, "run_status") == "" {
+        return 0
+    }
+    if quoted_json_field(payload, "plan_status") == "" {
+        return 0
+    }
+    return 1
+}
+
+fn progress_payload_valid(payload: str) -> i32 {
+    if looks_like_object_json(payload) == 0 {
+        return 0
+    }
+    if quoted_json_field(payload, "run_id") == "" {
+        return 0
+    }
+    if quoted_json_field(payload, "phase") == "" {
+        return 0
+    }
+    return 1
+}
+
+fn plan_payload_valid(payload: str) -> i32 {
+    if looks_like_object_json(payload) == 0 {
+        return 0
+    }
+    if quoted_json_field(payload, "run_id") == "" {
+        return 0
+    }
+    if quoted_json_field(payload, "status") == "" {
+        return 0
+    }
+    if quoted_json_field(payload, "task_class") == "" {
+        return 0
+    }
+    return 1
+}
+
+fn debug_payload_path(run_id: str, name: str) -> str {
+    return str.concat3(run_dir(run_id), "/", name)
+}
+
+fn mark_stage(run_id: str, stage: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    return fs.write_file(debug_payload_path(run_id, "create_run.stage.txt"), stage)
+}
+
+fn append_state_debug(run_id: str, event: str, a: str, b: str, c: str) -> i32 {
+    let mut line = "{\"ts\":"
+    line = str.concat(line, json.str(now_label()))
+    line = str.concat(line, str.concat(",\"event\":", json.str(event)))
+    line = str.concat(line, str.concat(",\"a\":", json.str(a)))
+    line = str.concat(line, str.concat(",\"b\":", json.str(b)))
+    line = str.concat(line, str.concat(",\"c\":", json.str(c)))
+    line = str.concat(line, "}")
+    return append_text_line(debug_payload_path(run_id, "state.debug.jsonl"), line)
+}
+
+fn progress_event_json(run_id: str, phase: str, message_kind: str, recorded_at: str, progress_score: str, evidence_count: str, request_id: str, detail: str) -> str {
+    let mut line = "{"
+    line = patch_add_field(line, "run_id", run_id)
+    line = patch_add_field(line, "phase", phase)
+    line = patch_add_field(line, "message_kind", message_kind)
+    line = patch_add_field(line, "recorded_at", recorded_at)
+    line = patch_add_field(line, "progress_score", progress_score)
+    line = patch_add_field(line, "evidence_count", evidence_count)
+    if request_id != "" {
+        line = patch_add_field(line, "request_id", request_id)
+    }
+    if detail != "" {
+        line = patch_add_field(line, "detail", detail)
+    }
+    return patch_finish(line)
+}
+
+fn state_doc_json(run_id: str, session_id: str, goal: str, run_status: str, plan_status: str, task_class: str, turns_completed: str, failure_count: str, last_progress_score: str, consecutive_low_score: str, last_evidence_count: str, completed_step_count: str, auto_continue_pending: str, active_message_kind: str, latest_summary: str, created_at: str, updated_at: str, current_step_id: str, last_request_id: str, completed_at: str) -> str {
+    let mut payload = "{"
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "session_id", session_id)
+    payload = patch_add_field(payload, "goal", goal)
+    payload = patch_add_field(payload, "run_status", run_status)
+    payload = patch_add_field(payload, "plan_status", plan_status)
+    payload = patch_add_field(payload, "task_class", task_class)
+    payload = patch_add_field(payload, "turns_completed", turns_completed)
+    payload = patch_add_field(payload, "failure_count", failure_count)
+    payload = patch_add_field(payload, "last_progress_score", last_progress_score)
+    payload = patch_add_field(payload, "consecutive_low_score", consecutive_low_score)
+    payload = patch_add_field(payload, "last_evidence_count", last_evidence_count)
+    payload = patch_add_field(payload, "completed_step_count", completed_step_count)
+    payload = patch_add_field(payload, "auto_continue_pending", auto_continue_pending)
+    payload = patch_add_field(payload, "active_message_kind", active_message_kind)
+    payload = patch_add_field(payload, "latest_summary", latest_summary)
+    payload = patch_add_field(payload, "created_at", created_at)
+    payload = patch_add_field(payload, "updated_at", updated_at)
+    if current_step_id != "" {
+        payload = patch_add_field(payload, "current_step_id", current_step_id)
+    }
+    if last_request_id != "" {
+        payload = patch_add_field(payload, "last_request_id", last_request_id)
+    }
+    if completed_at != "" {
+        payload = patch_add_field(payload, "completed_at", completed_at)
+    }
+    return patch_finish(payload)
+}
+
+fn patch_start() -> str {
+    return "{"
+}
+
+fn patch_add_field(payload: str, key: str, value: str) -> str {
+    let head = str.concat3("\"", key, "\":")
+    let part = str.concat(head, json.str(value))
+    if payload == "{" {
+        return str.concat(payload, part)
+    }
+    return str.concat3(payload, ",", part)
+}
+
+fn patch_finish(payload: str) -> str {
+    return str.concat(payload, "}")
+}
+
+fn write_state_payload(run_id: str, payload: str) -> i32 {
+    if state_payload_valid(payload) == 0 {
+        log.error(
+            "services.longrange invalid_state_payload",
+            apputil.log_fields3("run_id", run_id, "bytes", str.from_i32(str.len(payload)), "head", apputil.excerpt_head(payload, 220))
+        )
+        discard atomic_write_text(debug_payload_path(run_id, "state.invalid.json"), payload)
+        discard append_text_line(debug_payload_path(run_id, "state.invalid.log"), payload)
+        return 1
+    }
+    let debug_rc = atomic_write_text(debug_payload_path(run_id, "state.last.write.json"), payload)
+    if debug_rc != 0 {
+        log.error(
+            "services.longrange write_state_payload_debug_failed",
+            apputil.log_fields3("run_id", run_id, "code", str.from_i32(debug_rc), "path", debug_payload_path(run_id, "state.last.write.json"))
+        )
+    }
+    discard append_state_debug(run_id, "write_state_payload", quoted_json_field(payload, "run_status"), quoted_json_field(payload, "turns_completed"), quoted_json_field(payload, "plan_status"))
+    let terminal_status = quoted_json_field(payload, "run_status")
+    if terminal_status == "failed" || terminal_status == "completed" || terminal_status == "cancelled" {
+        log.warn(
+            "services.longrange write_state_payload_terminal",
+            apputil.log_fields3("run_id", run_id, "status", terminal_status, "head", apputil.excerpt_head(payload, 220))
+        )
+        let terminal_debug_rc = atomic_write_text(debug_payload_path(run_id, "state.last.write.terminal.json"), payload)
+        if terminal_debug_rc != 0 {
+            log.error(
+                "services.longrange write_state_payload_terminal_debug_failed",
+                apputil.log_fields3("run_id", run_id, "code", str.from_i32(terminal_debug_rc), "path", debug_payload_path(run_id, "state.last.write.terminal.json"))
+            )
+        }
+    }
+    let state_rc = atomic_write_text(run_state_path(run_id), payload)
+    if state_rc != 0 {
+        log.error(
+            "services.longrange write_state_payload_failed",
+            apputil.log_fields3("run_id", run_id, "code", str.from_i32(state_rc), "path", run_state_path(run_id))
+        )
+        return 1
+    }
+    discard fs.atomic_write(materialized_run_state_path(run_id), payload)
+    return 0
+}
+
+fn append_progress_payload(run_id: str, payload: str) -> i32 {
+    discard atomic_write_text(debug_payload_path(run_id, "progress.last.candidate.json"), payload)
+    if progress_payload_valid(payload) == 0 {
+        log.error(
+            "services.longrange invalid_progress_payload",
+            apputil.log_fields3("run_id", run_id, "bytes", str.from_i32(str.len(payload)), "head", apputil.excerpt_head(payload, 220))
+        )
+        discard atomic_write_text(debug_payload_path(run_id, "progress.invalid.json"), payload)
+        discard append_text_line(debug_payload_path(run_id, "progress.invalid.log"), payload)
+        return 1
+    }
+    let current = safe_read(run_progress_path(run_id))
+    let base = if looks_like_array_json(current) == 1 { str.trim(current) } else { "[]" }
+    let next = if base == "[]" {
+        str.concat3("[", payload, "]")
+    } else {
+        str.concat3(str.slice(base, 0, str.len(base) - 1), str.concat(",", payload), "]")
+    }
+    let rc = atomic_write_text(run_progress_path(run_id), next)
+    if rc != 0 {
+        log.error(
+            "services.longrange append_progress_payload_failed",
+            apputil.log_fields3("run_id", run_id, "code", str.from_i32(rc), "head", apputil.excerpt_head(payload, 220))
+        )
+        return 1
+    }
+    discard fs.atomic_write(materialized_run_progress_path(run_id), next)
+    return 0
 }
 
 fn bool_text(flag: i32) -> str {
@@ -69,44 +572,54 @@ fn bool_text(flag: i32) -> str {
 }
 
 fn ensure_state() -> i32 {
-    fs.mkdir(state_dir())
+    fs.mkdir(runtime_root_dir())
+    fs.mkdir(debug_root_dir())
     fs.mkdir(runs_dir())
     fs.mkdir(sessions_dir())
-    if fs.exists(active_runs_path()) == 0 {
-        fs.write_file(active_runs_path(), "")
+    fs.mkdir(debug_runs_dir())
+    fs.mkdir(debug_sessions_dir())
+    if safe_read(active_runs_path()) == "" {
+        discard atomic_write_text(active_runs_path(), "")
     }
-    if fs.exists(summary_path()) == 0 {
-        fs.write_file(summary_path(), model.types.longrange_summary_json("0", "0", "0", "0", "", "idle"))
+    if safe_read(summary_path()) == "" {
+        discard atomic_write_text(summary_path(), model.types.longrange_summary_json("0", "0", "0", "0", "", "idle"))
     }
     return 0
 }
 
 fn boot() -> i32 {
-    return ensure_state()
+    discard ensure_state()
+    return rebuild_runtime_projection()
 }
 
 fn ensure_run(run_id: str) -> i32 {
     discard ensure_state()
-    fs.mkdir(run_dir(run_id))
-    if fs.exists(run_progress_path(run_id)) == 0 {
-        fs.write_file(run_progress_path(run_id), "")
+    if ensure_local_dir(run_dir(run_id)) != 0 {
+        return 1
     }
-    if fs.exists(run_queue_path(run_id)) == 0 {
-        fs.write_file(run_queue_path(run_id), "")
+    if safe_read(run_progress_path(run_id)) == "" {
+        discard atomic_write_text(run_progress_path(run_id), "[]")
+    }
+    if safe_read(run_queue_path(run_id)) == "" {
+        discard atomic_write_text(run_queue_path(run_id), "")
     }
     return 0
 }
 
 fn ensure_session(session_id: str) -> i32 {
     discard ensure_state()
-    fs.mkdir(session_dir(session_id))
-    return 0
+    return ensure_local_dir(session_dir(session_id))
 }
 
 fn summary_json() -> str {
     discard ensure_state()
     let payload = safe_read(summary_path())
-    if payload == "" {
+    if corrupt_json(payload) == 1 || json.get_str(json.parse(payload), "status") == "" {
+        discard rebuild_runtime_projection()
+        let repaired = safe_read(summary_path())
+        if corrupt_json(repaired) == 0 && json.get_str(json.parse(repaired), "status") != "" {
+            return repaired
+        }
         return model.types.longrange_summary_json("0", "0", "0", "0", "", "idle")
     }
     return payload
@@ -141,13 +654,222 @@ fn count_lines(text_value: str) -> i32 {
     return count
 }
 
+fn text_has_line(text_value: str, line: str) -> i32 {
+    if text_value == "" || line == "" {
+        return -1
+    }
+    return text_index_of(str.concat("\n", str.concat(text_value, "\n")), str.concat("\n", str.concat(line, "\n")))
+}
+
+fn list_dir_names(path: str) -> ListHandle {
+    if fs.exists(path) == 0 {
+        return list.new()
+    }
+    return fs.listdir(path)
+}
+
+fn local_materialized_state_json(run_id: str) -> str {
+    let path = materialized_run_state_path(run_id)
+    if fs.exists(path) == 0 {
+        return ""
+    }
+    return fs.read_file(path)
+}
+
+fn local_materialized_progress_json(run_id: str) -> str {
+    let path = materialized_run_progress_path(run_id)
+    if fs.exists(path) == 0 {
+        return ""
+    }
+    return fs.read_file(path)
+}
+
+fn has_local_state_doc(run_id: str) -> i32 {
+    let raw = local_materialized_state_json(run_id)
+    if looks_like_object_json(raw) == 0 {
+        return 0
+    }
+    if quoted_json_field(raw, "run_id") == "" || quoted_json_field(raw, "run_status") == "" {
+        return 0
+    }
+    return 1
+}
+
+fn has_meaningful_local_progress(run_id: str) -> i32 {
+    let raw = str.trim(local_materialized_progress_json(run_id))
+    if looks_like_array_json(raw) == 0 {
+        return 0
+    }
+    if raw == "[]" {
+        return 0
+    }
+    let events = json.parse(raw)
+    let first = json.get(events, "0")
+    if json.get_str(first, "run_id") == "" && json.get_str(first, "phase") == "" {
+        return 0
+    }
+    return 1
+}
+
+fn projection_run_is_complete_enough(run_id: str) -> i32 {
+    if has_local_state_doc(run_id) == 1 {
+        return 1
+    }
+    if has_meaningful_local_progress(run_id) == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn inferred_run_status_from_progress_payload(payload: str) -> str {
+    if looks_like_array_json(payload) == 0 {
+        return "missing"
+    }
+    let events = json.parse(payload)
+    let mut last = ""
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            break
+        }
+        if phase != "" {
+            last = phase
+        }
+        idx = idx + 1
+    }
+    if last == "completed" {
+        return "completed"
+    }
+    if last == "failed" {
+        return "failed"
+    }
+    if last == "cancelled" {
+        return "cancelled"
+    }
+    if last == "plan_created" || last == "turn_completed" || last == "turn_failed" {
+        return "active"
+    }
+    if last == "started" {
+        return "planning"
+    }
+    return "missing"
+}
+
+fn projection_run_status(run_id: str) -> str {
+    if projection_run_is_complete_enough(run_id) == 0 {
+        return ""
+    }
+    let raw = local_materialized_state_json(run_id)
+    let status = quoted_json_field(raw, "run_status")
+    if status != "" {
+        return status
+    }
+    return inferred_run_status_from_progress_payload(local_materialized_progress_json(run_id))
+}
+
+fn run_state_updated_at_ms(run_id: str) -> i32 {
+    let raw = local_materialized_state_json(run_id)
+    return apputil.parse_i32(first_non_empty3(quoted_json_field(raw, "updated_at"), quoted_json_field(raw, "created_at"), "0"))
+}
+
+fn active_run_is_fresh(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    let status = projection_run_status(run_id)
+    if status != "planning" && status != "active" {
+        return 0
+    }
+    let updated_at = run_state_updated_at_ms(run_id)
+    if updated_at <= 0 {
+        return 0
+    }
+    let now_ms = apputil.parse_i32(now_label())
+    if now_ms <= 0 {
+        return 0
+    }
+    let age = now_ms - updated_at
+    if age < 0 {
+        return 1
+    }
+    if age > active_run_freshness_window_ms() {
+        return 0
+    }
+    return 1
+}
+
+fn run_state_stamp(run_id: str) -> i32 {
+    if projection_run_is_complete_enough(run_id) == 0 {
+        return 0
+    }
+    let raw = local_materialized_state_json(run_id)
+    let stamp = first_non_empty3(quoted_json_field(raw, "completed_at"), quoted_json_field(raw, "updated_at"), meta_created_at_text(run_id))
+    return apputil.parse_i32(stamp)
+}
+
+fn rebuild_summary_snapshot_json() -> str {
+    let run_ids = list_dir_names(runs_dir())
+    let mut completed: i32 = 0
+    let mut failed: i32 = 0
+    let mut cancelled: i32 = 0
+    let mut latest_run_id = ""
+    let mut latest_status = "idle"
+    let mut latest_stamp: i32 = 0
+    let mut idx: i32 = 0
+    while idx < list.len(run_ids) {
+        let run_id = list.get(run_ids, idx)
+        if projection_run_is_complete_enough(run_id) == 0 {
+            idx = idx + 1
+            continue
+        }
+        let status = projection_run_status(run_id)
+        if status == "completed" {
+            completed = completed + 1
+        } else if status == "failed" {
+            failed = failed + 1
+        } else if status == "cancelled" {
+            cancelled = cancelled + 1
+        }
+        let stamp = run_state_stamp(run_id)
+        if latest_run_id == "" || stamp >= latest_stamp {
+            latest_run_id = run_id
+            latest_status = if status == "" { "idle" } else { status }
+            latest_stamp = stamp
+        }
+        idx = idx + 1
+    }
+    return summary_doc_json(
+        str.from_i32(active_run_count()),
+        str.from_i32(completed),
+        str.from_i32(failed),
+        str.from_i32(cancelled),
+        latest_run_id,
+        latest_status,
+    )
+}
+
 fn active_run_count() -> i32 {
+    discard rewrite_active_runs_index()
     return count_lines(safe_read(active_runs_path()))
+}
+
+fn summary_doc_json(active_runs: str, completed_runs: str, failed_runs: str, cancelled_runs: str, latest_run_id: str, latest_status: str) -> str {
+    let mut payload = "{"
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "active_runs", active_runs)
+    payload = patch_add_field(payload, "completed_runs", completed_runs)
+    payload = patch_add_field(payload, "failed_runs", failed_runs)
+    payload = patch_add_field(payload, "cancelled_runs", cancelled_runs)
+    payload = patch_add_field(payload, "latest_run_id", latest_run_id)
+    payload = patch_add_field(payload, "latest_status", latest_status)
+    return patch_finish(payload)
 }
 
 fn write_summary_counts(completed_runs: i32, failed_runs: i32, cancelled_runs: i32, latest_run_id: str, latest_status: str) -> i32 {
     let active_runs = active_run_count()
-    let payload = model.types.longrange_summary_json(
+    let payload = summary_doc_json(
         str.from_i32(active_runs),
         str.from_i32(completed_runs),
         str.from_i32(failed_runs),
@@ -155,29 +877,29 @@ fn write_summary_counts(completed_runs: i32, failed_runs: i32, cancelled_runs: i
         latest_run_id,
         latest_status,
     )
-    fs.write_file(summary_path(), payload)
+    discard atomic_write_text(str.concat(summary_path(), ".last.write.json"), payload)
+    discard atomic_write_text(summary_path(), payload)
     return 0
 }
 
-fn refresh_summary(latest_run_id: str, latest_status: str) -> i32 {
+fn rebuild_runtime_projection() -> i32 {
     discard ensure_state()
-    let parsed = json.parse(summary_json())
-    return write_summary_counts(
-        summary_completed_runs(parsed),
-        summary_failed_runs(parsed),
-        summary_cancelled_runs(parsed),
-        latest_run_id,
-        latest_status,
-    )
+    let rc = services.sqlite_store.longrange_rebuild_projection()
+    if rc != 0 {
+        log.error(
+            "services.longrange rebuild_runtime_projection_failed",
+            apputil.log_fields2("code", str.from_i32(rc), "summary_file", summary_path())
+        )
+    }
+    return rc
+}
+
+fn refresh_summary(latest_run_id: str, latest_status: str) -> i32 {
+    return rebuild_runtime_projection()
 }
 
 fn write_terminal_summary(latest_run_id: str, latest_status: str) -> i32 {
-    discard ensure_state()
-    let parsed = json.parse(summary_json())
-    let completed_runs = summary_completed_runs(parsed) + if latest_status == "completed" { 1 } else { 0 }
-    let failed_runs = summary_failed_runs(parsed) + if latest_status == "failed" { 1 } else { 0 }
-    let cancelled_runs = summary_cancelled_runs(parsed) + if latest_status == "cancelled" { 1 } else { 0 }
-    return write_summary_counts(completed_runs, failed_runs, cancelled_runs, latest_run_id, latest_status)
+    return rebuild_runtime_projection()
 }
 
 fn state_status(parsed: JsonHandle) -> str {
@@ -196,6 +918,10 @@ fn state_plan_status(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "plan_status")
 }
 
+fn state_task_class(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "task_class")
+}
+
 fn state_current_step_id(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "current_step_id")
 }
@@ -210,6 +936,22 @@ fn state_turns_completed(parsed: JsonHandle) -> str {
 
 fn state_failure_count(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "failure_count")
+}
+
+fn state_last_progress_score(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_progress_score")
+}
+
+fn state_consecutive_low_score(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "consecutive_low_score")
+}
+
+fn state_last_evidence_count(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "last_evidence_count")
+}
+
+fn state_completed_step_count(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "completed_step_count")
 }
 
 fn state_auto_continue_pending(parsed: JsonHandle) -> str {
@@ -232,6 +974,10 @@ fn state_completed_at(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "completed_at")
 }
 
+fn raw_state_field(raw: str, key: str) -> str {
+    return quoted_json_field(raw, key)
+}
+
 fn plan_goal_summary(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "goal_summary")
 }
@@ -246,6 +992,26 @@ fn plan_difficulty(parsed: JsonHandle) -> str {
 
 fn plan_estimated_effort(parsed: JsonHandle) -> str {
     return json.get_str(parsed, "estimated_effort")
+}
+
+fn plan_task_class(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "task_class")
+}
+
+fn plan_completion_mode(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "completion_mode")
+}
+
+fn plan_expected_total_turns(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "expected_total_turns")
+}
+
+fn plan_execution_outlook(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "execution_outlook")
+}
+
+fn plan_planning_style(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "planning_style")
 }
 
 fn plan_current_step_id(parsed: JsonHandle) -> str {
@@ -264,71 +1030,634 @@ fn plan_steps_raw(parsed: JsonHandle) -> str {
     return raw
 }
 
-fn save_state(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, auto_continue_pending: str, active_message_kind: str, latest_summary: str, created_at: str, completed_at: str) -> i32 {
-    discard ensure_run(run_id)
-    fs.write_file(
-        run_state_path(run_id),
-        model.types.longrange_run_state_json(
-            run_id,
-            session_id,
-            goal,
-            status,
-            plan_status,
-            current_step_id,
-            last_request_id,
-            turns_completed,
-            failure_count,
-            auto_continue_pending,
-            active_message_kind,
-            latest_summary,
-            created_at,
-            now_label(),
-            completed_at,
-        ),
-    )
+fn meta_session_id(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "session_id")
+}
+
+fn meta_goal(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "goal")
+}
+
+fn meta_created_at(parsed: JsonHandle) -> str {
+    return json.get_str(parsed, "created_at")
+}
+
+fn meta_session_id_text(run_id: str) -> str {
+    return str.trim(safe_read(run_session_id_path(run_id)))
+}
+
+fn meta_goal_text(run_id: str) -> str {
+    return str.trim(safe_read(run_goal_path(run_id)))
+}
+
+fn meta_created_at_text(run_id: str) -> str {
+    return str.trim(safe_read(run_created_at_path(run_id)))
+}
+
+fn meta_json(session_id: str, goal: str, created_at: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "session_id", json.str(session_id))
+    discard map.set(payload, "goal", json.str(goal))
+    discard map.set(payload, "created_at", json.str(created_at))
+    return json.object(payload)
+}
+
+fn first_non_empty2(primary: str, fallback: str) -> str {
+    if primary != "" {
+        return primary
+    }
+    return fallback
+}
+
+fn first_non_empty3(primary: str, fallback_a: str, fallback_b: str) -> str {
+    if primary != "" {
+        return primary
+    }
+    if fallback_a != "" {
+        return fallback_a
+    }
+    return fallback_b
+}
+
+fn contains_any(text_value: str, a: str, b: str, c: str, d: str) -> i32 {
+    let hay = apputil.lower_ascii(text_value)
+    if a != "" && str.contains(hay, a) == 1 {
+        return 1
+    }
+    if b != "" && str.contains(hay, b) == 1 {
+        return 1
+    }
+    if c != "" && str.contains(hay, c) == 1 {
+        return 1
+    }
+    if d != "" && str.contains(hay, d) == 1 {
+        return 1
+    }
     return 0
 }
 
-fn save_plan(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+fn classify_goal(goal: str) -> str {
+    let lowered = apputil.lower_ascii(goal)
+    let mut file_mentions: i32 = 0
+    let mut idx: i32 = 0
+    while idx < str.len(lowered) - 3 {
+        if str.slice(lowered, idx, idx + 4) == ".fzy" {
+            file_mentions = file_mentions + 1
+        }
+        idx = idx + 1
+    }
+    if contains_any(lowered, "tiny", "simple", "minimal", "checklist") == 1 && file_mentions == 0 {
+        return "micro"
+    }
+    if file_mentions >= 4 || contains_any(lowered, "architecture", "bottleneck", "end-to-end", "complex") == 1 {
+        return "deep"
+    }
+    return "standard"
+}
+
+fn default_completion_mode(task_class: str, goal: str) -> str {
+    let lowered = apputil.lower_ascii(goal)
+    if contains_any(lowered, "summary", "summarize", "inspection", "inspect") == 1 {
+        return "summary"
+    }
+    if task_class == "micro" {
+        return "direct"
+    }
+    return "verified"
+}
+
+fn normalize_completion_mode(mode: str, task_class: str, goal: str) -> str {
+    let lowered = apputil.lower_ascii(mode)
+    if lowered == "direct" || lowered == "summary" || lowered == "verified" {
+        return lowered
+    }
+    if contains_any(lowered, "summary", "structure", "defined", "inspect") == 1 {
+        return "summary"
+    }
+    if contains_any(lowered, "verify", "verified", "proof", "validation") == 1 {
+        return "verified"
+    }
+    if contains_any(lowered, "direct", "immediate", "fast", "tight") == 1 {
+        return "direct"
+    }
+    return default_completion_mode(task_class, goal)
+}
+
+fn default_expected_total_turns(task_class: str, goal: str) -> str {
+    let lowered = apputil.lower_ascii(goal)
+    if task_class == "micro" {
+        return "2"
+    }
+    if contains_any(lowered, "architecture", "end-to-end", "benchmark", "stress") == 1 {
+        return "10"
+    }
+    if task_class == "deep" {
+        return "8"
+    }
+    return "5"
+}
+
+fn default_execution_outlook(task_class: str, goal: str) -> str {
+    let lowered = apputil.lower_ascii(goal)
+    if task_class == "micro" {
+        return "tight direct finish"
+    }
+    if contains_any(lowered, "inspect", "summary", "summarize", "review") == 1 {
+        return "light inspect then summarize"
+    }
+    if task_class == "deep" {
+        return "iterative deep work with checkpoints"
+    }
+    return "adaptive multi-step execution"
+}
+
+fn default_planning_style(task_class: str) -> str {
+    if task_class == "micro" {
+        return "lightweight"
+    }
+    if task_class == "deep" {
+        return "deliberate"
+    }
+    return "adaptive"
+}
+
+fn infer_step_type(step_id: str, title: str, description: str) -> str {
+    let probe = apputil.lower_ascii(str.concat3(step_id, " ", str.concat(title, " ", description)))
+    if contains_any(probe, "summary", "summarize", "synthesize", "document") == 1 {
+        return "summarize"
+    }
+    if contains_any(probe, "verify", "test", "check", "validate") == 1 {
+        return "verify"
+    }
+    if contains_any(probe, "implement", "fix", "edit", "build") == 1 || contains_any(probe, "execute", "apply", "change", "write") == 1 {
+        return "execute"
+    }
+    return "inspect"
+}
+
+fn default_evidence_mode(step_type: str) -> str {
+    if step_type == "execute" || step_type == "verify" {
+        return "tool"
+    }
+    if step_type == "summarize" {
+        return "summary"
+    }
+    return "tool_or_summary"
+}
+
+fn default_completion_signal(step_type: str, task_class: str) -> str {
+    if step_type == "summarize" {
+        return "goal_complete"
+    }
+    if task_class == "micro" {
+        return "plan_update_or_goal_complete"
+    }
+    return "plan_update"
+}
+
+fn default_step_outlook(step_type: str, task_class: str) -> str {
+    if step_type == "summarize" {
+        return "close the loop cleanly"
+    }
+    if step_type == "verify" {
+        return "gather direct proof before moving on"
+    }
+    if step_type == "execute" {
+        if task_class == "micro" {
+            return "single concrete action"
+        }
+        return "real work before plan narration"
+    }
+    return "gather evidence and refine understanding"
+}
+
+fn default_step_target_turns(step_type: str, task_class: str) -> str {
+    if step_type == "summarize" || step_type == "verify" {
+        return "1"
+    }
+    if step_type == "execute" {
+        if task_class == "deep" {
+            return "3"
+        }
+        return "2"
+    }
+    if task_class == "deep" {
+        return "3"
+    }
+    return "2"
+}
+
+fn load_meta_json(run_id: str) -> str {
     discard ensure_run(run_id)
-    fs.write_file(
-        run_plan_path(run_id),
-        model.types.longrange_plan_json(
-            run_id,
-            goal_summary,
-            finished_definition,
-            difficulty,
-            estimated_effort,
-            current_step_id,
-            plan_summary,
-            if steps_json == "" { "[]" } else { steps_json },
-            now_label(),
-        ),
-    )
+    let payload = safe_read(run_meta_path(run_id))
+    if corrupt_json(payload) == 1 {
+        return meta_json("", "", "")
+    }
+    return payload
+}
+
+fn save_meta(run_id: str, session_id: str, goal: str, created_at: str) -> i32 {
+    discard ensure_run(run_id)
+    let current = json.parse(load_meta_json(run_id))
+    let next_session_id = if session_id == "" { meta_session_id(current) } else { session_id }
+    let next_goal = if goal == "" { meta_goal(current) } else { goal }
+    let next_created_at = if created_at == "" { meta_created_at(current) } else { created_at }
+    discard atomic_write_text(run_meta_path(run_id), meta_json(next_session_id, next_goal, next_created_at))
+    discard atomic_write_text(run_session_id_path(run_id), next_session_id)
+    discard atomic_write_text(run_goal_path(run_id), next_goal)
+    discard atomic_write_text(run_created_at_path(run_id), next_created_at)
     return 0
+}
+
+fn persisted_state_or_empty(run_id: str) -> JsonHandle {
+    let payload = safe_read(run_state_path(run_id))
+    if corrupt_json(payload) == 1 {
+        return json.parse("{}")
+    }
+    let parsed = json.parse(payload)
+    if json.get_str(parsed, "run_id") == "" {
+        return json.parse("{}")
+    }
+    return parsed
+}
+
+fn persisted_plan_or_empty(run_id: str) -> JsonHandle {
+    let payload = safe_read(run_plan_path(run_id))
+    if corrupt_json(payload) == 1 {
+        return json.parse("{}")
+    }
+    let parsed = json.parse(payload)
+    if json.get_str(parsed, "run_id") == "" {
+        return json.parse("{}")
+    }
+    return parsed
+}
+
+fn inferred_plan_status(run_id: str, current_value: str) -> str {
+    if current_value != "" && current_value != "missing" {
+        return current_value
+    }
+    let plan = persisted_plan_or_empty(run_id)
+    if json.get_str(plan, "run_id") != "" && plan_goal_summary(plan) != "" {
+        return "ready"
+    }
+    return "missing"
+}
+
+fn save_state(run_id: str, patch_json: str) -> i32 {
+    discard ensure_run(run_id)
+    let current_raw = load_state_json(run_id)
+    if looks_like_object_json(patch_json) == 0 {
+        log.error(
+            "services.longrange save_state_bad_patch",
+            apputil.log_fields3("run_id", run_id, "bytes", str.from_i32(str.len(patch_json)), "head", apputil.excerpt_head(patch_json, 220))
+        )
+    }
+    let next_session_id = first_non_empty3(quoted_json_field(patch_json, "session_id"), raw_state_field(current_raw, "session_id"), meta_session_id_text(run_id))
+    let next_goal = first_non_empty3(quoted_json_field(patch_json, "goal"), raw_state_field(current_raw, "goal"), meta_goal_text(run_id))
+    let requested_status = first_non_empty2(quoted_json_field(patch_json, "run_status"), raw_state_field(current_raw, "run_status"))
+    let next_plan_status = inferred_plan_status(run_id, first_non_empty2(quoted_json_field(patch_json, "plan_status"), raw_state_field(current_raw, "plan_status")))
+    let next_created_at = first_non_empty3(quoted_json_field(patch_json, "created_at"), raw_state_field(current_raw, "created_at"), meta_created_at_text(run_id))
+    let next_completed_at = first_non_empty2(quoted_json_field(patch_json, "completed_at"), raw_state_field(current_raw, "completed_at"))
+    let next_task_class = first_non_empty3(quoted_json_field(patch_json, "task_class"), raw_state_field(current_raw, "task_class"), classify_goal(next_goal))
+    let next_turns_completed = first_non_empty2(quoted_json_field(patch_json, "turns_completed"), raw_state_field(current_raw, "turns_completed"))
+    let next_failure_count = first_non_empty2(quoted_json_field(patch_json, "failure_count"), raw_state_field(current_raw, "failure_count"))
+    let next_auto_continue_pending = first_non_empty2(quoted_json_field(patch_json, "auto_continue_pending"), raw_state_field(current_raw, "auto_continue_pending"))
+    let next_active_message_kind = first_non_empty2(quoted_json_field(patch_json, "active_message_kind"), raw_state_field(current_raw, "active_message_kind"))
+    let next_latest_summary = first_non_empty2(quoted_json_field(patch_json, "latest_summary"), raw_state_field(current_raw, "latest_summary"))
+    let next_current_step_id = first_non_empty2(quoted_json_field(patch_json, "current_step_id"), raw_state_field(current_raw, "current_step_id"))
+    let next_last_request_id = first_non_empty2(quoted_json_field(patch_json, "last_request_id"), raw_state_field(current_raw, "last_request_id"))
+    let next_last_progress_score = first_non_empty2(quoted_json_field(patch_json, "last_progress_score"), first_non_empty2(raw_state_field(current_raw, "last_progress_score"), "0"))
+    let next_consecutive_low_score = first_non_empty2(quoted_json_field(patch_json, "consecutive_low_score"), first_non_empty2(raw_state_field(current_raw, "consecutive_low_score"), "0"))
+    let next_last_evidence_count = first_non_empty2(quoted_json_field(patch_json, "last_evidence_count"), first_non_empty2(raw_state_field(current_raw, "last_evidence_count"), "0"))
+    let next_completed_step_count = first_non_empty2(quoted_json_field(patch_json, "completed_step_count"), first_non_empty2(raw_state_field(current_raw, "completed_step_count"), "0"))
+    if requested_status == "" {
+        log.error(
+            "services.longrange save_state_empty_status",
+            apputil.log_fields3("run_id", run_id, "patch_head", apputil.excerpt_head(patch_json, 220), "current_head", apputil.excerpt_head(current_raw, 220))
+        )
+        discard atomic_write_text(debug_payload_path(run_id, "state.patch.bad.json"), patch_json)
+    }
+    log.info(
+        "services.longrange save_state",
+        apputil.log_fields3("run_id", run_id, "status", requested_status, "turns", next_turns_completed)
+    )
+    discard append_state_debug(run_id, "save_state_input", requested_status, next_turns_completed, next_plan_status)
+    let payload = state_doc_json(
+        run_id,
+        next_session_id,
+        next_goal,
+        requested_status,
+        next_plan_status,
+        next_task_class,
+        next_turns_completed,
+        next_failure_count,
+        next_last_progress_score,
+        next_consecutive_low_score,
+        next_last_evidence_count,
+        next_completed_step_count,
+        next_auto_continue_pending,
+        next_active_message_kind,
+        next_latest_summary,
+        next_created_at,
+        now_label(),
+        next_current_step_id,
+        next_last_request_id,
+        next_completed_at,
+    )
+    return write_state_payload(run_id, payload)
+}
+
+fn reconciled_terminal_state_payload(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, active_message_kind: str, latest_summary: str, created_at: str, completed_at: str) -> str {
+    let current_raw = load_state_json(run_id)
+    let plan = persisted_plan_or_empty(run_id)
+    let next_session_id = first_non_empty3(session_id, raw_state_field(current_raw, "session_id"), meta_session_id_text(run_id))
+    let next_goal = first_non_empty3(goal, raw_state_field(current_raw, "goal"), meta_goal_text(run_id))
+    let next_plan_status = inferred_plan_status(run_id, first_non_empty2(plan_status, raw_state_field(current_raw, "plan_status")))
+    let next_current_step_id = first_non_empty3(current_step_id, raw_state_field(current_raw, "current_step_id"), plan_current_step_id(plan))
+    let next_created_at = first_non_empty3(created_at, raw_state_field(current_raw, "created_at"), meta_created_at_text(run_id))
+    let next_turns = if turns_completed == "" {
+        str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(current_raw, "turns_completed"), "0")), persisted_turn_event_count(run_id)))
+    } else {
+        turns_completed
+    }
+    let next_failures = if failure_count == "" {
+        str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(current_raw, "failure_count"), "0")), persisted_failure_turn_count(run_id)))
+    } else {
+        failure_count
+    }
+    let next_task_class = first_non_empty3(raw_state_field(current_raw, "task_class"), plan_task_class(plan), classify_goal(next_goal))
+    let next_completed_steps = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(current_raw, "completed_step_count"), "0")), completed_step_count(run_id)))
+    return state_doc_json(
+        run_id,
+        next_session_id,
+        next_goal,
+        status,
+        next_plan_status,
+        next_task_class,
+        next_turns,
+        next_failures,
+        first_non_empty2(raw_state_field(current_raw, "last_progress_score"), "0"),
+        first_non_empty2(raw_state_field(current_raw, "consecutive_low_score"), "0"),
+        first_non_empty2(raw_state_field(current_raw, "last_evidence_count"), "0"),
+        next_completed_steps,
+        "false",
+        active_message_kind,
+        latest_summary,
+        next_created_at,
+        now_label(),
+        next_current_step_id,
+        last_request_id,
+        completed_at,
+    )
+}
+
+fn save_plan(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> i32 {
+    discard ensure_run(run_id)
+    discard mark_stage(run_id, "save_plan.enter")
+    let current = persisted_plan_or_empty(run_id)
+    let next_goal_summary = if goal_summary == "" { plan_goal_summary(current) } else { goal_summary }
+    let next_finished_definition = if finished_definition == "" { plan_finished_definition(current) } else { finished_definition }
+    let next_difficulty = if difficulty == "" { plan_difficulty(current) } else { difficulty }
+    let next_estimated_effort = if estimated_effort == "" { plan_estimated_effort(current) } else { estimated_effort }
+    let next_current_step_id = if current_step_id == "" { plan_current_step_id(current) } else { current_step_id }
+    let next_plan_summary = if plan_summary == "" { plan_summary_value(current) } else { plan_summary }
+    let next_steps_json = if steps_json == "" { plan_steps_raw(current) } else { steps_json }
+    discard mark_stage(run_id, "save_plan.before_load_state")
+    let state = json.parse(load_state_json(run_id))
+    discard mark_stage(run_id, "save_plan.after_load_state")
+    let next_task_class = first_non_empty3(task_class, plan_task_class(current), state_task_class(state))
+    let effective_task_class = if next_task_class == "" { classify_goal(state_goal(state)) } else { next_task_class }
+    let raw_completion_mode = first_non_empty3(completion_mode, plan_completion_mode(current), default_completion_mode(effective_task_class, state_goal(state)))
+    let next_completion_mode = normalize_completion_mode(raw_completion_mode, effective_task_class, state_goal(state))
+    let next_expected_total_turns = first_non_empty3(expected_total_turns, plan_expected_total_turns(current), default_expected_total_turns(effective_task_class, state_goal(state)))
+    let next_execution_outlook = first_non_empty3(execution_outlook, plan_execution_outlook(current), default_execution_outlook(effective_task_class, state_goal(state)))
+    let next_planning_style = first_non_empty3(planning_style, plan_planning_style(current), default_planning_style(effective_task_class))
+    let payload = model.types.longrange_plan_json(
+        run_id,
+        next_goal_summary,
+        next_finished_definition,
+        next_difficulty,
+        next_estimated_effort,
+        next_current_step_id,
+        next_plan_summary,
+        if next_steps_json == "" { "[]" } else { next_steps_json },
+        now_label(),
+        effective_task_class,
+        next_completion_mode,
+        next_expected_total_turns,
+        next_execution_outlook,
+        next_planning_style,
+    )
+    if plan_payload_valid(payload) == 0 {
+        discard mark_stage(run_id, "save_plan.invalid_payload")
+        log.error(
+            "services.longrange invalid_plan_payload",
+            apputil.log_fields3("run_id", run_id, "bytes", str.from_i32(str.len(payload)), "head", apputil.excerpt_head(payload, 220))
+        )
+        discard atomic_write_text(debug_payload_path(run_id, "plan.invalid.json"), payload)
+        return 1
+    }
+    let rc = atomic_write_text(run_plan_path(run_id), payload)
+    if rc != 0 {
+        discard mark_stage(run_id, "save_plan.write_failed")
+        log.error(
+            "services.longrange write_plan_failed",
+            apputil.log_fields3("run_id", run_id, "code", str.from_i32(rc), "path", run_plan_path(run_id))
+        )
+        return 1
+    }
+    discard mark_stage(run_id, "save_plan.done")
+    return 0
+}
+
+fn write_initial_plan(run_id: str, goal: str, task_class: str) -> i32 {
+    discard ensure_run(run_id)
+    let effective_task_class = if task_class == "" { classify_goal(goal) } else { task_class }
+    let mut payload = "{"
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "goal_summary", "")
+    payload = patch_add_field(payload, "finished_definition", "")
+    payload = patch_add_field(payload, "difficulty", "")
+    payload = patch_add_field(payload, "estimated_effort", "")
+    payload = patch_add_field(payload, "task_class", effective_task_class)
+    payload = patch_add_field(payload, "completion_mode", default_completion_mode(effective_task_class, goal))
+    payload = patch_add_field(payload, "expected_total_turns", default_expected_total_turns(effective_task_class, goal))
+    payload = patch_add_field(payload, "execution_outlook", default_execution_outlook(effective_task_class, goal))
+    payload = patch_add_field(payload, "planning_style", default_planning_style(effective_task_class))
+    payload = patch_add_field(payload, "plan_summary", "")
+    payload = str.concat(payload, ",\"steps\":[]")
+    payload = patch_add_field(payload, "updated_at", now_label())
+    payload = patch_finish(payload)
+    if plan_payload_valid(payload) == 0 {
+        log.error(
+            "services.longrange invalid_initial_plan_payload",
+            apputil.log_fields3("run_id", run_id, "task_class", effective_task_class, "head", apputil.excerpt_head(payload, 220))
+        )
+        discard fs.write_file("/tmp/fzyagent/last_invalid_initial_plan.json", payload)
+        return 1
+    }
+    return atomic_write_text(run_plan_path(run_id), payload)
+}
+
+fn write_terminal_state(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, active_message_kind: str, latest_summary: str, created_at: str, completed_at: str) -> i32 {
+    discard ensure_run(run_id)
+    let payload = reconciled_terminal_state_payload(
+        run_id,
+        session_id,
+        goal,
+        status,
+        plan_status,
+        current_step_id,
+        last_request_id,
+        turns_completed,
+        failure_count,
+        active_message_kind,
+        latest_summary,
+        created_at,
+        completed_at,
+    )
+    log.warn(
+        "services.longrange terminal_payload",
+        apputil.log_fields3("run_id", run_id, "status", status, "head", apputil.excerpt_head(payload, 220))
+    )
+    let debug_rc = atomic_write_text(debug_payload_path(run_id, "state.terminal.json"), payload)
+    if debug_rc != 0 {
+        log.error(
+            "services.longrange write_terminal_state_debug_failed",
+            apputil.log_fields3("run_id", run_id, "code", str.from_i32(debug_rc), "path", debug_payload_path(run_id, "state.terminal.json"))
+        )
+    }
+    return write_state_payload(run_id, payload)
 }
 
 fn load_state_json(run_id: str) -> str {
     discard ensure_run(run_id)
     let payload = safe_read(run_state_path(run_id))
-    if payload == "" {
-        return model.types.longrange_run_state_json(run_id, "", "", "missing", "missing", "", "", "0", "0", "false", "", "", now_label(), now_label(), "")
+    if corrupt_json(payload) == 1 || quoted_json_field(payload, "run_status") == "" {
+        log.warn(
+            "services.longrange load_state_json_missing_or_corrupt",
+            apputil.log_fields2("run_id", run_id, "head", apputil.excerpt_head(payload, 220))
+        )
+        discard atomic_write_text(debug_payload_path(run_id, "state.last.read.corrupt.json"), payload)
+        discard append_state_debug(run_id, "load_state_json_corrupt", apputil.excerpt_head(payload, 80), "", "")
+        let rebuilt_payload = projected_state_json(run_id)
+        if quoted_json_field(rebuilt_payload, "run_status") != "missing" || quoted_json_field(rebuilt_payload, "plan_status") != "missing" || quoted_json_field(rebuilt_payload, "goal") != "" {
+            return rebuilt_payload
+        }
+        return state_doc_json(
+            run_id,
+            "",
+            "",
+            "missing",
+            "missing",
+            "",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "false",
+            "",
+            "",
+            now_label(),
+            now_label(),
+            "",
+            "",
+            "",
+        )
     }
-    return payload
+    let parsed = json.parse(payload)
+    let raw_session_id = quoted_json_field(payload, "session_id")
+    let raw_goal = quoted_json_field(payload, "goal")
+    let raw_status = quoted_json_field(payload, "run_status")
+    let raw_plan_status = quoted_json_field(payload, "plan_status")
+    let raw_created_at = quoted_json_field(payload, "created_at")
+    let raw_turns = quoted_json_field(payload, "turns_completed")
+    let raw_failures = quoted_json_field(payload, "failure_count")
+    let raw_completed_steps = quoted_json_field(payload, "completed_step_count")
+    let raw_auto_continue = quoted_json_field(payload, "auto_continue_pending")
+    let raw_message_kind = quoted_json_field(payload, "active_message_kind")
+    let repaired_session_id = first_non_empty2(raw_session_id, meta_session_id_text(run_id))
+    let repaired_goal = first_non_empty2(raw_goal, meta_goal_text(run_id))
+    let repaired_created_at = first_non_empty2(raw_created_at, meta_created_at_text(run_id))
+    let repaired_turns = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_turns, "0")), persisted_turn_event_count(run_id)))
+    let repaired_failures = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_failures, "0")), persisted_failure_turn_count(run_id)))
+    let progress_status = inferred_run_status_from_progress(run_id)
+    let repaired_status = if progress_status == "completed" || progress_status == "failed" || progress_status == "cancelled" {
+        progress_status
+    } else {
+        first_non_empty2(raw_status, "missing")
+    }
+    let repaired_plan_status = inferred_plan_status(run_id, raw_plan_status)
+    let repaired_completed_steps = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_completed_steps, "0")), completed_step_count_from_plan_handle(persisted_plan_or_empty(run_id))))
+    let repaired_auto_continue = first_non_empty2(raw_auto_continue, if repaired_status == "planning" || repaired_status == "active" { "true" } else { "false" })
+    let repaired_message_kind = first_non_empty2(raw_message_kind, if repaired_auto_continue == "true" { "continue" } else { "" })
+    if repaired_session_id == raw_session_id && repaired_goal == raw_goal && repaired_created_at == raw_created_at && repaired_turns == raw_turns && repaired_failures == raw_failures && repaired_status == raw_status && repaired_plan_status == raw_plan_status && repaired_completed_steps == raw_completed_steps {
+        discard append_state_debug(run_id, "load_state_json_ok", raw_status, raw_turns, raw_plan_status)
+        return payload
+    }
+    log.warn(
+        "services.longrange repair_state_json",
+        apputil.log_fields3("run_id", run_id, "status", repaired_status, "head", apputil.excerpt_head(payload, 220))
+    )
+    discard append_state_debug(run_id, "load_state_json_repair", repaired_status, repaired_turns, repaired_plan_status)
+    return state_doc_json(
+        run_id,
+        repaired_session_id,
+        repaired_goal,
+        repaired_status,
+        repaired_plan_status,
+        first_non_empty3(quoted_json_field(payload, "task_class"), plan_task_class(persisted_plan_or_empty(run_id)), classify_goal(repaired_goal)),
+        repaired_turns,
+        repaired_failures,
+        first_non_empty2(quoted_json_field(payload, "last_progress_score"), "0"),
+        first_non_empty2(quoted_json_field(payload, "consecutive_low_score"), "0"),
+        first_non_empty2(quoted_json_field(payload, "last_evidence_count"), "0"),
+        repaired_completed_steps,
+        repaired_auto_continue,
+        repaired_message_kind,
+        quoted_json_field(payload, "latest_summary"),
+        repaired_created_at,
+        now_label(),
+        quoted_json_field(payload, "current_step_id"),
+        quoted_json_field(payload, "last_request_id"),
+        quoted_json_field(payload, "completed_at"),
+    )
 }
 
 fn load_plan_json(run_id: str) -> str {
     discard ensure_run(run_id)
     let payload = safe_read(run_plan_path(run_id))
-    if payload == "" {
-        return model.types.longrange_plan_json(run_id, "", "", "", "", "", "", "[]", now_label())
+    if corrupt_json(payload) == 1 || quoted_json_field(payload, "run_id") == "" {
+        let state = json.parse(load_state_json(run_id))
+        let task_class = first_non_empty2(state_task_class(state), classify_goal(state_goal(state)))
+        return model.types.longrange_plan_json(run_id, "", "", "", "", "", "", "[]", now_label(), task_class, default_completion_mode(task_class, state_goal(state)), default_expected_total_turns(task_class, state_goal(state)), default_execution_outlook(task_class, state_goal(state)), default_planning_style(task_class))
     }
     return payload
 }
 
+fn state_json(run_id: str) -> str {
+    return load_state_json(run_id)
+}
+
+fn plan_json(run_id: str) -> str {
+    return load_plan_json(run_id)
+}
+
 fn active_run_id_for_session(session_id: str) -> str {
     discard ensure_session(session_id)
-    return str.trim(safe_read(session_active_run_path(session_id)))
+    let run_id = str.trim(safe_read(session_active_run_path(session_id)))
+    if run_id == "" {
+        return ""
+    }
+    if active_run_is_fresh(run_id) == 1 {
+        return run_id
+    }
+    discard fs.remove_file(session_active_run_path(session_id))
+    return ""
 }
 
 fn has_active_run_for_session(session_id: str) -> i32 {
@@ -336,9 +1665,7 @@ fn has_active_run_for_session(session_id: str) -> i32 {
     if run_id == "" {
         return 0
     }
-    let parsed = json.parse(load_state_json(run_id))
-    let status = state_status(parsed)
-    if status == "planning" || status == "active" {
+    if active_run_is_fresh(run_id) == 1 {
         return 1
     }
     return 0
@@ -346,13 +1673,13 @@ fn has_active_run_for_session(session_id: str) -> i32 {
 
 fn set_active_run_for_session(session_id: str, run_id: str) -> i32 {
     discard ensure_session(session_id)
-    fs.write_file(session_active_run_path(session_id), run_id)
+    discard atomic_write_text(session_active_run_path(session_id), run_id)
     return 0
 }
 
 fn clear_active_run_for_session(session_id: str, run_id: str) -> i32 {
     let active = active_run_id_for_session(session_id)
-    if active == run_id && fs.exists(session_active_run_path(session_id)) == 1 {
+    if active == run_id {
         discard fs.remove_file(session_active_run_path(session_id))
     }
     return 0
@@ -369,17 +1696,90 @@ fn active_index_contains(run_id: str) -> i32 {
     return 0
 }
 
+fn should_keep_active_run(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    let session_id = first_non_empty2(meta_session_id_text(run_id), run_session_id(run_id))
+    if session_id == "" {
+        return 0
+    }
+    let active_path = session_active_run_path(session_id)
+    if fs.exists(active_path) == 0 {
+        return 0
+    }
+    if str.trim(fs.read_file(active_path)) != run_id {
+        return 0
+    }
+    if active_run_is_fresh(run_id) == 0 {
+        return 0
+    }
+    return 1
+}
+
+fn normalized_active_runs_text() -> str {
+    let mut next = ""
+    let mut rest = safe_read(active_runs_path())
+    while services.persistence.first_line(rest) != "" {
+        let line = str.trim(services.persistence.first_line(rest))
+        if line != "" && should_keep_active_run(line) == 1 {
+            if text_has_line(next, line) < 0 {
+                if next == "" {
+                    next = line
+                } else {
+                    next = str.concat(str.concat(next, "\n"), line)
+                }
+            }
+        }
+        rest = services.persistence.drop_first_line(rest)
+    }
+    let session_names = list_dir_names(sessions_dir())
+    let mut idx: i32 = 0
+    while idx < list.len(session_names) {
+        let session_id = list.get(session_names, idx)
+        let active_path = session_active_run_path(session_id)
+        if fs.exists(active_path) == 1 {
+            let run_id = str.trim(fs.read_file(active_path))
+            if run_id != "" {
+                if should_keep_active_run(run_id) == 1 {
+                    if text_has_line(next, run_id) < 0 {
+                        if next == "" {
+                            next = run_id
+                        } else {
+                            next = str.concat(str.concat(next, "\n"), run_id)
+                        }
+                    }
+                } else {
+                    discard fs.remove_file(active_path)
+                }
+            }
+        }
+        idx = idx + 1
+    }
+    return next
+}
+
+fn rewrite_active_runs_index() -> i32 {
+    let next = normalized_active_runs_text()
+    if next == "" {
+        return atomic_write_text(active_runs_path(), "")
+    }
+    return atomic_write_text(active_runs_path(), str.concat(next, "\n"))
+}
+
 fn append_active_run(run_id: str) -> i32 {
     discard ensure_state()
+    discard rewrite_active_runs_index()
     if active_index_contains(run_id) == 1 {
         return 0
     }
-    discard services.persistence.append_line(active_runs_path(), run_id)
+    discard append_text_line(active_runs_path(), run_id)
     return 0
 }
 
 fn remove_active_run(run_id: str) -> i32 {
     discard ensure_state()
+    discard rewrite_active_runs_index()
     let mut next = ""
     let mut rest = safe_read(active_runs_path())
     while services.persistence.first_line(rest) != "" {
@@ -394,21 +1794,22 @@ fn remove_active_run(run_id: str) -> i32 {
         rest = services.persistence.drop_first_line(rest)
     }
     if next == "" {
-        fs.write_file(active_runs_path(), "")
+        discard atomic_write_text(active_runs_path(), "")
     } else {
-        fs.write_file(active_runs_path(), str.concat(next, "\n"))
+        discard atomic_write_text(active_runs_path(), str.concat(next, "\n"))
     }
     return 0
 }
 
 fn pop_active_run_id() -> str {
     discard ensure_state()
+    discard rewrite_active_runs_index()
     let active = safe_read(active_runs_path())
     let line = services.persistence.first_line(active)
     if line == "" {
         return ""
     }
-    fs.write_file(active_runs_path(), services.persistence.drop_first_line(active))
+    discard atomic_write_text(active_runs_path(), services.persistence.drop_first_line(active))
     return line
 }
 
@@ -423,37 +1824,251 @@ fn run_exists(run_id: str) -> i32 {
     if run_id == "" {
         return 0
     }
-    if fs.exists(run_state_path(run_id)) == 1 {
+    if has_local_state_doc(run_id) == 1 || has_meaningful_local_progress(run_id) == 1 {
         return 1
     }
     return 0
 }
 
-fn next_run_id(session_id: str) -> str {
-    return str.concat3("longrange_", session_id, str.concat("_", now_label()))
+fn cleanup_partial_run(run_id: str) -> i32 {
+    if run_id == "" {
+        return 0
+    }
+    discard services.sqlite_store.kv_delete(run_state_path(run_id))
+    discard services.sqlite_store.kv_delete(run_progress_path(run_id))
+    discard fs.remove_file(run_plan_path(run_id))
+    discard fs.remove_file(run_meta_path(run_id))
+    discard fs.remove_file(run_session_id_path(run_id))
+    discard fs.remove_file(run_goal_path(run_id))
+    discard fs.remove_file(run_created_at_path(run_id))
+    discard fs.remove_file(run_queue_path(run_id))
+    discard fs.remove_file(materialized_run_state_path(run_id))
+    discard fs.remove_file(materialized_run_progress_path(run_id))
+    discard fs.remove_file(debug_payload_path(run_id, "state.last.write.json"))
+    discard fs.remove_file(debug_payload_path(run_id, "progress.last.candidate.json"))
+    return 0
 }
 
-fn append_progress(run_id: str, phase: str, message_kind: str, request_id: str, detail: str) -> i32 {
+fn next_run_id(session_id: str) -> str {
+    if session_id != "" {
+        return session_id
+    }
+    return fresh_label()
+}
+
+fn append_progress(run_id: str, phase: str, message_kind: str, request_id: str, detail: str, progress_score: str, evidence_count: str) -> i32 {
     discard ensure_run(run_id)
-    let line = model.types.longrange_progress_event_json(run_id, phase, message_kind, request_id, detail, now_label())
-    discard services.persistence.append_line(run_progress_path(run_id), line)
-    return 0
+    let line = progress_event_json(run_id, phase, message_kind, now_label(), progress_score, evidence_count, request_id, detail)
+    discard atomic_write_text(debug_payload_path(run_id, "progress.last.created.json"), line)
+    return append_progress_payload(run_id, line)
+}
+
+fn max_i32(a: i32, b: i32) -> i32 {
+    if a >= b {
+        return a
+    }
+    return b
+}
+
+fn persisted_turn_event_count(run_id: str) -> i32 {
+    let events = json.parse(if looks_like_array_json(safe_read(run_progress_path(run_id))) == 1 { safe_read(run_progress_path(run_id)) } else { "[]" })
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            return count
+        }
+        if phase == "turn_completed" || phase == "turn_failed" {
+            count = count + 1
+        }
+        idx = idx + 1
+    }
+    return count
+}
+
+fn persisted_failure_turn_count(run_id: str) -> i32 {
+    let events = json.parse(if looks_like_array_json(safe_read(run_progress_path(run_id))) == 1 { safe_read(run_progress_path(run_id)) } else { "[]" })
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        if json.get_str(parsed, "phase") == "" && json.get_str(parsed, "run_id") == "" {
+            return count
+        }
+        if json.get_str(parsed, "phase") == "turn_failed" {
+            count = count + 1
+        }
+        idx = idx + 1
+    }
+    return count
+}
+
+fn last_progress_phase(run_id: str) -> str {
+    let events = json.parse(if looks_like_array_json(safe_read(run_progress_path(run_id))) == 1 { safe_read(run_progress_path(run_id)) } else { "[]" })
+    let mut last = ""
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            return last
+        }
+        if phase != "" {
+            last = phase
+        }
+        idx = idx + 1
+    }
+    return last
+}
+
+fn last_progress_detail(run_id: str) -> str {
+    let events = json.parse(if looks_like_array_json(safe_read(run_progress_path(run_id))) == 1 { safe_read(run_progress_path(run_id)) } else { "[]" })
+    let mut last = ""
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let detail = json.get_str(parsed, "detail")
+        if detail == "" && json.get_str(parsed, "phase") == "" && json.get_str(parsed, "run_id") == "" {
+            return last
+        }
+        if detail != "" {
+            last = detail
+        }
+        idx = idx + 1
+    }
+    return last
+}
+
+fn inferred_run_status_from_progress(run_id: str) -> str {
+    let phase = last_progress_phase(run_id)
+    if phase == "completed" {
+        return "completed"
+    }
+    if phase == "failed" {
+        return "failed"
+    }
+    if phase == "cancelled" {
+        return "cancelled"
+    }
+    if phase == "plan_created" || phase == "turn_completed" || phase == "turn_failed" {
+        return "active"
+    }
+    if phase == "started" {
+        return "planning"
+    }
+    return "missing"
+}
+
+fn projected_state_json(run_id: str) -> str {
+    let rebuilt_goal = meta_goal_text(run_id)
+    let rebuilt_status = inferred_run_status_from_progress(run_id)
+    let persisted_plan = persisted_plan_or_empty(run_id)
+    let rebuilt_plan_status = inferred_plan_status(run_id, "")
+    let rebuilt_task_class = first_non_empty2(plan_task_class(persisted_plan), classify_goal(rebuilt_goal))
+    let rebuilt_turns = str.from_i32(persisted_turn_event_count(run_id))
+    let rebuilt_failures = str.from_i32(persisted_failure_turn_count(run_id))
+    let rebuilt_completed_steps = str.from_i32(completed_step_count_from_plan_handle(persisted_plan))
+    let rebuilt_detail = last_progress_detail(run_id)
+    let rebuilt_map = map.new()
+    discard map.set(rebuilt_map, "status", json.str(model.types.control_ok_label()))
+    discard map.set(rebuilt_map, "run_id", json.str(run_id))
+    discard map.set(rebuilt_map, "session_id", json.str(meta_session_id_text(run_id)))
+    discard map.set(rebuilt_map, "goal", json.str(rebuilt_goal))
+    discard map.set(rebuilt_map, "run_status", json.str(rebuilt_status))
+    discard map.set(rebuilt_map, "plan_status", json.str(rebuilt_plan_status))
+    discard map.set(rebuilt_map, "task_class", json.str(rebuilt_task_class))
+    discard map.set(rebuilt_map, "turns_completed", json.str(rebuilt_turns))
+    discard map.set(rebuilt_map, "failure_count", json.str(rebuilt_failures))
+    discard map.set(rebuilt_map, "last_progress_score", json.str("0"))
+    discard map.set(rebuilt_map, "consecutive_low_score", json.str("0"))
+    discard map.set(rebuilt_map, "last_evidence_count", json.str("0"))
+    discard map.set(rebuilt_map, "completed_step_count", json.str(rebuilt_completed_steps))
+    discard map.set(rebuilt_map, "auto_continue_pending", json.str(if rebuilt_status == "planning" || rebuilt_status == "active" { "true" } else { "false" }))
+    discard map.set(rebuilt_map, "active_message_kind", json.str(if rebuilt_status == "planning" || rebuilt_status == "active" { "continue" } else { rebuilt_status }))
+    discard map.set(rebuilt_map, "latest_summary", json.str(rebuilt_detail))
+    discard map.set(rebuilt_map, "created_at", json.str(meta_created_at_text(run_id)))
+    discard map.set(rebuilt_map, "updated_at", json.str(now_label()))
+    return json.object(rebuilt_map)
+}
+
+fn completed_step_count_from_plan_handle(plan: JsonHandle) -> i32 {
+    let steps = json.get(plan, "steps")
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 16 {
+        let step = json.get(steps, str.from_i32(idx))
+        let step_id = json.get_str(step, "step_id")
+        if step_id == "" {
+            return count
+        }
+        let status = apputil.lower_ascii(json.get_str(step, "status"))
+        if status == "done" || status == "completed" || status == "complete" {
+            count = count + 1
+        }
+        idx = idx + 1
+    }
+    return count
 }
 
 fn create_run(session_id: str, goal: str, request_id: str) -> str {
     discard ensure_state()
     let existing = active_run_id_for_session(session_id)
     if existing != "" && has_active_run_for_session(session_id) == 1 {
+        log.info(
+            "services.longrange reuse_run",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "run_id", existing)
+        )
         return existing
     }
     let run_id = next_run_id(session_id)
-    discard ensure_run(run_id)
-    discard save_state(run_id, session_id, goal, "planning", "missing", "", request_id, "0", "0", "true", "start", "", now_label(), "")
-    discard save_plan(run_id, "", "", "", "", "", "", "[]")
+    let task_class = classify_goal(goal)
+    let completion_mode = default_completion_mode(task_class, goal)
+    let expected_total_turns = default_expected_total_turns(task_class, goal)
+    let execution_outlook = default_execution_outlook(task_class, goal)
+    let planning_style = default_planning_style(task_class)
+    log.info(
+        "services.longrange create_run",
+        apputil.log_fields3("session_id", session_id, "request_id", request_id, "run_id", run_id)
+    )
+    let ensure_rc = ensure_run(run_id)
+    discard mark_stage(run_id, "create_run.after_ensure")
+    if ensure_rc != 0 {
+        log.error(
+            "services.longrange create_run ensure_failed",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "run_id", run_id)
+        )
+        return ""
+    }
+    let created_at = now_label()
+    let bootstrap_rc = services.sqlite_store.longrange_bootstrap_run(
+        run_state_path(run_id),
+        run_progress_path(run_id),
+        run_id,
+        session_id,
+        goal,
+        task_class,
+        completion_mode,
+        expected_total_turns,
+        execution_outlook,
+        planning_style,
+        request_id,
+        created_at,
+    )
+    discard mark_stage(run_id, "create_run.after_bootstrap")
+    if bootstrap_rc != 0 {
+        log.error(
+            "services.longrange create_run bootstrap_failed",
+            apputil.log_fields3("session_id", session_id, "request_id", request_id, "run_id", run_id)
+        )
+        discard cleanup_partial_run(run_id)
+        return ""
+    }
     discard set_active_run_for_session(session_id, run_id)
     discard append_active_run(run_id)
-    discard append_progress(run_id, "started", "start", request_id, goal)
     discard refresh_summary(run_id, "planning")
+    discard mark_stage(run_id, "create_run.done")
     return run_id
 }
 
@@ -467,14 +2082,14 @@ fn enqueue_message(run_id: str, kind: str, content: str, request_id: str, interr
     if interrupt == 1 {
         let current = safe_read(run_queue_path(run_id))
         if current == "" {
-            fs.write_file(run_queue_path(run_id), str.concat(line, "\n"))
+            discard atomic_write_text(run_queue_path(run_id), str.concat(line, "\n"))
         } else {
-            fs.write_file(run_queue_path(run_id), str.concat3(line, "\n", current))
+            discard atomic_write_text(run_queue_path(run_id), str.concat3(line, "\n", current))
         }
     } else {
-        discard services.persistence.append_line(run_queue_path(run_id), line)
+        discard append_text_line(run_queue_path(run_id), line)
     }
-    discard append_progress(run_id, "queued_message", kind, request_id, content)
+    discard append_progress(run_id, "queued_message", kind, request_id, content, "0", "0")
     return 0
 }
 
@@ -494,64 +2109,75 @@ fn dequeue_next_message_json(run_id: str) -> str {
     if line == "" {
         return ""
     }
-    fs.write_file(run_queue_path(run_id), services.persistence.drop_first_line(payload))
+    discard atomic_write_text(run_queue_path(run_id), services.persistence.drop_first_line(payload))
     return line
 }
 
 fn set_auto_continue(run_id: str, flag: i32, message_kind: str) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    return save_state(
-        run_id,
-        state_session_id(parsed),
-        state_goal(parsed),
-        state_status(parsed),
-        state_plan_status(parsed),
-        state_current_step_id(parsed),
-        state_last_request_id(parsed),
-        state_turns_completed(parsed),
-        state_failure_count(parsed),
-        bool_text(flag),
-        message_kind,
-        state_latest_summary(parsed),
-        state_created_at(parsed),
-        state_completed_at(parsed),
-    )
+    let mut patch = patch_start()
+    patch = patch_add_field(patch, "auto_continue_pending", bool_text(flag))
+    patch = patch_add_field(patch, "active_message_kind", message_kind)
+    return save_state(run_id, patch_finish(patch))
 }
 
 fn plan_status_ready(run_id: str) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    if state_plan_status(parsed) == "ready" {
+    if quoted_json_field(load_state_json(run_id), "plan_status") == "ready" {
         return 1
     }
     return 0
 }
 
-fn apply_plan_create(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str) -> i32 {
-    let state_parsed = json.parse(load_state_json(run_id))
-    discard save_plan(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json)
-    discard save_state(
-        run_id,
-        state_session_id(state_parsed),
-        state_goal(state_parsed),
-        "active",
-        "ready",
-        current_step_id,
-        request_id,
-        state_turns_completed(state_parsed),
-        state_failure_count(state_parsed),
-        "true",
-        "plan_create",
-        plan_summary,
-        state_created_at(state_parsed),
-        state_completed_at(state_parsed),
+fn apply_plan_create(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> i32 {
+    log.info(
+        "services.longrange plan_create",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "current_step_id", current_step_id)
     )
-    discard append_progress(run_id, "plan_created", "plan_create", request_id, plan_summary)
-    discard refresh_summary(run_id, "active")
+    let plan_rc = save_plan(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, task_class, completion_mode, expected_total_turns, execution_outlook, planning_style)
+    let raw = load_state_json(run_id)
+    let effective_task_class = first_non_empty3(task_class, raw_state_field(raw, "task_class"), classify_goal(first_non_empty2(raw_state_field(raw, "goal"), meta_goal_text(run_id))))
+    let state_rc = write_state_payload(
+        run_id,
+        state_doc_json(
+            run_id,
+            first_non_empty2(raw_state_field(raw, "session_id"), meta_session_id_text(run_id)),
+            first_non_empty2(raw_state_field(raw, "goal"), meta_goal_text(run_id)),
+            "active",
+            "ready",
+            effective_task_class,
+            first_non_empty2(raw_state_field(raw, "turns_completed"), "0"),
+            first_non_empty2(raw_state_field(raw, "failure_count"), "0"),
+            first_non_empty2(raw_state_field(raw, "last_progress_score"), "0"),
+            first_non_empty2(raw_state_field(raw, "consecutive_low_score"), "0"),
+            first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0"),
+            first_non_empty2(raw_state_field(raw, "completed_step_count"), "0"),
+            "true",
+            "plan_create",
+            plan_summary,
+            first_non_empty2(raw_state_field(raw, "created_at"), meta_created_at_text(run_id)),
+            now_label(),
+            current_step_id,
+            request_id,
+            raw_state_field(raw, "completed_at"),
+        ),
+    )
+    let progress_rc = append_progress(run_id, "plan_created", "plan_create", request_id, plan_summary, "0", "0")
+    let summary_rc = refresh_summary(run_id, "active")
+    if plan_rc != 0 || state_rc != 0 || progress_rc != 0 || summary_rc != 0 {
+        log.error(
+            "services.longrange plan_create_failed",
+            apputil.log_fields3("run_id", run_id, "request_id", request_id, "codes", str.concat(str.from_i32(plan_rc), str.concat("/", str.concat(str.from_i32(state_rc), str.concat("/", str.concat(str.from_i32(progress_rc), str.concat("/", str.from_i32(summary_rc))))))))
+        )
+        return 1
+    }
     return 0
 }
 
-fn apply_plan_update(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str) -> i32 {
+fn apply_plan_update(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, request_id: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> i32 {
     let current_plan = json.parse(load_plan_json(run_id))
+    log.info(
+        "services.longrange plan_update",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "current_step_id", current_step_id)
+    )
     let next_goal_summary = if goal_summary == "" { plan_goal_summary(current_plan) } else { goal_summary }
     let next_finished_definition = if finished_definition == "" { plan_finished_definition(current_plan) } else { finished_definition }
     let next_difficulty = if difficulty == "" { plan_difficulty(current_plan) } else { difficulty }
@@ -559,139 +2185,560 @@ fn apply_plan_update(run_id: str, goal_summary: str, finished_definition: str, d
     let next_current_step_id = if current_step_id == "" { plan_current_step_id(current_plan) } else { current_step_id }
     let next_plan_summary = if plan_summary == "" { plan_summary_value(current_plan) } else { plan_summary }
     let next_steps_json = if steps_json == "" || steps_json == "[]" { plan_steps_raw(current_plan) } else { steps_json }
-    return apply_plan_create(run_id, next_goal_summary, next_finished_definition, next_difficulty, next_estimated_effort, next_current_step_id, next_plan_summary, next_steps_json, request_id)
+    let next_task_class = if task_class == "" { plan_task_class(current_plan) } else { task_class }
+    let next_completion_mode = if completion_mode == "" { plan_completion_mode(current_plan) } else { completion_mode }
+    let next_expected_total_turns = if expected_total_turns == "" { plan_expected_total_turns(current_plan) } else { expected_total_turns }
+    let next_execution_outlook = if execution_outlook == "" { plan_execution_outlook(current_plan) } else { execution_outlook }
+    let next_planning_style = if planning_style == "" { plan_planning_style(current_plan) } else { planning_style }
+    return apply_plan_create(run_id, next_goal_summary, next_finished_definition, next_difficulty, next_estimated_effort, next_current_step_id, next_plan_summary, next_steps_json, request_id, next_task_class, next_completion_mode, next_expected_total_turns, next_execution_outlook, next_planning_style)
 }
 
 fn mark_completed(run_id: str, summary_text: str, request_id: str) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    discard save_state(
-        run_id,
-        state_session_id(parsed),
-        state_goal(parsed),
-        "completed",
-        state_plan_status(parsed),
-        state_current_step_id(parsed),
-        request_id,
-        state_turns_completed(parsed),
-        state_failure_count(parsed),
-        "false",
-        "goal_complete",
-        summary_text,
-        state_created_at(parsed),
-        now_label(),
+    let raw = load_state_json(run_id)
+    let terminal_session_id = first_non_empty2(raw_state_field(raw, "session_id"), meta_session_id_text(run_id))
+    let terminal_goal = first_non_empty2(raw_state_field(raw, "goal"), meta_goal_text(run_id))
+    let terminal_plan_status = inferred_plan_status(run_id, raw_state_field(raw, "plan_status"))
+    let terminal_created_at = first_non_empty2(raw_state_field(raw, "created_at"), meta_created_at_text(run_id))
+    let terminal_turns = max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "turns_completed"), "0")), persisted_turn_event_count(run_id)) + 1
+    let terminal_failures = max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "failure_count"), "0")), persisted_failure_turn_count(run_id))
+    log.info(
+        "services.longrange completed",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "summary", apputil.excerpt_head(summary_text, 220))
     )
-    discard clear_active_run_for_session(state_session_id(parsed), run_id)
+    let state_rc = write_state_payload(
+        run_id,
+        state_doc_json(
+            run_id,
+            terminal_session_id,
+            terminal_goal,
+            "completed",
+            terminal_plan_status,
+            first_non_empty3(raw_state_field(raw, "task_class"), plan_task_class(persisted_plan_or_empty(run_id)), classify_goal(terminal_goal)),
+            str.from_i32(terminal_turns),
+            str.from_i32(terminal_failures),
+            first_non_empty2(raw_state_field(raw, "last_progress_score"), "3"),
+            first_non_empty2(raw_state_field(raw, "consecutive_low_score"), "0"),
+            first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0"),
+            str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "completed_step_count"), "0")), completed_step_count(run_id))),
+            "false",
+            "goal_complete",
+            summary_text,
+            terminal_created_at,
+            now_label(),
+            raw_state_field(raw, "current_step_id"),
+            request_id,
+            now_label(),
+        ),
+    )
+    discard clear_active_run_for_session(terminal_session_id, run_id)
     discard remove_active_run(run_id)
-    discard append_progress(run_id, "completed", "goal_complete", request_id, summary_text)
+    let progress_rc = append_progress(run_id, "completed", "goal_complete", request_id, summary_text, "3", first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0"))
     discard write_terminal_summary(run_id, "completed")
-    return 0
-}
-
-fn mark_failed(run_id: str, detail: str, request_id: str) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    discard save_state(
-        run_id,
-        state_session_id(parsed),
-        state_goal(parsed),
-        "failed",
-        state_plan_status(parsed),
-        state_current_step_id(parsed),
-        request_id,
-        state_turns_completed(parsed),
-        state_failure_count(parsed),
-        "false",
-        "failed",
-        detail,
-        state_created_at(parsed),
-        now_label(),
-    )
-    discard clear_active_run_for_session(state_session_id(parsed), run_id)
-    discard remove_active_run(run_id)
-    discard append_progress(run_id, "failed", "failed", request_id, detail)
-    discard write_terminal_summary(run_id, "failed")
-    return 0
-}
-
-fn cancel_run(run_id: str, reason: str, request_id: str) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    discard save_state(
-        run_id,
-        state_session_id(parsed),
-        state_goal(parsed),
-        "cancelled",
-        state_plan_status(parsed),
-        state_current_step_id(parsed),
-        request_id,
-        state_turns_completed(parsed),
-        state_failure_count(parsed),
-        "false",
-        "cancel",
-        reason,
-        state_created_at(parsed),
-        now_label(),
-    )
-    discard clear_active_run_for_session(state_session_id(parsed), run_id)
-    discard remove_active_run(run_id)
-    discard append_progress(run_id, "cancelled", "cancel", request_id, reason)
-    discard write_terminal_summary(run_id, "cancelled")
-    return 0
-}
-
-fn update_after_turn(run_id: str, request_id: str, assistant_summary: str, success: i32) -> i32 {
-    let parsed = json.parse(load_state_json(run_id))
-    let next_turns = apputil.parse_i32(state_turns_completed(parsed)) + 1
-    let next_failures = if success == 1 { 0 } else { apputil.parse_i32(state_failure_count(parsed)) + 1 }
-    let next_status = if success == 1 {
-        if state_plan_status(parsed) == "missing" { "planning" } else { "active" }
-    } else {
-        "active"
-    }
-    discard save_state(
-        run_id,
-        state_session_id(parsed),
-        state_goal(parsed),
-        next_status,
-        state_plan_status(parsed),
-        state_current_step_id(parsed),
-        request_id,
-        str.from_i32(next_turns),
-        str.from_i32(next_failures),
-        if success == 1 { "true" } else { "true" },
-        if success == 1 { "continue" } else { "retry" },
-        assistant_summary,
-        state_created_at(parsed),
-        state_completed_at(parsed),
-    )
-    discard append_progress(run_id, if success == 1 { "turn_completed" } else { "turn_failed" }, if success == 1 { "continue" } else { "retry" }, request_id, assistant_summary)
-    discard refresh_summary(run_id, next_status)
-    return 0
-}
-
-fn failure_count(run_id: str) -> i32 {
-    return apputil.parse_i32(state_failure_count(json.parse(load_state_json(run_id))))
-}
-
-fn auto_continue_pending(run_id: str) -> i32 {
-    if state_auto_continue_pending(json.parse(load_state_json(run_id))) == "true" {
+    if state_rc != 0 || progress_rc != 0 {
         return 1
     }
     return 0
 }
 
+fn terminal_failure_progress_json(run_id: str, recorded_at: str, progress_score: str, evidence_count: str, request_id: str, detail: str) -> str {
+    let mut payload = "{"
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "phase", "failed")
+    payload = patch_add_field(payload, "message_kind", "failed")
+    payload = patch_add_field(payload, "recorded_at", recorded_at)
+    payload = patch_add_field(payload, "progress_score", progress_score)
+    payload = patch_add_field(payload, "evidence_count", evidence_count)
+    if request_id != "" {
+        payload = patch_add_field(payload, "request_id", request_id)
+    }
+    if detail != "" {
+        payload = patch_add_field(payload, "detail", detail)
+    }
+    return patch_finish(payload)
+}
+
+fn active_message_kind(success: i32) -> str {
+    if success == 1 {
+        return "continue"
+    }
+    return "retry"
+}
+
+fn active_next_status(success: i32, plan_status: str) -> str {
+    if success == 1 {
+        if plan_status == "missing" {
+            return "planning"
+        }
+        return "active"
+    }
+    return "active"
+}
+
+fn active_state_payload_json(run_id: str, session_id: str, goal: str, run_status: str, plan_status: str, task_class: str, turns_completed: str, failure_count: str, progress_score: str, low_score: str, evidence_count: str, completed_step_count_text: str, message_kind: str, summary_text: str, created_at: str, updated_at: str, current_step_id: str, request_id: str, completed_at: str) -> str {
+    let mut payload = patch_start()
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "session_id", session_id)
+    payload = patch_add_field(payload, "goal", goal)
+    payload = patch_add_field(payload, "run_status", run_status)
+    payload = patch_add_field(payload, "plan_status", plan_status)
+    payload = patch_add_field(payload, "task_class", task_class)
+    payload = patch_add_field(payload, "turns_completed", turns_completed)
+    payload = patch_add_field(payload, "failure_count", failure_count)
+    payload = patch_add_field(payload, "last_progress_score", progress_score)
+    payload = patch_add_field(payload, "consecutive_low_score", low_score)
+    payload = patch_add_field(payload, "last_evidence_count", evidence_count)
+    payload = patch_add_field(payload, "completed_step_count", completed_step_count_text)
+    payload = patch_add_field(payload, "auto_continue_pending", "true")
+    payload = patch_add_field(payload, "active_message_kind", message_kind)
+    payload = patch_add_field(payload, "latest_summary", summary_text)
+    payload = patch_add_field(payload, "created_at", created_at)
+    payload = patch_add_field(payload, "updated_at", updated_at)
+    if current_step_id != "" {
+        payload = patch_add_field(payload, "current_step_id", current_step_id)
+    }
+    payload = patch_add_field(payload, "last_request_id", request_id)
+    if completed_at != "" {
+        payload = patch_add_field(payload, "completed_at", completed_at)
+    }
+    return patch_finish(payload)
+}
+
+fn active_progress_payload_json(run_id: str, phase: str, message_kind: str, recorded_at: str, progress_score: str, evidence_count: str, request_id: str, detail: str) -> str {
+    let mut payload = patch_start()
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "phase", phase)
+    payload = patch_add_field(payload, "message_kind", message_kind)
+    payload = patch_add_field(payload, "recorded_at", recorded_at)
+    payload = patch_add_field(payload, "progress_score", progress_score)
+    payload = patch_add_field(payload, "evidence_count", evidence_count)
+    payload = patch_add_field(payload, "request_id", request_id)
+    payload = patch_add_field(payload, "detail", detail)
+    return patch_finish(payload)
+}
+
+fn failed_state_payload_json(run_id: str, session_id: str, goal: str, plan_status: str, turns_text: str, failure_count: str, progress_score: str, evidence_count: str, detail: str, created_at: str, updated_at: str, current_step_id: str, request_id: str) -> str {
+    let mut payload = patch_start()
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "session_id", session_id)
+    payload = patch_add_field(payload, "goal", goal)
+    payload = patch_add_field(payload, "run_status", "failed")
+    payload = patch_add_field(payload, "plan_status", plan_status)
+    payload = patch_add_field(payload, "turns_completed", turns_text)
+    payload = patch_add_field(payload, "failure_count", failure_count)
+    payload = patch_add_field(payload, "last_progress_score", progress_score)
+    payload = patch_add_field(payload, "last_evidence_count", evidence_count)
+    payload = patch_add_field(payload, "auto_continue_pending", "false")
+    payload = patch_add_field(payload, "active_message_kind", "failed")
+    payload = patch_add_field(payload, "latest_summary", detail)
+    payload = patch_add_field(payload, "created_at", created_at)
+    payload = patch_add_field(payload, "updated_at", updated_at)
+    if current_step_id != "" {
+        payload = patch_add_field(payload, "current_step_id", current_step_id)
+    }
+    if request_id != "" {
+        payload = patch_add_field(payload, "last_request_id", request_id)
+    }
+    payload = patch_add_field(payload, "completed_at", updated_at)
+    return patch_finish(payload)
+}
+
+fn failed_state_payload_minimal_json(run_id: str, session_id: str, goal: str, plan_status: str, turns_text: str, failure_count: str, detail: str, created_at: str, updated_at: str, request_id: str) -> str {
+    let mut payload = patch_start()
+    payload = patch_add_field(payload, "status", model.types.control_ok_label())
+    payload = patch_add_field(payload, "run_id", run_id)
+    payload = patch_add_field(payload, "session_id", session_id)
+    payload = patch_add_field(payload, "goal", goal)
+    payload = patch_add_field(payload, "run_status", "failed")
+    payload = patch_add_field(payload, "plan_status", plan_status)
+    payload = patch_add_field(payload, "turns_completed", turns_text)
+    payload = patch_add_field(payload, "failure_count", failure_count)
+    payload = patch_add_field(payload, "last_progress_score", "0")
+    payload = patch_add_field(payload, "last_evidence_count", "0")
+    payload = patch_add_field(payload, "auto_continue_pending", "false")
+    payload = patch_add_field(payload, "active_message_kind", "failed")
+    payload = patch_add_field(payload, "latest_summary", detail)
+    payload = patch_add_field(payload, "created_at", created_at)
+    payload = patch_add_field(payload, "updated_at", updated_at)
+    if request_id != "" {
+        payload = patch_add_field(payload, "last_request_id", request_id)
+    }
+    payload = patch_add_field(payload, "completed_at", updated_at)
+    return patch_finish(payload)
+}
+
+fn terminalize_failed_run(run_id: str, detail: str, request_id: str) -> i32 {
+    let raw = load_state_json(run_id)
+    let session_id = first_non_empty2(raw_state_field(raw, "session_id"), meta_session_id_text(run_id))
+    let goal = first_non_empty2(raw_state_field(raw, "goal"), meta_goal_text(run_id))
+    let plan_status = inferred_plan_status(run_id, raw_state_field(raw, "plan_status"))
+    let created_at = first_non_empty2(raw_state_field(raw, "created_at"), meta_created_at_text(run_id))
+    let turns_text = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "turns_completed"), "0")), persisted_turn_event_count(run_id)))
+    let failure_count = str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "failure_count"), "0")), persisted_failure_turn_count(run_id)) + 1)
+    let progress_score = first_non_empty2(raw_state_field(raw, "last_progress_score"), "0")
+    let evidence_count = first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0")
+    let stamp = now_label()
+    let current_step = raw_state_field(raw, "current_step_id")
+    log.info(
+        "services.longrange terminalize_failed_run enter",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "detail", apputil.excerpt_head(detail, 180))
+    )
+    let state_rc = services.sqlite_store.longrange_update_turn(
+        run_state_path(run_id),
+        run_progress_path(run_id),
+        run_id,
+        session_id,
+        goal,
+        "failed",
+        plan_status,
+        first_non_empty3(raw_state_field(raw, "task_class"), plan_task_class(persisted_plan_or_empty(run_id)), classify_goal(goal)),
+        turns_text,
+        failure_count,
+        progress_score,
+        first_non_empty2(raw_state_field(raw, "consecutive_low_score"), "0"),
+        evidence_count,
+        first_non_empty2(raw_state_field(raw, "completed_step_count"), "0"),
+        "false",
+        "failed",
+        detail,
+        created_at,
+        stamp,
+        current_step,
+        request_id,
+        stamp,
+        "failed",
+        "failed",
+        stamp,
+        progress_score,
+        evidence_count,
+        request_id,
+        detail,
+    )
+    log.info(
+        "services.longrange terminalize_failed_run result",
+        apputil.log_fields3("run_id", run_id, "request_id", request_id, "state_rc", str.from_i32(state_rc))
+    )
+    if state_rc == 0 {
+        discard clear_active_run_for_session(session_id, run_id)
+        discard remove_active_run(run_id)
+        discard rewrite_active_runs_index()
+        discard write_terminal_summary(run_id, "failed")
+        return 0
+    }
+    return 1
+}
+
+fn mark_failed(run_id: str, detail: str, request_id: str) -> i32 {
+    return terminalize_failed_run(run_id, detail, request_id)
+}
+
+fn force_terminal_fail(run_id: str, detail: str, request_id: str) -> i32 {
+    return terminalize_failed_run(run_id, detail, request_id)
+}
+
+fn record_terminal_failure_event(run_id: str, detail: str, request_id: str) -> i32 {
+    return terminalize_failed_run(run_id, detail, request_id)
+}
+
+fn cancel_run(run_id: str, reason: str, request_id: str) -> i32 {
+    let raw = load_state_json(run_id)
+    let terminal_session_id = first_non_empty2(raw_state_field(raw, "session_id"), meta_session_id_text(run_id))
+    let terminal_goal = first_non_empty2(raw_state_field(raw, "goal"), meta_goal_text(run_id))
+    let terminal_plan_status = inferred_plan_status(run_id, raw_state_field(raw, "plan_status"))
+    let terminal_created_at = first_non_empty2(raw_state_field(raw, "created_at"), meta_created_at_text(run_id))
+    let terminal_turns = max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "turns_completed"), "0")), persisted_turn_event_count(run_id))
+    let terminal_failures = max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "failure_count"), "0")), persisted_failure_turn_count(run_id))
+    let state_rc = write_state_payload(
+        run_id,
+        state_doc_json(
+            run_id,
+            terminal_session_id,
+            terminal_goal,
+            "cancelled",
+            terminal_plan_status,
+            first_non_empty3(raw_state_field(raw, "task_class"), plan_task_class(persisted_plan_or_empty(run_id)), classify_goal(terminal_goal)),
+            str.from_i32(terminal_turns),
+            str.from_i32(terminal_failures),
+            first_non_empty2(raw_state_field(raw, "last_progress_score"), "0"),
+            first_non_empty2(raw_state_field(raw, "consecutive_low_score"), "0"),
+            first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0"),
+            str.from_i32(max_i32(apputil.parse_i32(first_non_empty2(raw_state_field(raw, "completed_step_count"), "0")), completed_step_count(run_id))),
+            "false",
+            "cancel",
+            reason,
+            terminal_created_at,
+            now_label(),
+            raw_state_field(raw, "current_step_id"),
+            request_id,
+            now_label(),
+        ),
+    )
+    discard clear_active_run_for_session(terminal_session_id, run_id)
+    discard remove_active_run(run_id)
+    let progress_rc = append_progress(run_id, "cancelled", "cancel", request_id, reason, first_non_empty2(raw_state_field(raw, "last_progress_score"), "0"), first_non_empty2(raw_state_field(raw, "last_evidence_count"), "0"))
+    discard write_terminal_summary(run_id, "cancelled")
+    if state_rc != 0 || progress_rc != 0 {
+        return 1
+    }
+    return 0
+}
+
+fn low_score_limit(run_id: str) -> i32 {
+    let mut limit: i32 = if task_class(run_id) == "micro" { 4 } else { 3 }
+    let planning = planning_style(run_id)
+    let expected = expected_total_turns(run_id)
+    if planning == "adaptive" {
+        limit = limit + 1
+    } else if planning == "deliberate" {
+        limit = limit + 2
+    }
+    if expected >= 8 {
+        limit = limit + 1
+    }
+    if current_step_type(run_id) == "inspect" {
+        limit = limit + 1
+    }
+    if current_step_target_turns(run_id) >= 3 {
+        limit = limit + 1
+    }
+    if limit > 8 {
+        return 8
+    }
+    return limit
+}
+
+fn should_fail_for_low_progress(run_id: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    if apputil.parse_i32(state_consecutive_low_score(parsed)) >= low_score_limit(run_id) {
+        return 1
+    }
+    return 0
+}
+
+fn should_auto_complete(run_id: str, assistant_summary: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    return completion_gate_ready(run_id, assistant_summary, apputil.parse_i32(state_last_evidence_count(parsed)))
+}
+
+fn auto_completion_summary(run_id: str) -> str {
+    let plan = json.parse(load_plan_json(run_id))
+    let summary = plan_summary_value(plan)
+    if summary != "" {
+        return str.concat("runtime_auto_complete: ", summary)
+    }
+    return str.concat("runtime_auto_complete: goal satisfied for ", goal_summary(run_id))
+}
+
+fn allow_goal_complete(run_id: str, summary_text: str) -> i32 {
+    let parsed = json.parse(load_state_json(run_id))
+    let evidence = apputil.parse_i32(state_last_evidence_count(parsed))
+    if goal_complete_gate_ready(run_id, summary_text, evidence) == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn goal_complete_effective_done_steps(run_id: str, summary_text: str, evidence_count: i32) -> i32 {
+    let total_steps = step_count(run_id)
+    let mut done_steps = completed_step_count(run_id)
+    if total_steps <= 0 {
+        return done_steps
+    }
+    if evidence_count > 0 && current_step_type(run_id) != "summarize" && done_steps < total_steps {
+        done_steps = done_steps + 1
+    }
+    if completion_mode(run_id) == "summary" && summary_text != "" && done_steps < total_steps {
+        done_steps = done_steps + 1
+    }
+    if done_steps > total_steps {
+        return total_steps
+    }
+    return done_steps
+}
+
+fn goal_complete_gate_ready(run_id: str, summary_text: str, evidence_count: i32) -> i32 {
+    if plan_status_ready(run_id) == 0 {
+        return 0
+    }
+    if summary_text == "" {
+        return 0
+    }
+    let total_steps = step_count(run_id)
+    if total_steps == 0 {
+        return 0
+    }
+    let mode = completion_mode(run_id)
+    let effective_done = goal_complete_effective_done_steps(run_id, summary_text, evidence_count)
+    if mode == "direct" {
+        if effective_done >= total_steps {
+            return 1
+        }
+        return 0
+    }
+    if mode == "summary" {
+        if effective_done >= total_steps {
+            return 1
+        }
+        return 0
+    }
+    if effective_done >= total_steps && evidence_count > 0 {
+        return 1
+    }
+    return 0
+}
+
+fn goal_complete_block_reason(run_id: str, summary_text: str) -> str {
+    if plan_status_ready(run_id) == 0 {
+        return "durable plan is not ready yet"
+    }
+    if summary_text == "" {
+        return "completion summary is empty"
+    }
+    let total_steps = step_count(run_id)
+    let done_steps = completed_step_count(run_id)
+    let effective_done = goal_complete_effective_done_steps(run_id, summary_text, last_evidence_count(run_id))
+    let class = task_class(run_id)
+    let mode = completion_mode(run_id)
+    if total_steps == 0 {
+        return "plan has no steps yet"
+    }
+    if goal_complete_gate_ready(run_id, summary_text, last_evidence_count(run_id)) == 1 {
+        return ""
+    }
+    if class == "micro" && mode == "summary" {
+        if effective_done < total_steps {
+            return str.concat("finish more of the goal before completing; effective_completed=", str.concat(str.from_i32(effective_done), str.concat(" total=", str.from_i32(total_steps))))
+        }
+        return "the final summary is still missing or unsupported by direct evidence"
+    }
+    if all_steps_done(run_id) == 0 {
+        return str.concat("all plan steps are not complete yet; durable_completed=", str.concat(str.from_i32(done_steps), str.concat(" effective_completed=", str.concat(str.from_i32(effective_done), str.concat(" total=", str.from_i32(total_steps))))))
+    }
+    if mode == "verified" {
+        let parsed = json.parse(load_state_json(run_id))
+        if apputil.parse_i32(state_last_evidence_count(parsed)) <= 0 {
+            return "verification-oriented completion needs direct evidence from tool work before finishing"
+        }
+    }
+    return "finished definition is not yet satisfied according to the durable plan state"
+}
+
+fn update_after_turn(run_id: str, request_id: str, assistant_summary: str, success: i32, evidence_count: i32, result_kind: str, control_tool: str, control_outcome: str) -> i32 {
+    let current_state = load_state_json(run_id)
+    let safe_request_id = first_non_empty2(request_id, str.concat("longrange-turn-", now_label()))
+    let safe_summary = if assistant_summary == "" { if success == 1 { "turn_completed_without_summary" } else { "turn_failed_without_summary" } } else { assistant_summary }
+    let safe_plan_status = inferred_plan_status(run_id, raw_state_field(current_state, "plan_status"))
+    let safe_session_id = first_non_empty2(raw_state_field(current_state, "session_id"), meta_session_id_text(run_id))
+    let safe_goal = first_non_empty2(raw_state_field(current_state, "goal"), meta_goal_text(run_id))
+    let safe_created_at = first_non_empty2(raw_state_field(current_state, "created_at"), meta_created_at_text(run_id))
+    let safe_task_class = first_non_empty3(raw_state_field(current_state, "task_class"), plan_task_class(persisted_plan_or_empty(run_id)), classify_goal(safe_goal))
+    let safe_current_step_id = raw_state_field(current_state, "current_step_id")
+    let safe_completed_at = raw_state_field(current_state, "completed_at")
+    let next_turns = apputil.parse_i32(raw_state_field(current_state, "turns_completed")) + 1
+    let next_failures = if success == 1 { 0 } else { apputil.parse_i32(raw_state_field(current_state, "failure_count")) + 1 }
+    let previous_completed_steps = apputil.parse_i32(raw_state_field(current_state, "completed_step_count"))
+    let next_completed_steps = completed_step_count(run_id)
+    let next_evidence_count = evidence_count
+    let next_progress_score = turn_progress_score_typed(run_id, safe_summary, next_evidence_count, previous_completed_steps, result_kind, control_tool, control_outcome)
+    let next_low_score = if next_progress_score <= 0 { apputil.parse_i32(raw_state_field(current_state, "consecutive_low_score")) + 1 } else { 0 }
+    let next_status = active_next_status(success, safe_plan_status)
+    let message_kind = active_message_kind(success)
+    let turns_text = str.from_i32(next_turns)
+    let failures_text = str.from_i32(next_failures)
+    let progress_score_text = str.from_i32(next_progress_score)
+    let low_score_text = str.from_i32(next_low_score)
+    let evidence_text = str.from_i32(next_evidence_count)
+    let completed_steps_text = str.from_i32(next_completed_steps)
+    let progress_phase = if success == 1 { "turn_completed" } else { "turn_failed" }
+    let updated_at = now_label()
+    log.info(
+        "services.longrange update_after_turn",
+        apputil.log_fields3("run_id", run_id, "request_id", safe_request_id, "progress_score", str.from_i32(next_progress_score))
+    )
+    let rc = services.sqlite_store.longrange_update_turn(
+        run_state_path(run_id),
+        run_progress_path(run_id),
+        run_id,
+        safe_session_id,
+        safe_goal,
+        next_status,
+        safe_plan_status,
+        safe_task_class,
+        turns_text,
+        failures_text,
+        progress_score_text,
+        low_score_text,
+        evidence_text,
+        completed_steps_text,
+        "true",
+        message_kind,
+        safe_summary,
+        safe_created_at,
+        updated_at,
+        safe_current_step_id,
+        safe_request_id,
+        safe_completed_at,
+        progress_phase,
+        message_kind,
+        updated_at,
+        progress_score_text,
+        evidence_text,
+        safe_request_id,
+        safe_summary,
+    )
+    discard refresh_summary(run_id, next_status)
+    if rc != 0 {
+        log.error(
+            "services.longrange update_after_turn_failed",
+            apputil.log_fields3("run_id", run_id, "request_id", safe_request_id, "summary", apputil.excerpt_head(safe_summary, 180))
+        )
+        return 1
+    }
+    return 0
+}
+
+fn failure_count(run_id: str) -> i32 {
+    return apputil.parse_i32(quoted_json_field(load_state_json(run_id), "failure_count"))
+}
+
+fn turns_completed(run_id: str) -> i32 {
+    return apputil.parse_i32(quoted_json_field(load_state_json(run_id), "turns_completed"))
+}
+
+fn auto_continue_pending(run_id: str) -> i32 {
+    let raw = load_state_json(run_id)
+    let flag = quoted_json_field(raw, "auto_continue_pending")
+    if flag == "true" {
+        return 1
+    }
+    if flag == "" {
+        let status = quoted_json_field(raw, "run_status")
+        if status == "planning" || status == "active" {
+            return 1
+        }
+    }
+    return 0
+}
+
 fn run_status(run_id: str) -> str {
-    return state_status(json.parse(load_state_json(run_id)))
+    return quoted_json_field(load_state_json(run_id), "run_status")
 }
 
 fn run_session_id(run_id: str) -> str {
-    return state_session_id(json.parse(load_state_json(run_id)))
+    return quoted_json_field(load_state_json(run_id), "session_id")
 }
 
 fn run_goal(run_id: str) -> str {
-    return state_goal(json.parse(load_state_json(run_id)))
+    return quoted_json_field(load_state_json(run_id), "goal")
 }
 
 fn latest_summary(run_id: str) -> str {
-    return state_latest_summary(json.parse(load_state_json(run_id)))
+    return quoted_json_field(load_state_json(run_id), "latest_summary")
+}
+
+fn last_evidence_count(run_id: str) -> i32 {
+    return apputil.parse_i32(quoted_json_field(load_state_json(run_id), "last_evidence_count"))
 }
 
 fn current_step_id(run_id: str) -> str {
@@ -702,27 +2749,501 @@ fn current_step_id(run_id: str) -> str {
     return plan_current_step_id(json.parse(load_plan_json(run_id)))
 }
 
+fn step_handle(steps: JsonHandle, idx: i32) -> JsonHandle {
+    return json.get(steps, str.from_i32(idx))
+}
+
+fn step_field(step: JsonHandle, key: str) -> str {
+    return json.get_str(step, key)
+}
+
+fn step_count(run_id: str) -> i32 {
+    let plan = json.parse(load_plan_json(run_id))
+    let steps = json.get(plan, "steps")
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 16 {
+        if step_field(step_handle(steps, idx), "step_id") == "" {
+            return count
+        }
+        count = count + 1
+        idx = idx + 1
+    }
+    return count
+}
+
+fn completed_step_count(run_id: str) -> i32 {
+    let plan = json.parse(load_plan_json(run_id))
+    let steps = json.get(plan, "steps")
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 16 {
+        let step = step_handle(steps, idx)
+        let step_id = step_field(step, "step_id")
+        if step_id == "" {
+            return count
+        }
+        let status = apputil.lower_ascii(step_field(step, "status"))
+        if status == "done" || status == "completed" || status == "complete" {
+            count = count + 1
+        }
+        idx = idx + 1
+    }
+    return count
+}
+
+fn all_steps_done(run_id: str) -> i32 {
+    let total = step_count(run_id)
+    if total == 0 {
+        return 0
+    }
+    if completed_step_count(run_id) >= total {
+        return 1
+    }
+    return 0
+}
+
+fn current_step_handle(run_id: str) -> JsonHandle {
+    let target = current_step_id(run_id)
+    let plan = json.parse(load_plan_json(run_id))
+    let steps = json.get(plan, "steps")
+    let mut idx: i32 = 0
+    while idx < 16 {
+        let step = step_handle(steps, idx)
+        let step_id = step_field(step, "step_id")
+        if step_id == "" {
+            return json.parse("{}")
+        }
+        if step_id == target {
+            return step
+        }
+        idx = idx + 1
+    }
+    return json.parse("{}")
+}
+
+fn current_step_type(run_id: str) -> str {
+    let step = current_step_handle(run_id)
+    let explicit = step_field(step, "step_type")
+    if explicit != "" {
+        return explicit
+    }
+    return infer_step_type(step_field(step, "step_id"), step_field(step, "title"), step_field(step, "description"))
+}
+
+fn current_step_evidence_mode(run_id: str) -> str {
+    let step = current_step_handle(run_id)
+    let explicit = step_field(step, "evidence_mode")
+    if explicit != "" {
+        return explicit
+    }
+    return default_evidence_mode(current_step_type(run_id))
+}
+
+fn current_step_completion_signal(run_id: str) -> str {
+    let step = current_step_handle(run_id)
+    let explicit = step_field(step, "completion_signal")
+    if explicit != "" {
+        return explicit
+    }
+    return default_completion_signal(current_step_type(run_id), task_class(run_id))
+}
+
+fn current_step_outlook(run_id: str) -> str {
+    let step = current_step_handle(run_id)
+    let explicit = step_field(step, "step_outlook")
+    if explicit != "" {
+        return explicit
+    }
+    return default_step_outlook(current_step_type(run_id), task_class(run_id))
+}
+
+fn current_step_target_turns(run_id: str) -> i32 {
+    let step = current_step_handle(run_id)
+    let explicit = step_field(step, "target_turns")
+    if explicit != "" {
+        return apputil.parse_i32(explicit)
+    }
+    return apputil.parse_i32(default_step_target_turns(current_step_type(run_id), task_class(run_id)))
+}
+
+fn current_step_title(run_id: str) -> str {
+    let step = current_step_handle(run_id)
+    let title = step_field(step, "title")
+    if title != "" {
+        return title
+    }
+    return current_step_id(run_id)
+}
+
+fn task_class(run_id: str) -> str {
+    let state_class = quoted_json_field(load_state_json(run_id), "task_class")
+    if state_class != "" {
+        return state_class
+    }
+    let plan_class = quoted_json_field(load_plan_json(run_id), "task_class")
+    if plan_class != "" {
+        return plan_class
+    }
+    return classify_goal(run_goal(run_id))
+}
+
+fn completion_mode(run_id: str) -> str {
+    let mode = quoted_json_field(load_plan_json(run_id), "completion_mode")
+    if mode != "" {
+        return normalize_completion_mode(mode, task_class(run_id), run_goal(run_id))
+    }
+    return default_completion_mode(task_class(run_id), run_goal(run_id))
+}
+
+fn expected_total_turns(run_id: str) -> i32 {
+    let explicit = quoted_json_field(load_plan_json(run_id), "expected_total_turns")
+    if explicit != "" {
+        return apputil.parse_i32(explicit)
+    }
+    return apputil.parse_i32(default_expected_total_turns(task_class(run_id), run_goal(run_id)))
+}
+
+fn execution_outlook(run_id: str) -> str {
+    let outlook = quoted_json_field(load_plan_json(run_id), "execution_outlook")
+    if outlook != "" {
+        return outlook
+    }
+    return default_execution_outlook(task_class(run_id), run_goal(run_id))
+}
+
+fn planning_style(run_id: str) -> str {
+    let style = quoted_json_field(load_plan_json(run_id), "planning_style")
+    if style != "" {
+        return style
+    }
+    return default_planning_style(task_class(run_id))
+}
+
+pub fn tool_event_count(tool_events_json: str) -> i32 {
+    if tool_events_json == "" || tool_events_json == "[]" {
+        return 0
+    }
+    let parsed = json.parse(tool_events_json)
+    let mut count: i32 = 0
+    let mut idx: i32 = 0
+    while idx < 32 {
+        if json.get_str(json.get(parsed, str.from_i32(idx)), "tool") == "" {
+            return count
+        }
+        count = count + 1
+        idx = idx + 1
+    }
+    return count
+}
+
+fn completion_gate_ready(run_id: str, assistant_summary: str, evidence_count: i32) -> i32 {
+    if plan_status_ready(run_id) == 0 {
+        return 0
+    }
+    let class = task_class(run_id)
+    let mode = completion_mode(run_id)
+    let total_steps = step_count(run_id)
+    let done_steps = completed_step_count(run_id)
+    let final_step_ready = if total_steps > 0 && done_steps + 1 >= total_steps && assistant_summary != "" && is_passive_control_summary(assistant_summary) == 0 { 1 } else { 0 }
+    if mode == "direct" {
+        if all_steps_done(run_id) == 1 {
+            return 1
+        }
+        return 0
+    }
+    if mode == "summary" {
+        if all_steps_done(run_id) == 1 && assistant_summary != "" && is_passive_control_summary(assistant_summary) == 0 {
+            return 1
+        }
+        if class == "micro" && all_steps_done(run_id) == 1 {
+            return 1
+        }
+        if class == "micro" && final_step_ready == 1 {
+            return 1
+        }
+        return 0
+    }
+    if all_steps_done(run_id) == 1 && evidence_count > 0 {
+        return 1
+    }
+    return 0
+}
+
+fn turn_progress_score(run_id: str, assistant_summary: str, tool_events_json: str, previous_completed_steps: i32) -> i32 {
+    let evidence_count = tool_event_count(tool_events_json)
+    let current_completed_steps = completed_step_count(run_id)
+    if str.starts_with(assistant_summary, "control_plane_tool_executed:goal_complete") == 1 {
+        return 3
+    }
+    if completion_gate_ready(run_id, assistant_summary, evidence_count) == 1 {
+        return 3
+    }
+    if current_completed_steps > previous_completed_steps {
+        return 2
+    }
+    if evidence_count > 0 {
+        return 2
+    }
+    if assistant_summary == "control_plane_tool_executed:plan_create" || assistant_summary == "control_plane_tool_executed:plan_update" {
+        return 1
+    }
+    if str.starts_with(assistant_summary, "control_plane_tool_failed:") == 1 {
+        return 0
+    }
+    if assistant_summary != "" && assistant_summary != "empty_assistant_response" && is_passive_control_summary(assistant_summary) == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn turn_progress_score_typed(run_id: str, assistant_summary: str, evidence_count: i32, previous_completed_steps: i32, result_kind: str, control_tool: str, control_outcome: str) -> i32 {
+    let current_completed_steps = completed_step_count(run_id)
+    if result_kind == "control_tool" && control_tool == "goal_complete" && control_outcome == "ok" {
+        return 3
+    }
+    if completion_gate_ready(run_id, assistant_summary, evidence_count) == 1 {
+        return 3
+    }
+    if current_completed_steps > previous_completed_steps {
+        return 2
+    }
+    if evidence_count > 0 {
+        return 2
+    }
+    if result_kind == "control_tool" && (control_tool == "plan_create" || control_tool == "plan_update") && control_outcome == "ok" {
+        return 1
+    }
+    if result_kind == "control_tool" && control_outcome == "error" {
+        return 0
+    }
+    if result_kind == "planning_required" || result_kind == "tool_read_saturation" || result_kind == "tool_depth_limit" {
+        return 0
+    }
+    if assistant_summary != "" && assistant_summary != "empty_assistant_response" && is_passive_control_summary(assistant_summary) == 0 {
+        return 1
+    }
+    return 0
+}
+
 fn progress_excerpt(run_id: str) -> str {
     let payload = safe_read(run_progress_path(run_id))
-    if payload == "" {
+    if looks_like_array_json(payload) == 0 {
         return ""
     }
-    if str.len(payload) <= 1600 {
-        return payload
+    let events = json.parse(payload)
+    let mut lines = list.new()
+    let mut idx: i32 = 0
+    while idx < 256 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            break
+        }
+        let message_kind = json.get_str(parsed, "message_kind")
+        let detail = json.get_str(parsed, "detail")
+        let score = json.get_str(parsed, "progress_score")
+        let evidence = json.get_str(parsed, "evidence_count")
+        let compact_detail = if detail == "" { "" } else { if str.len(detail) <= 120 { detail } else { str.concat(str.slice(detail, 0, 120), "...") } }
+        let mut summary_line = str.concat(phase, str.concat(" [", str.concat(message_kind, "]")))
+        if score != "" && evidence != "" {
+            summary_line = str.concat(summary_line, str.concat(" score=", str.concat(score, str.concat(" evidence=", evidence))))
+        }
+        if compact_detail != "" {
+            summary_line = str.concat(summary_line, str.concat(": ", compact_detail))
+        }
+        discard list.push(lines, summary_line)
+        idx = idx + 1
     }
-    return str.slice(payload, str.len(payload) - 1600, str.len(payload))
+    let total = list.len(lines)
+    let start = if total <= 4 { 0 } else { total - 4 }
+    let mut out = ""
+    let mut idx: i32 = start
+    while idx < total {
+        let item = list.get(lines, idx)
+        if out == "" {
+            out = item
+        } else {
+            out = str.concat(out, str.concat("\n", item))
+        }
+        idx = idx + 1
+    }
+    return out
+}
+
+fn is_passive_control_summary(summary: str) -> i32 {
+    if summary == "control_plane_tool_executed:plan_create" || summary == "control_plane_tool_executed:plan_view" || summary == "control_plane_tool_executed:plan_update" || summary == "control_plane_tool_executed:longrange_status" {
+        return 1
+    }
+    if summary == "control_plane_tool_failed:plan_create" || summary == "control_plane_tool_failed:plan_view" || summary == "control_plane_tool_failed:plan_update" || summary == "control_plane_tool_failed:goal_complete" || summary == "control_plane_tool_failed:longrange_status" {
+        return 1
+    }
+    return 0
+}
+
+fn is_tool_only_summary(summary: str) -> i32 {
+    if str.starts_with(summary, "tool_work_completed_without_final_message:") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn passive_control_streak(run_id: str) -> i32 {
+    let payload = safe_read(run_progress_path(run_id))
+    if looks_like_array_json(payload) == 0 {
+        return 0
+    }
+    let events = json.parse(payload)
+    let mut event_count: i32 = 0
+    while event_count < 256 {
+        let parsed = json.get(events, str.from_i32(event_count))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            break
+        }
+        event_count = event_count + 1
+    }
+    let mut streak: i32 = 0
+    let mut idx: i32 = event_count - 1
+    while idx >= 0 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase != "turn_completed" && phase != "turn_failed" {
+            idx = idx - 1
+            continue
+        }
+        let detail = json.get_str(parsed, "detail")
+        if is_passive_control_summary(detail) == 1 {
+            streak = streak + 1
+            idx = idx - 1
+            continue
+        }
+        break
+    }
+    return streak
 }
 
 fn plan_summary(run_id: str) -> str {
-    return plan_summary_value(json.parse(load_plan_json(run_id)))
+    return quoted_json_field(load_plan_json(run_id), "plan_summary")
 }
 
 fn goal_summary(run_id: str) -> str {
-    return plan_goal_summary(json.parse(load_plan_json(run_id)))
+    return quoted_json_field(load_plan_json(run_id), "goal_summary")
+}
+
+fn tool_next_step(run_id: str) -> str {
+    if run_id == "" || run_exists(run_id) == 0 {
+        return "longrange_start"
+    }
+    if plan_status_ready(run_id) == 0 {
+        return "plan_create"
+    }
+    if all_steps_done(run_id) == 1 {
+        return "goal_complete"
+    }
+    if current_step_id(run_id) != "" {
+        return str.concat("execute_step:", current_step_id(run_id))
+    }
+    return "plan_update"
+}
+
+fn tool_guidance(run_id: str) -> str {
+    if run_id == "" || run_exists(run_id) == 0 {
+        return "Start a long-range run, then create a durable plan before attempting plan or completion tools."
+    }
+    let status = run_status(run_id)
+    if status == "completed" {
+        return "This run is already complete. Do not continue it; start a new run only if there is a new goal."
+    }
+    if status == "cancelled" {
+        return "This run was cancelled. Start a new run if work should resume."
+    }
+    if status == "failed" {
+        return "This run has already failed. Inspect the durable state and progress logs before retrying with a fresh run."
+    }
+    if plan_status_ready(run_id) == 0 {
+        return "Create the durable plan first. Include a goal summary, finished definition, current step, and ordered steps with statuses."
+    }
+    if all_steps_done(run_id) == 1 {
+        return "The durable plan shows all steps complete. If the finished definition is satisfied, call goal_complete with a concise completion summary."
+    }
+    let step_id = current_step_id(run_id)
+    let step_title = current_step_title(run_id)
+    let step_type = current_step_type(run_id)
+    let outlook = current_step_outlook(run_id)
+    if step_id == "" {
+        return "The plan is ready but no current step is set. Use plan_update to set current_step_id and mark the next step clearly."
+    }
+    return str.concat(
+        "Continue the current step ",
+        str.concat(
+            step_id,
+            str.concat(
+                " (",
+                str.concat(
+                    step_title,
+                    str.concat(
+                        "). Step type: ",
+                        str.concat(step_type, str.concat(". Outlook: ", outlook)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+fn tool_success_guidance(tool: str, run_id: str) -> str {
+    if tool == "longrange_start" {
+        return "Long-range mode is active. Create the durable plan next before attempting deep execution."
+    }
+    if tool == "longrange_cancel" {
+        return "Do not continue this run. Start a new long-range run only if you need to resume work under a new execution lifecycle."
+    }
+    if tool == "longrange_steer" {
+        return "Incorporate the queued steering message on the next autonomous turn, then continue the current durable step."
+    }
+    if tool == "plan_create" {
+        return "The durable plan is ready. Move into real execution on the current step and use plan_update only when the durable plan truly changes."
+    }
+    if tool == "plan_update" {
+        if all_steps_done(run_id) == 1 {
+            return "The durable plan now appears complete. If the finished definition is satisfied, finish with goal_complete instead of more plan narration."
+        }
+        return "The durable plan is updated. Continue real work on the current step and only update the plan again when step status or structure changes."
+    }
+    if tool == "plan_view" || tool == "longrange_status" {
+        return tool_guidance(run_id)
+    }
+    if tool == "goal_complete" {
+        return "The goal is complete. Stop autonomous continuation and do not enqueue more work for this run."
+    }
+    return tool_guidance(run_id)
+}
+
+fn tool_error_guidance(tool: str, run_id: str, message: str) -> str {
+    if message == "goal is required" {
+        return "Retry longrange_start with the literal goal text that defines what finished looks like."
+    }
+    if message == "message is required" {
+        return "Retry longrange_steer with the actual steering instruction to inject into the active run."
+    }
+    if message == "summary is required" {
+        return "Retry goal_complete with a concise completion summary that states what was actually achieved."
+    }
+    if message == "no active long-range run found" {
+        return "Start or recover a long-range run before retrying this tool."
+    }
+    if tool == "goal_complete" {
+        return str.concat(message, str.concat(" Next: ", tool_guidance(run_id)))
+    }
+    if run_id != "" && run_exists(run_id) == 1 {
+        return tool_guidance(run_id)
+    }
+    return "Inspect the tool inputs, then retry with the missing run or required arguments corrected."
 }
 
 fn finished_definition(run_id: str) -> str {
-    return plan_finished_definition(json.parse(load_plan_json(run_id)))
+    return quoted_json_field(load_plan_json(run_id), "finished_definition")
 }
 
 fn difficulty(run_id: str) -> str {
@@ -731,6 +3252,10 @@ fn difficulty(run_id: str) -> str {
 
 fn estimated_effort(run_id: str) -> str {
     return plan_estimated_effort(json.parse(load_plan_json(run_id)))
+}
+
+fn expected_total_turns_text(run_id: str) -> str {
+    return str.from_i32(expected_total_turns(run_id))
 }
 
 fn prompt_context(session_id: str) -> str {
@@ -746,7 +3271,15 @@ fn prompt_context(session_id: str) -> str {
     out = str.concat(out, str.concat("run_id: ", run_id))
     out = str.concat(out, str.concat("\nrun_status: ", state_status(state_parsed)))
     out = str.concat(out, str.concat("\nplan_status: ", state_plan_status(state_parsed)))
+    out = str.concat(out, str.concat("\ntask_class: ", task_class(run_id)))
+    out = str.concat(out, str.concat("\nexecution_outlook: ", execution_outlook(run_id)))
+    out = str.concat(out, str.concat("\nplanning_style: ", planning_style(run_id)))
+    out = str.concat(out, str.concat("\nexpected_total_turns: ", expected_total_turns_text(run_id)))
     out = str.concat(out, str.concat("\ncurrent_step: ", current_step_id(run_id)))
+    out = str.concat(out, str.concat("\ncurrent_step_type: ", current_step_type(run_id)))
+    out = str.concat(out, str.concat("\nevidence_mode: ", current_step_evidence_mode(run_id)))
+    out = str.concat(out, str.concat("\ncurrent_step_outlook: ", current_step_outlook(run_id)))
+    out = str.concat(out, str.concat("\ncurrent_step_target_turns: ", str.from_i32(current_step_target_turns(run_id))))
     out = str.concat(out, str.concat("\ngoal_summary: ", plan_goal_summary(plan_parsed)))
     out = str.concat(out, str.concat("\nfinished_definition: ", plan_finished_definition(plan_parsed)))
     out = str.concat(out, str.concat("\nplan_summary: ", plan_summary_value(plan_parsed)))

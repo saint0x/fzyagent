@@ -40,7 +40,7 @@ fn main() -> i32 {
         discard cli.boot()
         return cli.print_help()
     }
-    if mode == "chat" {
+    if mode == "chat" || mode == "longrange-start" {
         return boot_chat_mode()
     }
     let exit_code = boot_server_mode()

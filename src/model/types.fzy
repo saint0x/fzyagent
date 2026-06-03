@@ -149,11 +149,11 @@ fn control_status_label(status: ControlStatus) -> str {
 }
 
 fn control_ok_label() -> str {
-    return control_status_label(ControlStatus::ControlOk)
+    return "ok"
 }
 
 fn control_error_label() -> str {
-    return control_status_label(ControlStatus::ControlError)
+    return "error"
 }
 
 fn control_ok_status() -> ControlStatus {
@@ -318,47 +318,47 @@ fn control_status_text(status: ControlStatus) -> str {
 }
 
 fn session_doc_json(session_id: str, state: str, turn_count: str, last_run_id: str, last_user_message: str, last_assistant_message: str, last_request_id: str, tool_count: str, meta_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str(control_ok_label()))
-    discard map.set(payload, "session_id", json.str(session_id))
-    discard map.set(payload, "state", json.str(state))
-    discard map.set(payload, "turn_count", json.str(turn_count))
-    discard map.set(payload, "last_run_id", json.str(last_run_id))
-    discard map.set(payload, "last_request_id", json.str(last_request_id))
-    discard map.set(payload, "last_user_message", json.str(last_user_message))
-    discard map.set(payload, "last_assistant_message", json.str(last_assistant_message))
-    discard map.set(payload, "tool_count", json.str(tool_count))
-    discard map.set(payload, "meta", json.raw(meta_json))
-    return json.object(payload)
+    let mut payload = "{\"status\":"
+    payload = str.concat(payload, json.str(control_ok_label()))
+    payload = str.concat(payload, str.concat(",\"session_id\":", json.str(session_id)))
+    payload = str.concat(payload, str.concat(",\"state\":", json.str(state)))
+    payload = str.concat(payload, str.concat(",\"turn_count\":", json.str(turn_count)))
+    payload = str.concat(payload, str.concat(",\"last_run_id\":", json.str(last_run_id)))
+    payload = str.concat(payload, str.concat(",\"last_request_id\":", json.str(last_request_id)))
+    payload = str.concat(payload, str.concat(",\"last_user_message\":", json.str(last_user_message)))
+    payload = str.concat(payload, str.concat(",\"last_assistant_message\":", json.str(last_assistant_message)))
+    payload = str.concat(payload, str.concat(",\"tool_count\":", json.str(tool_count)))
+    payload = str.concat(payload, str.concat(",\"meta\":", meta_json))
+    return str.concat(payload, "}")
 }
 
 fn session_meta_json(updated_at: str, provider: str, model: str, history_path: str, runs_path: str) -> str {
-    return apputil.json_obj5(
-        "updated_at", json.str(updated_at),
-        "provider", json.str(provider),
-        "model", json.str(model),
-        "history_path", json.str(history_path),
-        "runs_path", json.str(runs_path),
-    )
+    let mut payload = "{\"updated_at\":"
+    payload = str.concat(payload, json.str(updated_at))
+    payload = str.concat(payload, str.concat(",\"provider\":", json.str(provider)))
+    payload = str.concat(payload, str.concat(",\"model\":", json.str(model)))
+    payload = str.concat(payload, str.concat(",\"history_path\":", json.str(history_path)))
+    payload = str.concat(payload, str.concat(",\"runs_path\":", json.str(runs_path)))
+    return str.concat(payload, "}")
 }
 
 fn session_index_json(session_id: str, state: str, updated_at: str, session_path: str) -> str {
-    let index = map.new()
-    discard map.set(index, "status", json.str(control_ok_label()))
-    discard map.set(index, "active_session_id", json.str(session_id))
-    discard map.set(index, "state", json.str(state))
-    discard map.set(index, "updated_at", json.str(updated_at))
-    discard map.set(index, "session_path", json.str(session_path))
-    return json.object(index)
+    let mut payload = "{\"status\":"
+    payload = str.concat(payload, json.str(control_ok_label()))
+    payload = str.concat(payload, str.concat(",\"active_session_id\":", json.str(session_id)))
+    payload = str.concat(payload, str.concat(",\"state\":", json.str(state)))
+    payload = str.concat(payload, str.concat(",\"updated_at\":", json.str(updated_at)))
+    payload = str.concat(payload, str.concat(",\"session_path\":", json.str(session_path)))
+    return str.concat(payload, "}")
 }
 
 fn session_event_json(event: str, state: str, turn_count: str, recorded_at: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "event", json.str(event))
-    discard map.set(payload, "state", json.str(state))
-    discard map.set(payload, "turn_count", json.str(turn_count))
-    discard map.set(payload, "recorded_at", json.str(recorded_at))
-    return json.object(payload)
+    let mut payload = "{\"event\":"
+    payload = str.concat(payload, json.str(event))
+    payload = str.concat(payload, str.concat(",\"state\":", json.str(state)))
+    payload = str.concat(payload, str.concat(",\"turn_count\":", json.str(turn_count)))
+    payload = str.concat(payload, str.concat(",\"recorded_at\":", json.str(recorded_at)))
+    return str.concat(payload, "}")
 }
 
 fn session_message_entry_json(session_id: str, role: str, kind: str, content: str, run_id: str, request_id: str, recorded_at: str) -> str {
@@ -407,26 +407,35 @@ fn message_turn_response_json(status: ControlStatus, session_id: str, request_id
     return apputil.json_obj4("status", json.str(control_status_text(status)), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(data_json))
 }
 
-fn provider_payload_json(provider: str, assistant: str, raw_response: str, tool_events_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "provider", json.str(provider))
-    discard map.set(payload, "assistant", json.str(assistant))
-    discard map.set(payload, "raw_response", json.str(raw_response))
-    discard map.set(payload, "tool_events", json.raw(tool_events_json))
-    return json.object(payload)
+fn message_turn_response_label_json(status_text: str, session_id: str, request_id: str, data_json: str) -> str {
+    return apputil.json_obj4("status", json.str(status_text), "session_id", json.str(session_id), "request_id", json.str(request_id), "data", json.raw(data_json))
 }
 
-fn longrange_step_json(step_id: str, title: str, description: str, status: str, done_criteria: str) -> str {
+fn provider_payload_json(provider: str, assistant: str, raw_response: str, tool_events_json: str) -> str {
+    let mut payload = "{\"provider\":"
+    payload = str.concat(payload, json.str(provider))
+    payload = str.concat(payload, str.concat(",\"assistant\":", json.str(assistant)))
+    payload = str.concat(payload, str.concat(",\"raw_response\":", json.str(raw_response)))
+    payload = str.concat(payload, str.concat(",\"tool_events\":", tool_events_json))
+    return str.concat(payload, "}")
+}
+
+fn longrange_step_json(step_id: str, title: str, description: str, status: str, done_criteria: str, step_type: str, evidence_mode: str, completion_signal: str, step_outlook: str, target_turns: str) -> str {
     let payload = map.new()
     discard map.set(payload, "step_id", json.str(step_id))
     discard map.set(payload, "title", json.str(title))
     discard map.set(payload, "description", json.str(description))
     discard map.set(payload, "status", json.str(status))
     discard map.set(payload, "done_criteria", json.str(done_criteria))
+    discard map.set(payload, "step_type", json.str(step_type))
+    discard map.set(payload, "evidence_mode", json.str(evidence_mode))
+    discard map.set(payload, "completion_signal", json.str(completion_signal))
+    discard map.set(payload, "step_outlook", json.str(step_outlook))
+    discard map.set(payload, "target_turns", json.str(target_turns))
     return json.object(payload)
 }
 
-fn longrange_plan_json(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, updated_at: str) -> str {
+fn longrange_plan_json(run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, updated_at: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> str {
     let payload = map.new()
     discard map.set(payload, "status", json.str(control_ok_label()))
     discard map.set(payload, "run_id", json.str(run_id))
@@ -434,8 +443,13 @@ fn longrange_plan_json(run_id: str, goal_summary: str, finished_definition: str,
     discard map.set(payload, "finished_definition", json.str(finished_definition))
     discard map.set(payload, "difficulty", json.str(difficulty))
     discard map.set(payload, "estimated_effort", json.str(estimated_effort))
+    discard map.set(payload, "task_class", json.str(task_class))
+    discard map.set(payload, "completion_mode", json.str(completion_mode))
+    discard map.set(payload, "expected_total_turns", json.str(expected_total_turns))
+    discard map.set(payload, "execution_outlook", json.str(execution_outlook))
+    discard map.set(payload, "planning_style", json.str(planning_style))
     discard map.set(payload, "plan_summary", json.str(plan_summary))
-    discard map.set(payload, "steps", json.raw(steps_json))
+    discard map.set(payload, "steps", json.raw(if steps_json == "" { "[]" } else { steps_json }))
     discard map.set(payload, "updated_at", json.str(updated_at))
     if current_step_id != "" {
         discard map.set(payload, "current_step_id", json.str(current_step_id))
@@ -443,73 +457,83 @@ fn longrange_plan_json(run_id: str, goal_summary: str, finished_definition: str,
     return json.object(payload)
 }
 
-fn longrange_run_state_json(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, auto_continue_pending: str, active_message_kind: str, latest_summary: str, created_at: str, updated_at: str, completed_at: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str(control_ok_label()))
-    discard map.set(payload, "run_id", json.str(run_id))
-    discard map.set(payload, "session_id", json.str(session_id))
-    discard map.set(payload, "goal", json.str(goal))
-    discard map.set(payload, "run_status", json.str(status))
-    discard map.set(payload, "plan_status", json.str(plan_status))
-    discard map.set(payload, "turns_completed", json.str(turns_completed))
-    discard map.set(payload, "failure_count", json.str(failure_count))
-    discard map.set(payload, "auto_continue_pending", json.str(auto_continue_pending))
-    discard map.set(payload, "active_message_kind", json.str(active_message_kind))
-    discard map.set(payload, "latest_summary", json.str(latest_summary))
-    discard map.set(payload, "created_at", json.str(created_at))
-    discard map.set(payload, "updated_at", json.str(updated_at))
+fn longrange_run_state_json(run_id: str, session_id: str, goal: str, status: str, plan_status: str, current_step_id: str, last_request_id: str, turns_completed: str, failure_count: str, auto_continue_pending: str, active_message_kind: str, latest_summary: str, created_at: str, updated_at: str, completed_at: str, task_class: str, last_progress_score: str, consecutive_low_score: str, last_evidence_count: str, completed_step_count: str) -> str {
+    let mut payload = "{\"status\":"
+    payload = str.concat(payload, json.str(control_ok_label()))
+    payload = str.concat(payload, str.concat(",\"run_id\":", json.str(run_id)))
+    payload = str.concat(payload, str.concat(",\"session_id\":", json.str(session_id)))
+    payload = str.concat(payload, str.concat(",\"goal\":", json.str(goal)))
+    payload = str.concat(payload, str.concat(",\"run_status\":", json.str(status)))
+    payload = str.concat(payload, str.concat(",\"plan_status\":", json.str(plan_status)))
+    payload = str.concat(payload, str.concat(",\"task_class\":", json.str(task_class)))
+    payload = str.concat(payload, str.concat(",\"turns_completed\":", json.str(turns_completed)))
+    payload = str.concat(payload, str.concat(",\"failure_count\":", json.str(failure_count)))
+    payload = str.concat(payload, str.concat(",\"last_progress_score\":", json.str(last_progress_score)))
+    payload = str.concat(payload, str.concat(",\"consecutive_low_score\":", json.str(consecutive_low_score)))
+    payload = str.concat(payload, str.concat(",\"last_evidence_count\":", json.str(last_evidence_count)))
+    payload = str.concat(payload, str.concat(",\"completed_step_count\":", json.str(completed_step_count)))
+    payload = str.concat(payload, str.concat(",\"auto_continue_pending\":", json.str(auto_continue_pending)))
+    payload = str.concat(payload, str.concat(",\"active_message_kind\":", json.str(active_message_kind)))
+    payload = str.concat(payload, str.concat(",\"latest_summary\":", json.str(latest_summary)))
+    payload = str.concat(payload, str.concat(",\"created_at\":", json.str(created_at)))
+    payload = str.concat(payload, str.concat(",\"updated_at\":", json.str(updated_at)))
     if current_step_id != "" {
-        discard map.set(payload, "current_step_id", json.str(current_step_id))
+        payload = str.concat(payload, str.concat(",\"current_step_id\":", json.str(current_step_id)))
     }
     if last_request_id != "" {
-        discard map.set(payload, "last_request_id", json.str(last_request_id))
+        payload = str.concat(payload, str.concat(",\"last_request_id\":", json.str(last_request_id)))
     }
     if completed_at != "" {
-        discard map.set(payload, "completed_at", json.str(completed_at))
+        payload = str.concat(payload, str.concat(",\"completed_at\":", json.str(completed_at)))
     }
-    return json.object(payload)
+    return str.concat(payload, "}")
 }
 
-fn longrange_progress_event_json(run_id: str, phase: str, message_kind: str, request_id: str, detail: str, recorded_at: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "run_id", json.str(run_id))
-    discard map.set(payload, "phase", json.str(phase))
-    discard map.set(payload, "message_kind", json.str(message_kind))
-    discard map.set(payload, "recorded_at", json.str(recorded_at))
+fn longrange_progress_event_json(run_id: str, phase: str, message_kind: str, request_id: str, detail: str, recorded_at: str, progress_score: str, evidence_count: str) -> str {
+    let mut payload = "{\"run_id\":"
+    payload = str.concat(payload, json.str(run_id))
+    payload = str.concat(payload, str.concat(",\"phase\":", json.str(phase)))
+    payload = str.concat(payload, str.concat(",\"message_kind\":", json.str(message_kind)))
+    payload = str.concat(payload, str.concat(",\"recorded_at\":", json.str(recorded_at)))
+    payload = str.concat(payload, str.concat(",\"progress_score\":", json.str(progress_score)))
+    payload = str.concat(payload, str.concat(",\"evidence_count\":", json.str(evidence_count)))
     if request_id != "" {
-        discard map.set(payload, "request_id", json.str(request_id))
+        payload = str.concat(payload, str.concat(",\"request_id\":", json.str(request_id)))
     }
     if detail != "" {
-        discard map.set(payload, "detail", json.str(detail))
+        payload = str.concat(payload, str.concat(",\"detail\":", json.str(detail)))
     }
-    return json.object(payload)
+    return str.concat(payload, "}")
 }
 
 fn longrange_message_json(kind: str, content: str, request_id: str, created_at: str, interrupt: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "kind", json.str(kind))
-    discard map.set(payload, "content", json.str(content))
-    discard map.set(payload, "created_at", json.str(created_at))
-    discard map.set(payload, "interrupt", json.str(interrupt))
+    let mut payload = "{\"kind\":"
+    payload = str.concat(payload, json.str(kind))
+    payload = str.concat(payload, str.concat(",\"content\":", json.str(content)))
+    payload = str.concat(payload, str.concat(",\"created_at\":", json.str(created_at)))
+    payload = str.concat(payload, str.concat(",\"interrupt\":", json.str(interrupt)))
     if request_id != "" {
-        discard map.set(payload, "request_id", json.str(request_id))
+        payload = str.concat(payload, str.concat(",\"request_id\":", json.str(request_id)))
     }
-    return json.object(payload)
+    return str.concat(payload, "}")
 }
 
 fn longrange_summary_json(active_runs: str, completed_runs: str, failed_runs: str, cancelled_runs: str, latest_run_id: str, latest_status: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str(control_ok_label()))
-    discard map.set(payload, "active_runs", json.str(active_runs))
-    discard map.set(payload, "completed_runs", json.str(completed_runs))
-    discard map.set(payload, "failed_runs", json.str(failed_runs))
-    discard map.set(payload, "cancelled_runs", json.str(cancelled_runs))
-    discard map.set(payload, "latest_run_id", json.str(latest_run_id))
-    discard map.set(payload, "latest_status", json.str(latest_status))
-    return json.object(payload)
+    let mut payload = "{\"status\":"
+    payload = str.concat(payload, json.str(control_ok_label()))
+    payload = str.concat(payload, str.concat(",\"active_runs\":", json.str(active_runs)))
+    payload = str.concat(payload, str.concat(",\"completed_runs\":", json.str(completed_runs)))
+    payload = str.concat(payload, str.concat(",\"failed_runs\":", json.str(failed_runs)))
+    payload = str.concat(payload, str.concat(",\"cancelled_runs\":", json.str(cancelled_runs)))
+    payload = str.concat(payload, str.concat(",\"latest_run_id\":", json.str(latest_run_id)))
+    payload = str.concat(payload, str.concat(",\"latest_status\":", json.str(latest_status)))
+    return str.concat(payload, "}")
 }
 
-fn longrange_tool_payload_json(tool: str, status: str, run_id: str, message: str, state_json: str, plan_json: str, summary_json: str, queue_depth: str) -> str {
+fn longrange_tool_payload_json(tool: str, status: str, run_id: str, message: str, guidance: str, next_step: str, state_json: str, plan_json: str, summary_json: str, queue_depth: str) -> str {
+    let state_trimmed = str.trim(state_json)
+    let plan_trimmed = str.trim(plan_json)
+    let summary_trimmed = str.trim(summary_json)
     let payload = map.new()
     discard map.set(payload, "tool", json.str(tool))
     discard map.set(payload, "status", json.str(status))
@@ -519,14 +543,20 @@ fn longrange_tool_payload_json(tool: str, status: str, run_id: str, message: str
     if message != "" {
         discard map.set(payload, "message", json.str(message))
     }
-    if state_json != "" {
-        discard map.set(payload, "state", json.raw(state_json))
+    if guidance != "" {
+        discard map.set(payload, "guidance", json.str(guidance))
     }
-    if plan_json != "" {
-        discard map.set(payload, "plan", json.raw(plan_json))
+    if next_step != "" {
+        discard map.set(payload, "next_step", json.str(next_step))
     }
-    if summary_json != "" {
-        discard map.set(payload, "summary", json.raw(summary_json))
+    if state_trimmed != "" && str.slice(state_trimmed, 0, 1) == "{" && str.slice(state_trimmed, str.len(state_trimmed) - 1, str.len(state_trimmed)) == "}" {
+        discard map.set(payload, "state", json.raw(state_trimmed))
+    }
+    if plan_trimmed != "" && str.slice(plan_trimmed, 0, 1) == "{" && str.slice(plan_trimmed, str.len(plan_trimmed) - 1, str.len(plan_trimmed)) == "}" {
+        discard map.set(payload, "plan", json.raw(plan_trimmed))
+    }
+    if summary_trimmed != "" && str.slice(summary_trimmed, 0, 1) == "{" && str.slice(summary_trimmed, str.len(summary_trimmed) - 1, str.len(summary_trimmed)) == "}" {
+        discard map.set(payload, "summary", json.raw(summary_trimmed))
     }
     if queue_depth != "" {
         discard map.set(payload, "queue_depth", json.str(queue_depth))
@@ -550,30 +580,39 @@ fn api_event_tool_id_json(event: str, tool_id: str) -> str {
     )
 }
 
-fn turn_result_json(status: ControlStatus, provider: str, assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str, message: str, transport_error: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "status", json.str(control_status_text(status)))
-    discard map.set(payload, "provider", json.str(provider))
+fn turn_result_json(status: ControlStatus, provider: str, assistant_text: str, raw_response: str, stop_reason: str, tool_events_json: str, http_status: str, message: str, transport_error: str, result_kind: str, control_tool: str, control_outcome: str) -> str {
+    let mut payload = "{\"status\":"
+    payload = str.concat(payload, json.str(control_status_text(status)))
+    payload = str.concat(payload, str.concat(",\"provider\":", json.str(provider)))
     if http_status != "" {
-        discard map.set(payload, "http_status", json.str(http_status))
+        payload = str.concat(payload, str.concat(",\"http_status\":", json.str(http_status)))
     }
     if assistant_text != "" {
-        discard map.set(payload, "assistant", json.str(assistant_text))
+        payload = str.concat(payload, str.concat(",\"assistant\":", json.str(assistant_text)))
     }
     if raw_response != "" {
-        discard map.set(payload, "raw_response", json.str(raw_response))
+        payload = str.concat(payload, str.concat(",\"raw_response\":", json.str(raw_response)))
     }
     if stop_reason != "" {
-        discard map.set(payload, "stop_reason", json.str(stop_reason))
+        payload = str.concat(payload, str.concat(",\"stop_reason\":", json.str(stop_reason)))
     }
     if message != "" {
-        discard map.set(payload, "message", json.str(message))
+        payload = str.concat(payload, str.concat(",\"message\":", json.str(message)))
     }
     if transport_error != "" {
-        discard map.set(payload, "transport_error", json.str(transport_error))
+        payload = str.concat(payload, str.concat(",\"transport_error\":", json.str(transport_error)))
     }
-    discard map.set(payload, "tool_events", json.raw(tool_events_json))
-    return json.object(payload)
+    if result_kind != "" {
+        payload = str.concat(payload, str.concat(",\"result_kind\":", json.str(result_kind)))
+    }
+    if control_tool != "" {
+        payload = str.concat(payload, str.concat(",\"control_tool\":", json.str(control_tool)))
+    }
+    if control_outcome != "" {
+        payload = str.concat(payload, str.concat(",\"control_outcome\":", json.str(control_outcome)))
+    }
+    payload = str.concat(payload, str.concat(",\"tool_events\":", tool_events_json))
+    return str.concat(payload, "}")
 }
 
 fn health_payload_json(service: str, provider: str, model: str) -> str {
@@ -724,22 +763,23 @@ fn registry_tool_json(tool_id: str, description: str, kind: str, health: str, mo
 }
 
 fn provider_tool_json(tool_id: str, description: str, input_schema_json: str) -> str {
-    let payload = map.new()
-    discard map.set(payload, "name", json.str(tool_id))
-    discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "input_schema", json.raw(input_schema_json))
-    return json.object(payload)
+    let mut payload = "{\"name\":"
+    payload = str.concat(payload, json.str(tool_id))
+    payload = str.concat(payload, str.concat(",\"description\":", json.str(description)))
+    payload = str.concat(payload, str.concat(",\"input_schema\":", input_schema_json))
+    return str.concat(payload, "}")
 }
 
 fn provider_tool_json_openai(tool_id: str, description: str, input_schema_json: str) -> str {
-    let function_payload = map.new()
-    discard map.set(function_payload, "name", json.str(tool_id))
-    discard map.set(function_payload, "description", json.str(description))
-    discard map.set(function_payload, "parameters", json.raw(input_schema_json))
-    let payload = map.new()
-    discard map.set(payload, "type", json.str("function"))
-    discard map.set(payload, "function", json.raw(json.object(function_payload)))
-    return json.object(payload)
+    let mut function_payload = "{\"name\":"
+    function_payload = str.concat(function_payload, json.str(tool_id))
+    function_payload = str.concat(function_payload, str.concat(",\"description\":", json.str(description)))
+    function_payload = str.concat(function_payload, str.concat(",\"parameters\":", input_schema_json))
+    function_payload = str.concat(function_payload, "}")
+    let mut payload = "{\"type\":"
+    payload = str.concat(payload, json.str("function"))
+    payload = str.concat(payload, str.concat(",\"function\":", function_payload))
+    return str.concat(payload, "}")
 }
 
 fn registry_payload_json(tools_json: str, meta_json: str) -> str {

@@ -14,6 +14,7 @@ mod persistence;
 mod chaos;
 mod safety;
 mod longrange;
+mod sqlite_store;
 
 use core.log;
 use registry.list_tools as list_tools_alias;
@@ -23,6 +24,7 @@ pub use telemetry.boot_metrics;
 fn boot_all() -> i32 {
     log.info("services.boot_all begin", apputil.log_fields2("component", "services", "phase", "boot_begin"))
     discard store.init()
+    discard sqlite_store.boot()
     discard web.boot()
     discard sessions.boot()
     discard longrange.boot()
@@ -47,6 +49,7 @@ fn boot_all() -> i32 {
 
 fn boot_chat() -> i32 {
     discard store.init()
+    discard sqlite_store.boot()
     discard sessions.boot()
     discard longrange.boot()
     discard registry.load_builtin()

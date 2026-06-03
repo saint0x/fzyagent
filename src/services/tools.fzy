@@ -1660,6 +1660,8 @@ fn longrange_tool_payload(tool: str, run_id: str, message: str) -> str {
         model.types.control_ok_label(),
         run_id,
         message,
+        if run_id == "" { "" } else { services.longrange.tool_success_guidance(tool, run_id) },
+        if run_id == "" { "" } else { services.longrange.tool_next_step(run_id) },
         if run_id == "" { "" } else { services.longrange.load_state_json(run_id) },
         if run_id == "" { "" } else { services.longrange.load_plan_json(run_id) },
         services.longrange.summary_json(),
@@ -1667,18 +1669,33 @@ fn longrange_tool_payload(tool: str, run_id: str, message: str) -> str {
     )
 }
 
-fn longrange_error_payload(tool: str, message: str) -> str {
-    return model.types.longrange_tool_payload_json(tool, model.types.control_error_label(), "", message, "", "", services.longrange.summary_json(), "0")
+fn longrange_error_payload(tool: str, run_id: str, message: str) -> str {
+    return model.types.longrange_tool_payload_json(
+        tool,
+        model.types.control_error_label(),
+        run_id,
+        message,
+        services.longrange.tool_error_guidance(tool, run_id, message),
+        if run_id == "" { "longrange_start" } else { services.longrange.tool_next_step(run_id) },
+        if run_id == "" { "" } else { services.longrange.load_state_json(run_id) },
+        if run_id == "" { "" } else { services.longrange.load_plan_json(run_id) },
+        services.longrange.summary_json(),
+        if run_id == "" { "0" } else { str.from_i32(services.longrange.queue_depth_for(run_id)) },
+    )
 }
 
 fn run_longrange_start(session_id: str, goal: str) -> i32 {
     discard services.longrange.boot()
     if goal == "" {
-        fs.write_file(longrange_start_run_path(), longrange_error_payload("longrange_start", "goal is required"))
+        fs.write_file(longrange_start_run_path(), longrange_error_payload("longrange_start", "", "goal is required"))
         return 13
     }
     let effective_session_id = if session_id == "" { services.sessions.default_session_id() } else { session_id }
-    let run_id = services.longrange.create_run(effective_session_id, goal, str.concat("longrange-start-", str.from_i32(time.now())))
+    let run_id = services.longrange.create_run(effective_session_id, goal, services.longrange.fresh_label())
+    if run_id == "" {
+        fs.write_file(longrange_start_run_path(), longrange_error_payload("longrange_start", "", "long-range run could not be created"))
+        return 13
+    }
     discard runtime.longrange.kick()
     fs.write_file(longrange_start_run_path(), longrange_tool_payload("longrange_start", run_id, "long-range run started"))
     return 0
@@ -1688,7 +1705,7 @@ fn run_longrange_status(session_id: str, requested_run_id: str) -> i32 {
     discard services.longrange.boot()
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(longrange_status_run_path(), longrange_error_payload("longrange_status", "no active long-range run found"))
+        fs.write_file(longrange_status_run_path(), longrange_error_payload("longrange_status", "", "no active long-range run found"))
         return 13
     }
     fs.write_file(longrange_status_run_path(), longrange_tool_payload("longrange_status", run_id, "long-range run status"))
@@ -1699,10 +1716,10 @@ fn run_longrange_cancel(session_id: str, requested_run_id: str) -> i32 {
     discard services.longrange.boot()
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(longrange_cancel_run_path(), longrange_error_payload("longrange_cancel", "no active long-range run found"))
+        fs.write_file(longrange_cancel_run_path(), longrange_error_payload("longrange_cancel", "", "no active long-range run found"))
         return 13
     }
-    discard services.longrange.cancel_run(run_id, "cancelled by operator", str.concat("longrange-cancel-", str.from_i32(time.now())))
+    discard services.longrange.cancel_run(run_id, "cancelled by operator", services.longrange.fresh_label())
     fs.write_file(longrange_cancel_run_path(), longrange_tool_payload("longrange_cancel", run_id, "long-range run cancelled"))
     return 0
 }
@@ -1710,40 +1727,61 @@ fn run_longrange_cancel(session_id: str, requested_run_id: str) -> i32 {
 fn run_longrange_steer(session_id: str, requested_run_id: str, message: str, interrupt: str) -> i32 {
     discard services.longrange.boot()
     if message == "" {
-        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "message is required"))
+        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "", "message is required"))
         return 13
     }
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "no active long-range run found"))
+        fs.write_file(longrange_steer_run_path(), longrange_error_payload("longrange_steer", "", "no active long-range run found"))
         return 13
     }
-    discard services.longrange.enqueue_message(run_id, "steer", message, str.concat("longrange-steer-", str.from_i32(time.now())), if interrupt == "true" { 1 } else { 0 })
+    discard services.longrange.enqueue_message(run_id, "steer", message, services.longrange.fresh_label(), if interrupt == "true" { 1 } else { 0 })
     discard runtime.longrange.kick()
     fs.write_file(longrange_steer_run_path(), longrange_tool_payload("longrange_steer", run_id, "steering message queued"))
     return 0
 }
 
-fn run_plan_create(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+fn plan_write_input_json(finished_definition: str, difficulty: str, estimated_effort: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str, current_step_id: str, plan_summary: str, steps_json: str) -> str {
+    let payload = map.new()
+    discard map.set(payload, "finished_definition", json.str(finished_definition))
+    discard map.set(payload, "difficulty", json.str(difficulty))
+    discard map.set(payload, "estimated_effort", json.str(estimated_effort))
+    discard map.set(payload, "task_class", json.str(task_class))
+    discard map.set(payload, "completion_mode", json.str(completion_mode))
+    discard map.set(payload, "expected_total_turns", json.str(expected_total_turns))
+    discard map.set(payload, "execution_outlook", json.str(execution_outlook))
+    discard map.set(payload, "planning_style", json.str(planning_style))
+    discard map.set(payload, "current_step_id", json.str(current_step_id))
+    discard map.set(payload, "plan_summary", json.str(plan_summary))
+    discard map.set(payload, "steps", json.raw(if steps_json == "" { "[]" } else { steps_json }))
+    return json.object(payload)
+}
+
+fn run_plan_create(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> i32 {
     discard services.longrange.boot()
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(plan_create_run_path(), longrange_error_payload("plan_create", "no active long-range run found"))
+        fs.write_file(plan_create_run_path(), longrange_error_payload("plan_create", "", "no active long-range run found"))
         return 13
     }
-    discard services.longrange.apply_plan_create(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, str.concat("plan-create-", str.from_i32(time.now())))
+    if services.longrange.plan_status_ready(run_id) == 1 {
+        discard services.longrange.apply_plan_update(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, services.longrange.fresh_label(), task_class, completion_mode, expected_total_turns, execution_outlook, planning_style)
+        fs.write_file(plan_create_run_path(), longrange_tool_payload("plan_create", run_id, "plan already existed; normalized to plan update"))
+        return 0
+    }
+    discard services.longrange.apply_plan_create(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, services.longrange.fresh_label(), task_class, completion_mode, expected_total_turns, execution_outlook, planning_style)
     fs.write_file(plan_create_run_path(), longrange_tool_payload("plan_create", run_id, "plan created"))
     return 0
 }
 
-fn run_plan_update(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str) -> i32 {
+fn run_plan_update(session_id: str, requested_run_id: str, goal_summary: str, finished_definition: str, difficulty: str, estimated_effort: str, current_step_id: str, plan_summary: str, steps_json: str, task_class: str, completion_mode: str, expected_total_turns: str, execution_outlook: str, planning_style: str) -> i32 {
     discard services.longrange.boot()
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(plan_update_run_path(), longrange_error_payload("plan_update", "no active long-range run found"))
+        fs.write_file(plan_update_run_path(), longrange_error_payload("plan_update", "", "no active long-range run found"))
         return 13
     }
-    discard services.longrange.apply_plan_update(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, str.concat("plan-update-", str.from_i32(time.now())))
+    discard services.longrange.apply_plan_update(run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, services.longrange.fresh_label(), task_class, completion_mode, expected_total_turns, execution_outlook, planning_style)
     fs.write_file(plan_update_run_path(), longrange_tool_payload("plan_update", run_id, "plan updated"))
     return 0
 }
@@ -1752,7 +1790,7 @@ fn run_plan_view(session_id: str, requested_run_id: str) -> i32 {
     discard services.longrange.boot()
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(plan_view_run_path(), longrange_error_payload("plan_view", "no active long-range run found"))
+        fs.write_file(plan_view_run_path(), longrange_error_payload("plan_view", "", "no active long-range run found"))
         return 13
     }
     fs.write_file(plan_view_run_path(), longrange_tool_payload("plan_view", run_id, "plan view"))
@@ -1762,15 +1800,19 @@ fn run_plan_view(session_id: str, requested_run_id: str) -> i32 {
 fn run_goal_complete(session_id: str, requested_run_id: str, summary: str) -> i32 {
     discard services.longrange.boot()
     if summary == "" {
-        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "summary is required"))
+        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "", "summary is required"))
         return 13
     }
     let run_id = resolve_longrange_run_id(session_id, requested_run_id)
     if run_id == "" || services.longrange.run_exists(run_id) == 0 {
-        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "no active long-range run found"))
+        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", "", "no active long-range run found"))
         return 13
     }
-    discard services.longrange.mark_completed(run_id, summary, str.concat("goal-complete-", str.from_i32(time.now())))
+    if services.longrange.allow_goal_complete(run_id, summary) == 0 {
+        fs.write_file(goal_complete_run_path(), longrange_error_payload("goal_complete", run_id, services.longrange.goal_complete_block_reason(run_id, summary)))
+        return 13
+    }
+    discard services.longrange.mark_completed(run_id, summary, services.longrange.fresh_label())
     fs.write_file(goal_complete_run_path(), longrange_tool_payload("goal_complete", run_id, "goal marked complete"))
     return 0
 }
@@ -2042,6 +2084,11 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
     let finished_definition = field_with_input(parsed, strict_input, "finished_definition")
     let difficulty = field_with_input(parsed, strict_input, "difficulty")
     let estimated_effort = field_with_input(parsed, strict_input, "estimated_effort")
+    let task_class = field_with_input(parsed, strict_input, "task_class")
+    let completion_mode = field_with_input(parsed, strict_input, "completion_mode")
+    let expected_total_turns = field_with_input(parsed, strict_input, "expected_total_turns")
+    let execution_outlook = field_with_input(parsed, strict_input, "execution_outlook")
+    let planning_style = field_with_input(parsed, strict_input, "planning_style")
     let current_step_id = field_with_input(parsed, strict_input, "current_step_id")
     let plan_summary = field_with_input(parsed, strict_input, "plan_summary")
     let interrupt = field_with_input(parsed, strict_input, "interrupt")
@@ -2082,8 +2129,8 @@ fn dispatch_tool_request(tool_id: str, input_raw: str) -> i32 {
         DispatchKind::DispatchLongrangeStatus => return run_longrange_status(session_id, run_id),
         DispatchKind::DispatchLongrangeCancel => return run_longrange_cancel(session_id, run_id),
         DispatchKind::DispatchLongrangeSteer => return run_longrange_steer(session_id, run_id, message, interrupt),
-        DispatchKind::DispatchPlanCreate => return run_plan_create(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json),
-        DispatchKind::DispatchPlanUpdate => return run_plan_update(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json),
+        DispatchKind::DispatchPlanCreate => return run_plan_create(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, task_class, completion_mode, expected_total_turns, execution_outlook, planning_style),
+        DispatchKind::DispatchPlanUpdate => return run_plan_update(session_id, run_id, goal_summary, finished_definition, difficulty, estimated_effort, current_step_id, plan_summary, steps_json, task_class, completion_mode, expected_total_turns, execution_outlook, planning_style),
         DispatchKind::DispatchPlanView => return run_plan_view(session_id, run_id),
         DispatchKind::DispatchGoalComplete => return run_goal_complete(session_id, run_id, summary),
         DispatchKind::DispatchToolSequence => return run_tool_sequence(input_raw),
@@ -2131,6 +2178,11 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
     let finished_definition = field_with_input(parsed, strict_input, "finished_definition")
     let difficulty = field_with_input(parsed, strict_input, "difficulty")
     let estimated_effort = field_with_input(parsed, strict_input, "estimated_effort")
+    let task_class = field_with_input(parsed, strict_input, "task_class")
+    let completion_mode = field_with_input(parsed, strict_input, "completion_mode")
+    let expected_total_turns = field_with_input(parsed, strict_input, "expected_total_turns")
+    let execution_outlook = field_with_input(parsed, strict_input, "execution_outlook")
+    let planning_style = field_with_input(parsed, strict_input, "planning_style")
     let current_step_id = field_with_input(parsed, strict_input, "current_step_id")
     let plan_summary = field_with_input(parsed, strict_input, "plan_summary")
     let interrupt = field_with_input(parsed, strict_input, "interrupt")
@@ -2165,8 +2217,8 @@ fn dispatch_tool_request_isolated(tool_id: str, input_raw: str, out_path: str) -
         DispatchKind::DispatchLongrangeStatus => return dispatch_tool_request_copy("longrange_status", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
         DispatchKind::DispatchLongrangeCancel => return dispatch_tool_request_copy("longrange_cancel", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
         DispatchKind::DispatchLongrangeSteer => return dispatch_tool_request_copy("longrange_steer", apputil.json_obj5("session_id", json.str(session_id), "run_id", json.str(run_id), "message", json.str(message), "interrupt", json.str(interrupt), "input", json.raw("{}")), out_path),
-        DispatchKind::DispatchPlanCreate => return dispatch_tool_request_copy("plan_create", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(apputil.json_obj6("finished_definition", json.str(finished_definition), "difficulty", json.str(difficulty), "estimated_effort", json.str(estimated_effort), "current_step_id", json.str(current_step_id), "plan_summary", json.str(plan_summary), "steps", json.raw(if steps_json == "" { "[]" } else { steps_json })))), out_path),
-        DispatchKind::DispatchPlanUpdate => return dispatch_tool_request_copy("plan_update", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(apputil.json_obj6("finished_definition", json.str(finished_definition), "difficulty", json.str(difficulty), "estimated_effort", json.str(estimated_effort), "current_step_id", json.str(current_step_id), "plan_summary", json.str(plan_summary), "steps", json.raw(if steps_json == "" { "[]" } else { steps_json })))), out_path),
+        DispatchKind::DispatchPlanCreate => return dispatch_tool_request_copy("plan_create", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(plan_write_input_json(finished_definition, difficulty, estimated_effort, task_class, completion_mode, expected_total_turns, execution_outlook, planning_style, current_step_id, plan_summary, steps_json))), out_path),
+        DispatchKind::DispatchPlanUpdate => return dispatch_tool_request_copy("plan_update", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "goal_summary", json.str(goal_summary), "input", json.raw(plan_write_input_json(finished_definition, difficulty, estimated_effort, task_class, completion_mode, expected_total_turns, execution_outlook, planning_style, current_step_id, plan_summary, steps_json))), out_path),
         DispatchKind::DispatchPlanView => return dispatch_tool_request_copy("plan_view", apputil.json_obj3("session_id", json.str(session_id), "run_id", json.str(run_id), "input", json.raw("{}")), out_path),
         DispatchKind::DispatchGoalComplete => return dispatch_tool_request_copy("goal_complete", apputil.json_obj4("session_id", json.str(session_id), "run_id", json.str(run_id), "summary", json.str(summary), "input", json.raw("{}")), out_path),
         DispatchKind::DispatchCustom => return run_custom_tool_to(tool_id, if strict_input_raw == "" { input_raw } else { strict_input_raw }, out_path),
@@ -2206,7 +2258,7 @@ fn parallel_step_request_json(step_raw: str) -> str {
 }
 
 fn run_parallel_step_ctx() -> i32 {
-    let context_id = 0
+    let context_id = thread.context_id()
     let request_raw = safe_read(parallel_step_request_path(context_id))
     let step = json.parse(request_raw)
     let step_id = json.get_str(step, "step_id")

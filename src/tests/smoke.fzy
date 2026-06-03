@@ -81,8 +81,8 @@ test "det_longrange_control" {
     services.longrange.boot();
     let run_id = services.longrange.create_run("det-longrange", "Ship long-range mode", "det-longrange-start");
     services.longrange.enqueue_message(run_id, "steer", "keep going", "det-longrange-steer", 0);
-    services.longrange.apply_plan_create(run_id, "Ship long-range mode", "All required runtime, tools, and tests land", "high", "multi-turn", "step-1", "Build the runtime and verify it", "[{\"step_id\":\"step-1\",\"title\":\"Plan\",\"description\":\"Create the plan\",\"status\":\"in_progress\",\"done_criteria\":\"plan recorded\"}]", "det-plan-create");
-    services.longrange.apply_plan_update(run_id, "", "", "", "", "step-2", "Advance to implementation", "[{\"step_id\":\"step-2\",\"title\":\"Implement\",\"description\":\"Build the feature\",\"status\":\"in_progress\",\"done_criteria\":\"feature works\"}]", "det-plan-update");
+    services.longrange.apply_plan_create(run_id, "Ship long-range mode", "All required runtime, tools, and tests land", "high", "multi-turn", "step-1", "Build the runtime and verify it", "[{\"step_id\":\"step-1\",\"title\":\"Plan\",\"description\":\"Create the plan\",\"status\":\"in_progress\",\"done_criteria\":\"plan recorded\",\"step_type\":\"inspect\",\"evidence_mode\":\"summary\",\"completion_signal\":\"plan_update\",\"step_outlook\":\"map the work clearly\",\"target_turns\":\"2\"}]", "det-plan-create", "deep", "verified", "8", "iterative deep work with checkpoints", "deliberate");
+    services.longrange.apply_plan_update(run_id, "", "", "", "", "step-2", "Advance to implementation", "[{\"step_id\":\"step-2\",\"title\":\"Implement\",\"description\":\"Build the feature\",\"status\":\"in_progress\",\"done_criteria\":\"feature works\",\"step_type\":\"execute\",\"evidence_mode\":\"tool\",\"completion_signal\":\"plan_update_or_goal_complete\",\"step_outlook\":\"make real progress before narrating\",\"target_turns\":\"3\"}]", "det-plan-update", "", "", "", "", "");
     services.longrange.prompt_context("det-longrange");
     services.longrange.summary_json();
     services.longrange.cancel_run(run_id, "deterministic cleanup", "det-longrange-cancel");
