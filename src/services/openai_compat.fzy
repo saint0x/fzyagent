@@ -138,7 +138,7 @@ fn openai_tool_call_json(blocks: JsonHandle, idx: i32) -> str {
     let payload = map.new()
     discard map.set(payload, "id", json.str(internal_block_tool_id(blocks, idx)))
     discard map.set(payload, "type", json.str("function"))
-    discard map.set(payload, "function", json.raw(json.object(function_obj)))
+    discard map.set(payload, "function", apputil.json_object_value(function_obj))
     return json.object(payload)
 }
 
@@ -146,7 +146,7 @@ fn append_openai_tool_call(tool_calls: ListHandle, blocks: JsonHandle, idx: i32)
     if internal_block_type(blocks, idx) != "tool_use" {
         return 0
     }
-    discard list.push(tool_calls, json.raw(openai_tool_call_json(blocks, idx)))
+    discard list.push(tool_calls, apputil.json_value(openai_tool_call_json(blocks, idx)))
     return 0
 }
 
@@ -177,7 +177,7 @@ fn append_openai_user_message(out: ListHandle, content_text: str) -> i32 {
     let payload = map.new()
     discard map.set(payload, "role", json.str("user"))
     discard map.set(payload, "content", json.str(content_text))
-    discard list.push(out, json.raw(json.object(payload)))
+    discard list.push(out, apputil.json_object_value(payload))
     return 0
 }
 
@@ -195,9 +195,9 @@ fn append_openai_assistant_message(out: ListHandle, blocks: JsonHandle) -> i32 {
     let text = join_text_parts(text_parts)
     discard map.set(payload, "content", json.str(text))
     if list.len(tool_calls) > 0 {
-        discard map.set(payload, "tool_calls", json.raw(json.array(tool_calls)))
+        discard map.set(payload, "tool_calls", apputil.json_array_value(tool_calls))
     }
-    discard list.push(out, json.raw(json.object(payload)))
+    discard list.push(out, apputil.json_object_value(payload))
     return 0
 }
 
@@ -209,7 +209,7 @@ fn append_openai_tool_result_message(out: ListHandle, blocks: JsonHandle, idx: i
     discard map.set(payload, "role", json.str("tool"))
     discard map.set(payload, "tool_call_id", json.str(internal_block_tool_result_id(blocks, idx)))
     discard map.set(payload, "content", json.str(internal_block_tool_result_content(blocks, idx)))
-    discard list.push(out, json.raw(json.object(payload)))
+    discard list.push(out, apputil.json_object_value(payload))
     return 0
 }
 
@@ -224,7 +224,7 @@ fn append_openai_messages(out: ListHandle, messages: JsonHandle, idx: i32) -> i3
             let payload = map.new()
             discard map.set(payload, "role", json.str("assistant"))
             discard map.set(payload, "content", json.str(content_text))
-            discard list.push(out, json.raw(json.object(payload)))
+            discard list.push(out, apputil.json_object_value(payload))
             return 0
         }
         return append_openai_user_message(out, content_text)
@@ -246,7 +246,7 @@ fn openai_messages_json(messages_json: str, system_prompt: str) -> str {
     let system_message = map.new()
     discard map.set(system_message, "role", json.str("system"))
     discard map.set(system_message, "content", json.str(system_prompt))
-    discard list.push(items, json.raw(json.object(system_message)))
+    discard list.push(items, apputil.json_object_value(system_message))
     let parsed = json.parse(messages_json)
     let mut idx: i32 = 0
     while idx < max_message_window() {
@@ -259,11 +259,11 @@ fn openai_messages_json(messages_json: str, system_prompt: str) -> str {
 fn build_request_payload(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
     let payload = map.new()
     discard map.set(payload, "model", json.str(default_model_name()))
-    discard map.set(payload, "messages", json.raw(openai_messages_json(messages_json, system_prompt)))
-    discard map.set(payload, "tools", json.raw(tools_json))
+    discard map.set(payload, "messages", apputil.json_value_or(openai_messages_json(messages_json, system_prompt), "[]"))
+    discard map.set(payload, "tools", apputil.json_value_or(tools_json, "[]"))
     discard map.set(payload, "tool_choice", json.str("auto"))
-    discard map.set(payload, "stream", json.raw("false"))
-    discard map.set(payload, "max_tokens", json.raw(max_tokens))
+    discard map.set(payload, "stream", apputil.json_bool(0))
+    discard map.set(payload, "max_tokens", apputil.json_value(max_tokens))
     return json.object(payload)
 }
 
@@ -308,7 +308,7 @@ fn tool_use_block_json(parsed: JsonHandle, idx: str) -> str {
     discard map.set(payload, "type", json.str("tool_use"))
     discard map.set(payload, "id", json.str(tool_call_id(parsed, idx)))
     discard map.set(payload, "name", json.str(tool_call_name(parsed, idx)))
-    discard map.set(payload, "input", json.raw(tool_call_arguments(parsed, idx)))
+    discard map.set(payload, "input", apputil.json_value_or(tool_call_arguments(parsed, idx), "{}"))
     return json.object(payload)
 }
 
@@ -316,7 +316,7 @@ fn append_normalized_tool_block(items: ListHandle, parsed: JsonHandle, idx: str)
     if tool_call_id(parsed, idx) == "" {
         return 0
     }
-    discard list.push(items, json.raw(tool_use_block_json(parsed, idx)))
+    discard list.push(items, apputil.json_value(tool_use_block_json(parsed, idx)))
     return 0
 }
 
@@ -328,7 +328,7 @@ fn normalize_response(raw: str) -> str {
     let items = list.new()
     let content = message_content(parsed)
     if content != "" {
-        discard list.push(items, json.raw(apputil.json_obj2("type", json.str("text"), "text", json.str(content))))
+        discard list.push(items, apputil.json_value(apputil.json_obj2("type", json.str("text"), "text", json.str(content))))
     }
     let mut idx: i32 = 0
     while idx < max_content_blocks() {
@@ -338,29 +338,29 @@ fn normalize_response(raw: str) -> str {
     let payload = map.new()
     discard map.set(payload, "type", json.str("message"))
     discard map.set(payload, "role", json.str("assistant"))
-    discard map.set(payload, "content", json.raw(json.array(items)))
+    discard map.set(payload, "content", apputil.json_array_value(items))
     let finish = finish_reason(parsed)
     discard map.set(payload, "stop_reason", json.str(if finish == "tool_calls" { "tool_use" } else { finish }))
     return json.object(payload)
 }
 
 fn request_meta_json(resolved_endpoint: str, payload: str, messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
-    let mut meta = "{\"endpoint\":"
-    meta = str.concat(meta, json.str(resolved_endpoint))
-    meta = str.concat(meta, str.concat(",\"payload_chars\":", json.str(str.from_i32(str.len(payload)))))
-    meta = str.concat(meta, str.concat(",\"messages_chars\":", json.str(str.from_i32(str.len(messages_json)))))
-    meta = str.concat(meta, str.concat(",\"tools_chars\":", json.str(str.from_i32(str.len(tools_json)))))
-    meta = str.concat(meta, str.concat(",\"system_prompt_chars\":", json.str(str.from_i32(str.len(system_prompt)))))
-    meta = str.concat(meta, str.concat(",\"max_tokens\":", json.str(max_tokens)))
-    return str.concat(meta, "}")
+    let meta = map.new()
+    discard map.set(meta, "endpoint", json.str(resolved_endpoint))
+    discard map.set(meta, "payload_chars", json.str(str.from_i32(str.len(payload))))
+    discard map.set(meta, "messages_chars", json.str(str.from_i32(str.len(messages_json))))
+    discard map.set(meta, "tools_chars", json.str(str.from_i32(str.len(tools_json))))
+    discard map.set(meta, "system_prompt_chars", json.str(str.from_i32(str.len(system_prompt))))
+    discard map.set(meta, "max_tokens", json.str(max_tokens))
+    return json.object(meta)
 }
 
 fn response_meta_json(status: i32, error: str, raw: str) -> str {
-    let mut meta = "{\"status\":"
-    meta = str.concat(meta, json.str(str.from_i32(status)))
-    meta = str.concat(meta, str.concat(",\"error\":", json.str(error)))
-    meta = str.concat(meta, str.concat(",\"raw_chars\":", json.str(str.from_i32(str.len(raw)))))
-    return str.concat(meta, "}")
+    let meta = map.new()
+    discard map.set(meta, "status", json.str(str.from_i32(status)))
+    discard map.set(meta, "error", json.str(error))
+    discard map.set(meta, "raw_chars", json.str(str.from_i32(str.len(raw))))
+    return json.object(meta)
 }
 
 fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
@@ -368,11 +368,11 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     let resolved_endpoint = endpoint()
     let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent")
-        fs.mkdir("/tmp/fzyagent/provider.debug")
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/openai_compat.request.json", payload)
+        runtime.config.ensure_state_root()
+        fs.mkdir(runtime.config.state_subdir("provider.debug"))
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.request.json"), payload)
         discard fs.atomic_write(
-            "/tmp/fzyagent/provider.debug/openai_compat.request.meta.json",
+            apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.request.meta.json"),
             request_meta_json(resolved_endpoint, payload, messages_json, tools_json, system_prompt, max_tokens),
         )
         log.info(
@@ -384,11 +384,11 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     let status = http.last_status()
     let error = http.last_error()
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent")
-        fs.mkdir("/tmp/fzyagent/provider.debug")
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/openai_compat.response.raw", raw)
+        runtime.config.ensure_state_root()
+        fs.mkdir(runtime.config.state_subdir("provider.debug"))
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.response.raw"), raw)
         discard fs.atomic_write(
-            "/tmp/fzyagent/provider.debug/openai_compat.response.meta.json",
+            apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.response.meta.json"),
             response_meta_json(status, error, raw),
         )
         log.info(

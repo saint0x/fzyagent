@@ -1,7 +1,7 @@
 use core.fs;
 
 fn limits_path() -> str {
-    return "/tmp/fzyagent/runtime.limits.json"
+    return runtime.config.state_path("runtime.limits.json")
 }
 
 fn env_or(key: str, fallback: str) -> str {
@@ -29,7 +29,7 @@ fn limits_json() -> str {
 }
 
 fn apply_limits() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     fs.write_file(limits_path(), limits_json())
     return 0
 }

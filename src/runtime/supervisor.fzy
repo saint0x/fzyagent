@@ -2,11 +2,11 @@ use core.fs;
 use core.log;
 
 fn shutdown_signal_path() -> str {
-    return "/tmp/fzyagent/shutdown.signal"
+    return runtime.config.state_path("shutdown.signal")
 }
 
 fn supervisor_path() -> str {
-    return "/tmp/fzyagent/runtime.supervisor.json"
+    return runtime.config.state_path("runtime.supervisor.json")
 }
 
 fn supervisor_state_path() -> str {
@@ -34,7 +34,7 @@ fn refresh_state() -> i32 {
 
 fn configure_limits() -> i32 {
     log.info("runtime.supervisor configure_limits", apputil.log_fields2("component", "runtime.supervisor", "phase", "configure_limits"))
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     if fs.exists(shutdown_signal_path()) == 1 {
         discard fs.remove_file(shutdown_signal_path())
     }
@@ -46,7 +46,7 @@ fn configure_limits() -> i32 {
 }
 
 fn begin_shutdown() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     fs.write_file(shutdown_signal_path(), "requested")
     runtime.sandbox.deny_tool_scope()
     services.http.graceful_stop()

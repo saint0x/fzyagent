@@ -5,11 +5,11 @@ use core.term;
 use core.thread;
 
 fn active_prompt_path() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
+    return runtime.config.agent_system_prompt_path()
 }
 
 fn boot() -> i32 {
-    fs.mkdir("/Users/deepsaint/Desktop/fzyagent/config")
+    fs.mkdir(runtime.config.config_dir())
     if fs.exists(active_prompt_path()) == 0 {
         fs.write_file(active_prompt_path(), "You are the fzyagent runtime. Be concise, grounded, and tool-aware.\n")
     }

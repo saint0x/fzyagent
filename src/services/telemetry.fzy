@@ -2,11 +2,11 @@ use core.time;
 use core.fs;
 
 fn telemetry_path() -> str {
-    return "/tmp/fzyagent/telemetry.last.json"
+    return runtime.config.state_path("telemetry.last.json")
 }
 
 fn boot_metrics() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     discard time.now()
     let runtime = model.types.telemetry_runtime_json(env.get("AGENT_WORKERS"), env.get("AGENT_HOST"), env.get("AGENT_PORT"))
     let payload = model.types.telemetry_payload_json("boot_metrics", "ok", "sampled", runtime)

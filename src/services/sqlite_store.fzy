@@ -4,23 +4,23 @@ use core.proc;
 use core.time;
 
 fn db_dir() -> str {
-    return "/tmp/fzyagent"
+    return runtime.config.state_root()
 }
 
 fn error_dir() -> str {
-    return "/tmp/fzyagent/sqlite_errors"
+    return runtime.config.state_subdir("sqlite_errors")
 }
 
 fn mirror_dir() -> str {
-    return "/tmp/fzyagent/sqlite_mirror"
+    return runtime.config.state_subdir("sqlite_mirror")
 }
 
 pub fn db_path() -> str {
-    return "/tmp/fzyagent/runtime.sqlite3"
+    return runtime.config.state_path("runtime.sqlite3")
 }
 
 fn helper_path() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/scripts/sqlite_kv.py"
+    return apputil.path_join2(runtime.config.scripts_dir(), "sqlite_kv.py")
 }
 
 fn python_path() -> str {
@@ -76,9 +76,10 @@ fn helper_result_failed(op: str, exit_code: i32, stderr: str, stdout: str, detai
     payload = str.concat(payload, str.concat(" | stderr=", stderr))
     payload = str.concat(payload, str.concat(" | stdout=", stdout))
     payload = str.concat(payload, "\n")
-    let existing = if fs.exists("/tmp/fzyagent/sqlite_helper_errors.log") == 1 { fs.read_file("/tmp/fzyagent/sqlite_helper_errors.log") } else { "" }
-    discard fs.write_file("/tmp/fzyagent/sqlite_helper_errors.log", str.concat(existing, payload))
-    discard fs.write_file("/tmp/fzyagent/sqlite_helper_last_failure.txt", payload)
+    let error_log_path = runtime.config.state_path("sqlite_helper_errors.log")
+    let existing = if fs.exists(error_log_path) == 1 { fs.read_file(error_log_path) } else { "" }
+    discard fs.write_file(error_log_path, str.concat(existing, payload))
+    discard fs.write_file(runtime.config.state_path("sqlite_helper_last_failure.txt"), payload)
     let mut snapshot = "{"
     snapshot = str.concat(snapshot, str.concat(json.str("op"), str.concat(":", json.str(op))))
     snapshot = str.concat(snapshot, str.concat(",", str.concat(json.str("exit_code"), str.concat(":", json.str(str.from_i32(exit_code))))))
@@ -200,7 +201,7 @@ fn run_longrange_update_turn_shell(
         "last_request_id", json.str(last_request_id),
         "progress_request_id", json.str(progress_request_id),
     )
-    discard fs.atomic_write("/tmp/fzyagent/last_longrange_update_turn_spawn.json", debug_payload)
+    discard fs.atomic_write(runtime.config.state_path("last_longrange_update_turn_spawn.json"), debug_payload)
     let argv: ProcessArgv = proc.argv_new()
     discard proc.argv_push(argv, helper_path())
     discard proc.argv_push(argv, "longrange_update_turn")
@@ -352,12 +353,39 @@ fn run_longrange_terminalize_shell(
     discard proc.env_set(env_map, "FZY_PROGRESS_EVIDENCE_COUNT", progress_evidence_count)
     discard proc.env_set(env_map, "FZY_PROGRESS_REQUEST_ID", progress_request_id)
     discard proc.env_set(env_map, "FZY_PROGRESS_DETAIL", progress_detail)
-    let command = str.concat3(python_path(), " ", helper_path())
-    let shell_cmd = str.concat(
-        command,
-        " longrange_terminalize \"$FZY_DB_PATH\" \"$FZY_STATE_KEY\" \"$FZY_PROGRESS_KEY\" \"$FZY_SESSION_ACTIVE_KEY\" \"$FZY_SUMMARY_KEY\" \"$FZY_ACTIVE_RUNS_KEY\" \"$FZY_RUN_ID\" \"$FZY_SESSION_ID\" \"$FZY_GOAL\" \"$FZY_RUN_STATUS\" \"$FZY_PLAN_STATUS\" \"$FZY_TASK_CLASS\" \"$FZY_TURNS_COMPLETED\" \"$FZY_FAILURE_COUNT\" \"$FZY_LAST_PROGRESS_SCORE\" \"$FZY_CONSECUTIVE_LOW_SCORE\" \"$FZY_LAST_EVIDENCE_COUNT\" \"$FZY_COMPLETED_STEP_COUNT\" \"$FZY_ACTIVE_MESSAGE_KIND\" \"$FZY_LATEST_SUMMARY\" \"$FZY_CREATED_AT\" \"$FZY_CURRENT_STEP_ID\" \"$FZY_LAST_REQUEST_ID\" \"$FZY_PROGRESS_PHASE\" \"$FZY_PROGRESS_MESSAGE_KIND\" \"$FZY_PROGRESS_SCORE\" \"$FZY_PROGRESS_EVIDENCE_COUNT\" \"$FZY_PROGRESS_REQUEST_ID\" \"$FZY_PROGRESS_DETAIL\""
-    )
-    let handle = proc.spawn_cmd("/bin/sh", shell_argv(shell_cmd), env_map, "")
+    let argv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, "longrange_terminalize")
+    discard proc.argv_push(argv, db_path())
+    discard proc.argv_push(argv, state_key)
+    discard proc.argv_push(argv, progress_key)
+    discard proc.argv_push(argv, session_active_key)
+    discard proc.argv_push(argv, summary_key)
+    discard proc.argv_push(argv, active_runs_key)
+    discard proc.argv_push(argv, run_id)
+    discard proc.argv_push(argv, session_id)
+    discard proc.argv_push(argv, goal)
+    discard proc.argv_push(argv, run_status)
+    discard proc.argv_push(argv, plan_status)
+    discard proc.argv_push(argv, task_class)
+    discard proc.argv_push(argv, turns_completed)
+    discard proc.argv_push(argv, failure_count)
+    discard proc.argv_push(argv, last_progress_score)
+    discard proc.argv_push(argv, consecutive_low_score)
+    discard proc.argv_push(argv, last_evidence_count)
+    discard proc.argv_push(argv, completed_step_count)
+    discard proc.argv_push(argv, active_message_kind)
+    discard proc.argv_push(argv, latest_summary)
+    discard proc.argv_push(argv, created_at)
+    discard proc.argv_push(argv, current_step_id)
+    discard proc.argv_push(argv, last_request_id)
+    discard proc.argv_push(argv, progress_phase)
+    discard proc.argv_push(argv, progress_message_kind)
+    discard proc.argv_push(argv, progress_score)
+    discard proc.argv_push(argv, progress_evidence_count)
+    discard proc.argv_push(argv, progress_request_id)
+    discard proc.argv_push(argv, progress_detail)
+    let handle = proc.spawn_cmd(python_path(), argv, env_map, "")
     defer proc.close(handle)
     discard proc.wait(handle, 5000)
     let exit_code = proc.exit_code(handle)
@@ -370,7 +398,7 @@ fn run_longrange_terminalize_shell(
 }
 
 fn get_scratch_dir() -> str {
-    return "/tmp/fzyagent/sqlite_get"
+    return runtime.config.state_subdir("sqlite_get")
 }
 
 fn get_scratch_path(key: str) -> str {

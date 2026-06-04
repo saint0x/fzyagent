@@ -2,14 +2,14 @@ use core.thread;
 use core.fs;
 
 fn events_path() -> str {
-    return "/tmp/fzyagent/events.last.json"
+    return runtime.config.state_path("events.last.json")
 }
 
 fn emit_event(name: str, component: str) -> i32 {
     if runtime.config.persist_runtime_events() == 0 {
         return 0
     }
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     let payload = model.types.runtime_event_json(name, component, "sampled", model.types.control_ok_label())
     fs.write_file(events_path(), payload)
     pulse()

@@ -23,9 +23,9 @@ fn boot() -> i32 {
 }
 
 fn configure_listener() -> i32 {
-    env.get("AGENT_HOST")
-    env.get("AGENT_PORT")
-    env.get("AGENT_WORKERS")
+    runtime.config.load_host()
+    runtime.config.load_port()
+    runtime.config.load_workers()
     return 0
 }
 
@@ -45,9 +45,26 @@ fn serve_forever() -> i32 {
     http.listen(listener)
     log.info("web listener started", apputil.log_fields2("component", "web", "phase", "listener_started"))
     log.info("web serve_forever entered", apputil.log_fields2("component", "web", "phase", "serve_forever"))
+    let mut worker_idx: i32 = 0
+    while worker_idx < runtime.config.worker_count() {
+        let handle = spawn_ctx(serve_worker, worker_idx + 1)
+        detach(handle)
+        worker_idx = worker_idx + 1
+    }
     loop {
         if runtime.supervisor.shutdown_requested() == 1 {
             break
+        }
+        checkpoint()
+        yield()
+    }
+    return 0
+}
+
+fn serve_worker() -> i32 {
+    loop {
+        if runtime.supervisor.shutdown_requested() == 1 {
+            return 0
         }
         let conn_owned: HttpHandle = http.accept()
         timeout(1000)
@@ -57,7 +74,6 @@ fn serve_forever() -> i32 {
         checkpoint()
         yield()
     }
-    return 0
 }
 
 fn accept_and_process() -> i32 {
@@ -70,22 +86,22 @@ fn accept_and_process() -> i32 {
 }
 
 fn request_artifact_path(request_id: str) -> str {
-    return str.concat("/tmp/fzyagent/http.request.", str.concat(request_id, ".json"))
+    return runtime.config.state_path(str.concat("http.request.", str.concat(request_id, ".json")))
 }
 
-fn capture_request_artifact(conn: HttpHandle) -> i32 {
+fn capture_request_artifact_request(request_id: str, method: str, path: str, authorization_present: str, body: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 0 {
         return 0
     }
     let payload = apputil.json_obj5(
-        "request_id", json.str(http.request_id(conn)),
-        "method", json.str(http.method(conn)),
-        "path", json.str(http.path(conn)),
-        "authorization_present", json.str(if http.header(conn, "authorization") == "" { "false" } else { "true" }),
-        "body", json.str(http.body(conn)),
+        "request_id", json.str(request_id),
+        "method", json.str(method),
+        "path", json.str(path),
+        "authorization_present", json.str(authorization_present),
+        "body", json.str(if runtime.config.capture_request_bodies() == 1 { body } else { "" }),
     )
-    fs.mkdir("/tmp/fzyagent")
-    discard fs.atomic_write(request_artifact_path(http.request_id(conn)), payload)
+    runtime.config.ensure_state_root()
+    discard fs.atomic_write(request_artifact_path(request_id), payload)
     return 0
 }
 
@@ -105,20 +121,24 @@ fn tool_id_from_run_path(path: str) -> str {
 }
 
 fn dispatch(conn: HttpHandle) -> i32 {
+    let request_id = http.request_id(conn)
     let method = http.method(conn)
     let path = http.path(conn)
-    discard capture_request_artifact(conn)
+    let auth_header = http.header(conn, "authorization")
+    let body = http.body(conn)
+    let authorization_present = if auth_header == "" { "false" } else { "true" }
+    discard capture_request_artifact_request(request_id, method, path, authorization_present, body)
     if runtime.config.persist_request_artifacts() == 1 {
         log.info("web accepted connection", apputil.log_fields2("component", "web", "phase", "accept"))
         log.info("web dispatch route", apputil.log_fields3("component", "web", "phase", "dispatch", "route_path", path))
         log.info("web dispatch method", apputil.log_fields3("component", "web", "phase", "dispatch_method", "method", method))
     }
-    let auth = security.auth_middleware_conn(conn)
+    let auth = security.auth_middleware_request(request_id, auth_header)
     if auth != 0 {
         discard http.write_json(conn, 401, model.types.request_guard_error_json("unauthorized"))
         return 0
     }
-    let limited = security.rate_limit_conn(conn)
+    let limited = security.rate_limit_request(request_id)
     if limited != 0 {
         discard http.write_json(conn, 429, model.types.request_guard_error_json("rate_limited"))
         return 0
@@ -133,34 +153,20 @@ fn dispatch(conn: HttpHandle) -> i32 {
         discard http.write_json(conn, 403, model.types.request_guard_error_json("policy_denied"))
         return 0
     }
-    if method == "GET" && path == "/healthz" {
-        return services.http.handle_health(conn)
+    let route = route_kind(method, path)
+    match route {
+        RouteKind::RouteHealth => return services.http.handle_health(conn),
+        RouteKind::RouteSessionGet => return services.http.handle_session_get(conn, path),
+        RouteKind::RouteToolsList => return services.http.handle_tools_list(conn),
+        RouteKind::RouteRunGet => return services.http.handle_runs(conn, path),
+        RouteKind::RouteSessionsCreate => return services.http.handle_sessions(conn),
+        RouteKind::RouteToolsRegister => return services.http.handle_tools_register(conn),
+        RouteKind::RouteToolsRun => return services.http.handle_tools_run(conn, path),
+        RouteKind::RouteMessagesPost => return services.http.handle_messages(conn, path),
+        RouteKind::RouteToolsDelete => return services.http.handle_tools_delete(conn, path),
+        _ => return dispatch_not_found(conn),
     }
-    if method == "GET" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 0 {
-        return services.http.handle_session_get(conn, path)
-    }
-    if method == "GET" && path == "/tools" {
-        return services.http.handle_tools_list(conn)
-    }
-    if method == "GET" && str.starts_with(path, "/runs/") == 1 {
-        return services.http.handle_runs(conn, path)
-    }
-    if method == "POST" && path == "/sessions" {
-        return services.http.handle_sessions(conn)
-    }
-    if method == "POST" && path == "/tools" {
-        return services.http.handle_tools_register(conn)
-    }
-    if method == "POST" && str.starts_with(path, "/tools/") == 1 && str.ends_with(path, "/run") == 1 {
-        return services.http.handle_tools_run(conn, path)
-    }
-    if method == "POST" && str.starts_with(path, "/sessions/") == 1 && str.ends_with(path, "/messages") == 1 {
-        return services.http.handle_messages(conn, path)
-    }
-    if method == "DELETE" && str.starts_with(path, "/tools/") == 1 {
-        return services.http.handle_tools_delete(conn, path)
-    }
-    return dispatch_not_found(conn)
+    return 0
 }
 
 fn dispatch_not_found(conn: HttpHandle) -> i32 {

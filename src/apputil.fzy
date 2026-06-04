@@ -13,6 +13,57 @@ fn log_fields3(k1: str, v1: str, k2: str, v2: str, k3: str, v3: str) -> str {
     return str.concat(payload, "}")
 }
 
+fn path_join2(base: str, leaf: str) -> str {
+    if base == "" {
+        return leaf
+    }
+    if leaf == "" {
+        return base
+    }
+    if str.ends_with(base, "/") == 1 {
+        return str.concat(base, leaf)
+    }
+    return str.concat(base, str.concat("/", leaf))
+}
+
+fn path_join3(base: str, mid: str, leaf: str) -> str {
+    return path_join2(path_join2(base, mid), leaf)
+}
+
+fn json_value(raw: str) -> str {
+    return raw
+}
+
+fn json_value_or(raw: str, fallback: str) -> str {
+    if raw == "" {
+        return fallback
+    }
+    return raw
+}
+
+fn json_object_value(entries: MapHandle) -> str {
+    return json.object(entries)
+}
+
+fn json_array_value(items: ListHandle) -> str {
+    return json.array(items)
+}
+
+fn json_empty_object() -> str {
+    return "{}"
+}
+
+fn json_empty_array() -> str {
+    return "[]"
+}
+
+fn json_bool(flag: i32) -> str {
+    if flag == 1 {
+        return "true"
+    }
+    return "false"
+}
+
 fn json_obj1(k1: str, v1: str) -> str {
     return str.concat("{", str.concat(json.str(k1), str.concat(":", str.concat(v1, "}"))))
 }
@@ -83,6 +134,26 @@ fn json_arr4(v1: str, v2: str, v3: str, v4: str) -> str {
     discard list.push(items, v3)
     discard list.push(items, v4)
     return json.array(items)
+}
+
+fn json_field_or_empty(raw: str, key: str) -> str {
+    if raw == "" || key == "" {
+        return ""
+    }
+    let parsed = json.parse(raw)
+    let direct = json.get_str(parsed, key)
+    if direct != "" {
+        return direct
+    }
+    return json.get_str(json.get(parsed, key), "raw")
+}
+
+fn json_nested_field_or_empty(parsed: JsonHandle, key: str) -> str {
+    let direct = json.get_str(parsed, key)
+    if direct != "" {
+        return direct
+    }
+    return json.get_str(json.get(parsed, key), "raw")
 }
 
 fn digit_value(ch: str) -> i32 {

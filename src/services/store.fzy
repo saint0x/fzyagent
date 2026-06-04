@@ -1,8 +1,8 @@
 use core.fs;
 
 fn init() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
-    fs.mkdir("/tmp/fzyagent/runs")
-    fs.mkdir("/tmp/fzyagent/tools")
+    runtime.config.ensure_state_root()
+    fs.mkdir(apputil.path_join2(runtime.config.state_root(), "runs"))
+    fs.mkdir(apputil.path_join2(runtime.config.state_root(), "tools"))
     return 0
 }

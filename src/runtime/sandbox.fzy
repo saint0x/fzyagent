@@ -1,7 +1,7 @@
 use core.fs;
 
 fn sandbox_path() -> str {
-    return "/tmp/fzyagent/runtime.sandbox.json"
+    return runtime.config.state_path("runtime.sandbox.json")
 }
 
 fn env_or(key: str, fallback: str) -> str {
@@ -17,7 +17,7 @@ fn sandbox_mode() -> str {
 }
 
 fn write_policy(policy: str, scope: str) -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     let payload = model.types.runtime_sandbox_json(policy, scope, sandbox_mode())
     fs.write_file(sandbox_path(), payload)
     return 0

@@ -1,11 +1,11 @@
 use core.fs;
 
 fn openapi_path() -> str {
-    return "/tmp/fzyagent/openapi.json"
+    return runtime.config.state_path("openapi.json")
 }
 
 fn validation_path() -> str {
-    return "/tmp/fzyagent/openapi.validation.json"
+    return runtime.config.state_path("openapi.validation.json")
 }
 
 fn server_object(url: str, description: str) -> str {
@@ -44,10 +44,10 @@ fn operation_object(summary: str, operation_id: str, tags_json: str, responses_j
     let payload = map.new()
     discard map.set(payload, "summary", json.str(summary))
     discard map.set(payload, "operationId", json.str(operation_id))
-    discard map.set(payload, "tags", json.raw(tags_json))
-    discard map.set(payload, "responses", json.raw(responses_json))
+    discard map.set(payload, "tags", apputil.json_value_or(tags_json, "[]"))
+    discard map.set(payload, "responses", apputil.json_value_or(responses_json, "{}"))
     if request_body_json != "" {
-        discard map.set(payload, "requestBody", json.raw(request_body_json))
+        discard map.set(payload, "requestBody", apputil.json_value(request_body_json))
     }
     return json.object(payload)
 }
@@ -57,22 +57,22 @@ fn tool_rpc_response_object(description: str) -> str {
 }
 
 fn response_map1(code1: str, response1_json: str) -> str {
-    return apputil.json_obj1(code1, json.raw(response1_json))
+    return apputil.json_obj1(code1, response1_json)
 }
 
 fn response_map2(code1: str, response1_json: str, code2: str, response2_json: str) -> str {
-    return apputil.json_obj2(code1, json.raw(response1_json), code2, json.raw(response2_json))
+    return apputil.json_obj2(code1, response1_json, code2, response2_json)
 }
 
 fn response_map3(code1: str, response1_json: str, code2: str, response2_json: str, code3: str, response3_json: str) -> str {
-    return apputil.json_obj3(code1, json.raw(response1_json), code2, json.raw(response2_json), code3, json.raw(response3_json))
+    return apputil.json_obj3(code1, response1_json, code2, response2_json, code3, response3_json)
 }
 
 fn generic_object_schema_json(description: str) -> str {
     return apputil.json_obj3(
         "type", json.str("object"),
         "description", json.str(description),
-        "additionalProperties", json.raw("true"),
+        "additionalProperties", "true",
     )
 }
 
@@ -81,12 +81,12 @@ fn info_object(title: str, version: str, description: str, contact_json: str) ->
         "title", json.str(title),
         "version", json.str(version),
         "description", json.str(description),
-        "contact", json.raw(contact_json),
+        "contact", contact_json,
     )
 }
 
 fn export_spec() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
 
     let session_responses = response_map2("200", session_response_object("Session created or loaded"), "403", response_object("Forbidden"))
     let message_responses = response_map3("200", message_response_object("Assistant turn completed"), "403", message_response_object("Prompt denied"), "502", message_response_object("Provider failure"))
@@ -98,59 +98,59 @@ fn export_spec() -> i32 {
     let message_request_body = api.rpc.request_body_json("Runtime chat message payload.", api.rpc.message_request_schema_name(), "true")
 
     let session_paths = map.new()
-    discard map.set(session_paths, "post", json.raw(operation_object("Create or reset a session", "createSession", apputil.json_arr1(json.str("sessions")), session_responses, session_request_body)))
+    discard map.set(session_paths, "post", apputil.json_value(operation_object("Create or reset a session", "createSession", apputil.json_arr1(json.str("sessions")), session_responses, session_request_body)))
 
     let session_by_id_paths = map.new()
-    discard map.set(session_by_id_paths, "get", json.raw(operation_object("Load session state", "getSession", apputil.json_arr1(json.str("sessions")), session_responses, "")))
+    discard map.set(session_by_id_paths, "get", apputil.json_value(operation_object("Load session state", "getSession", apputil.json_arr1(json.str("sessions")), session_responses, "")))
 
     let message_paths = map.new()
-    discard map.set(message_paths, "post", json.raw(operation_object("Send a message through the runtime brain", "postMessage", apputil.json_arr1(json.str("messages")), message_responses, message_request_body)))
+    discard map.set(message_paths, "post", apputil.json_value(operation_object("Send a message through the runtime brain", "postMessage", apputil.json_arr1(json.str("messages")), message_responses, message_request_body)))
 
     let tools_paths = map.new()
-    discard map.set(tools_paths, "get", json.raw(operation_object("List registered tools", "listTools", apputil.json_arr1(json.str("tools")), response_map1("200", tools_response_object("Tool inventory")), "")))
-    discard map.set(tools_paths, "post", json.raw(operation_object("Refresh the tool registry", "registerTools", apputil.json_arr1(json.str("tools")), response_map1("200", response_object("Registry refreshed")), "")))
+    discard map.set(tools_paths, "get", apputil.json_value(operation_object("List registered tools", "listTools", apputil.json_arr1(json.str("tools")), response_map1("200", tools_response_object("Tool inventory")), "")))
+    discard map.set(tools_paths, "post", apputil.json_value(operation_object("Refresh the tool registry", "registerTools", apputil.json_arr1(json.str("tools")), response_map1("200", response_object("Registry refreshed")), "")))
 
     let tool_run_paths = map.new()
-    discard map.set(tool_run_paths, "post", json.raw(operation_object("Execute a tool by id", "runTool", apputil.json_arr1(json.str("tools")), tool_responses, tool_run_request_body)))
+    discard map.set(tool_run_paths, "post", apputil.json_value(operation_object("Execute a tool by id", "runTool", apputil.json_arr1(json.str("tools")), tool_responses, tool_run_request_body)))
 
     let run_paths = map.new()
-    discard map.set(run_paths, "get", json.raw(operation_object("Fetch a stored run envelope", "getRun", apputil.json_arr1(json.str("runs")), run_responses, "")))
+    discard map.set(run_paths, "get", apputil.json_value(operation_object("Fetch a stored run envelope", "getRun", apputil.json_arr1(json.str("runs")), run_responses, "")))
 
     let health_paths = map.new()
-    discard map.set(health_paths, "get", json.raw(operation_object("Runtime health check", "getHealth", apputil.json_arr1(json.str("health")), health_responses, "")))
+    discard map.set(health_paths, "get", apputil.json_value(operation_object("Runtime health check", "getHealth", apputil.json_arr1(json.str("health")), health_responses, "")))
 
     let paths = map.new()
-    discard map.set(paths, "/sessions", json.raw(json.object(session_paths)))
-    discard map.set(paths, "/sessions/{session_id}", json.raw(json.object(session_by_id_paths)))
-    discard map.set(paths, "/sessions/{session_id}/messages", json.raw(json.object(message_paths)))
-    discard map.set(paths, "/tools", json.raw(json.object(tools_paths)))
-    discard map.set(paths, "/tools/{tool_id}/run", json.raw(json.object(tool_run_paths)))
-    discard map.set(paths, "/runs/{run_id}", json.raw(json.object(run_paths)))
-    discard map.set(paths, "/healthz", json.raw(json.object(health_paths)))
+    discard map.set(paths, "/sessions", apputil.json_object_value(session_paths))
+    discard map.set(paths, "/sessions/{session_id}", apputil.json_object_value(session_by_id_paths))
+    discard map.set(paths, "/sessions/{session_id}/messages", apputil.json_object_value(message_paths))
+    discard map.set(paths, "/tools", apputil.json_object_value(tools_paths))
+    discard map.set(paths, "/tools/{tool_id}/run", apputil.json_object_value(tool_run_paths))
+    discard map.set(paths, "/runs/{run_id}", apputil.json_object_value(run_paths))
+    discard map.set(paths, "/healthz", apputil.json_object_value(health_paths))
 
     let schemas = map.new()
-    discard map.set(schemas, "Envelope", json.raw(generic_object_schema_json("runtime JSON envelope")))
-    discard map.set(schemas, "SessionState", json.raw(generic_object_schema_json("durable session state")))
-    discard map.set(schemas, "ToolRecord", json.raw(generic_object_schema_json("registered tool metadata")))
-    discard map.set(schemas, "RunRecord", json.raw(generic_object_schema_json("tool or assistant run payload")))
-    discard map.set(schemas, api.rpc.session_request_schema_name(), json.raw(api.rpc.session_request_schema_json()))
-    discard map.set(schemas, api.rpc.session_response_schema_name(), json.raw(api.rpc.session_response_schema_json()))
-    discard map.set(schemas, api.rpc.message_request_schema_name(), json.raw(api.rpc.message_request_schema_json()))
-    discard map.set(schemas, api.rpc.message_response_schema_name(), json.raw(api.rpc.message_response_schema_json()))
-    discard map.set(schemas, api.rpc.tools_response_schema_name(), json.raw(api.rpc.tools_response_schema_json()))
-    discard map.set(schemas, api.rpc.run_response_schema_name(), json.raw(api.rpc.run_response_schema_json()))
-    discard map.set(schemas, api.rpc.health_response_schema_name(), json.raw(api.rpc.health_response_schema_json()))
-    discard map.set(schemas, api.rpc.request_schema_name(), json.raw(api.rpc.request_schema_json()))
-    discard map.set(schemas, api.rpc.single_request_schema_name(), json.raw(api.rpc.single_request_schema_json()))
-    discard map.set(schemas, api.rpc.batch_request_schema_name(), json.raw(api.rpc.batch_request_schema_json()))
-    discard map.set(schemas, api.rpc.response_schema_name(), json.raw(api.rpc.response_schema_json()))
+    discard map.set(schemas, "Envelope", apputil.json_value(generic_object_schema_json("runtime JSON envelope")))
+    discard map.set(schemas, "SessionState", apputil.json_value(generic_object_schema_json("durable session state")))
+    discard map.set(schemas, "ToolRecord", apputil.json_value(generic_object_schema_json("registered tool metadata")))
+    discard map.set(schemas, "RunRecord", apputil.json_value(generic_object_schema_json("tool or assistant run payload")))
+    discard map.set(schemas, api.rpc.session_request_schema_name(), apputil.json_value(api.rpc.session_request_schema_json()))
+    discard map.set(schemas, api.rpc.session_response_schema_name(), apputil.json_value(api.rpc.session_response_schema_json()))
+    discard map.set(schemas, api.rpc.message_request_schema_name(), apputil.json_value(api.rpc.message_request_schema_json()))
+    discard map.set(schemas, api.rpc.message_response_schema_name(), apputil.json_value(api.rpc.message_response_schema_json()))
+    discard map.set(schemas, api.rpc.tools_response_schema_name(), apputil.json_value(api.rpc.tools_response_schema_json()))
+    discard map.set(schemas, api.rpc.run_response_schema_name(), apputil.json_value(api.rpc.run_response_schema_json()))
+    discard map.set(schemas, api.rpc.health_response_schema_name(), apputil.json_value(api.rpc.health_response_schema_json()))
+    discard map.set(schemas, api.rpc.request_schema_name(), apputil.json_value(api.rpc.request_schema_json()))
+    discard map.set(schemas, api.rpc.single_request_schema_name(), apputil.json_value(api.rpc.single_request_schema_json()))
+    discard map.set(schemas, api.rpc.batch_request_schema_name(), apputil.json_value(api.rpc.batch_request_schema_json()))
+    discard map.set(schemas, api.rpc.response_schema_name(), apputil.json_value(api.rpc.response_schema_json()))
 
-    let components = apputil.json_obj1("schemas", json.raw(json.object(schemas)))
-    let servers = apputil.json_arr3(
-        json.raw(server_object("http://127.0.0.1:8787", "default local runtime")),
-        json.raw(server_object("http://127.0.0.1:8900", "local benchmark/runtime port")),
-        json.raw(server_object("http://127.0.0.1:{port}", "configurable local runtime")),
-    )
+    let components = apputil.json_obj1("schemas", json.object(schemas))
+    let server_items = list.new()
+    discard list.push(server_items, apputil.json_value(server_object("http://127.0.0.1:8787", "default local runtime")))
+    discard list.push(server_items, apputil.json_value(server_object("http://127.0.0.1:8900", "local benchmark/runtime port")))
+    discard list.push(server_items, apputil.json_value(server_object("http://127.0.0.1:{port}", "configurable local runtime")))
+    let servers = json.array(server_items)
     let info = info_object(
         "fzyagent Runtime API",
         "2026-05-27",
@@ -159,10 +159,10 @@ fn export_spec() -> i32 {
     )
     let spec = apputil.json_obj5(
         "openapi", json.str("3.1.0"),
-        "info", json.raw(info),
-        "servers", json.raw(servers),
-        "paths", json.raw(json.object(paths)),
-        "components", json.raw(components),
+        "info", info,
+        "servers", servers,
+        "paths", json.object(paths),
+        "components", components,
     )
     fs.write_file(openapi_path(), spec)
     return 0

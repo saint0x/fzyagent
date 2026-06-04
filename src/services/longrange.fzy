@@ -5,11 +5,11 @@ use core.storage;
 use core.time;
 
 fn runtime_root_dir() -> str {
-    return "/tmp/fzyagent/longrange"
+    return runtime.config.state_subdir("longrange")
 }
 
 fn debug_root_dir() -> str {
-    return "/tmp/fzyagent/longrange_debug"
+    return runtime.config.state_subdir("longrange_debug")
 }
 
 fn runs_dir() -> str {
@@ -32,26 +32,22 @@ fn ensure_local_dir(path: str) -> i32 {
     if path == "" {
         return 1
     }
-    let argv: ProcessArgv = proc.argv_new()
-    discard proc.argv_push(argv, "-lc")
-    discard proc.argv_push(argv, str.concat("mkdir -p ", json.str(path)))
-    let env_map: ProcessEnv = proc.env_new()
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
+    let handle = proc.spawn(str.concat("mkdir -p ", json.str(path)))
     defer proc.close(handle)
     discard proc.wait(handle, 5000)
     return proc.exit_code(handle)
 }
 
 fn active_runs_path() -> str {
-    return "/tmp/fzyagent/longrange/active_runs.txt"
+    return apputil.path_join2(runtime_root_dir(), "active_runs.txt")
 }
 
 fn summary_path() -> str {
-    return "/tmp/fzyagent/longrange/summary.json"
+    return apputil.path_join2(runtime_root_dir(), "summary.json")
 }
 
 fn run_dir(run_id: str) -> str {
-    return str.concat("/tmp/fzyagent/longrange/runs/", run_id)
+    return apputil.path_join2(runs_dir(), run_id)
 }
 
 fn run_state_path(run_id: str) -> str {
@@ -95,7 +91,7 @@ fn run_created_at_path(run_id: str) -> str {
 }
 
 fn session_dir(session_id: str) -> str {
-    return str.concat("/tmp/fzyagent/longrange/sessions/", session_id)
+    return apputil.path_join2(sessions_dir(), session_id)
 }
 
 fn session_active_run_path(session_id: str) -> str {
@@ -1495,7 +1491,7 @@ fn write_initial_plan(run_id: str, goal: str, task_class: str) -> i32 {
             "services.longrange invalid_initial_plan_payload",
             apputil.log_fields3("run_id", run_id, "task_class", effective_task_class, "head", apputil.excerpt_head(payload, 220))
         )
-        discard fs.write_file("/tmp/fzyagent/last_invalid_initial_plan.json", payload)
+        discard fs.write_file(runtime.config.state_path("last_invalid_initial_plan.json"), payload)
         return 1
     }
     return atomic_write_text(run_plan_path(run_id), payload)
@@ -2516,7 +2512,92 @@ fn should_fail_for_low_progress(run_id: str) -> i32 {
     return 0
 }
 
+pub fn tool_only_streak(run_id: str) -> i32 {
+    let payload = safe_read(run_progress_path(run_id))
+    if looks_like_array_json(payload) == 0 {
+        return 0
+    }
+    let events = json.parse(payload)
+    let mut event_count: i32 = 0
+    while event_count < 256 {
+        let parsed = json.get(events, str.from_i32(event_count))
+        let phase = json.get_str(parsed, "phase")
+        if phase == "" && json.get_str(parsed, "run_id") == "" {
+            break
+        }
+        event_count = event_count + 1
+    }
+    let mut streak: i32 = 0
+    let mut idx: i32 = event_count - 1
+    while idx >= 0 {
+        let parsed = json.get(events, str.from_i32(idx))
+        let phase = json.get_str(parsed, "phase")
+        if phase != "turn_completed" && phase != "turn_failed" {
+            idx = idx - 1
+            continue
+        }
+        let detail = json.get_str(parsed, "detail")
+        if is_tool_only_summary(detail) == 1 {
+            streak = streak + 1
+            idx = idx - 1
+            continue
+        }
+        break
+    }
+    return streak
+}
+
+pub fn should_fail_for_tool_only_loop(run_id: str) -> i32 {
+    if tool_only_streak(run_id) >= 2 {
+        return 1
+    }
+    return 0
+}
+
+pub fn should_fail_for_missing_plan_loop(run_id: str) -> i32 {
+    let state_raw = load_state_json(run_id)
+    if quoted_json_field(state_raw, "plan_status") == "ready" {
+        return 0
+    }
+    if looks_like_plaintext_plan_attempt(quoted_json_field(state_raw, "latest_summary")) == 0 {
+        return 0
+    }
+    if apputil.parse_i32(quoted_json_field(state_raw, "consecutive_low_score")) >= 3 {
+        return 1
+    }
+    return 0
+}
+
+pub fn should_fail_for_missing_plan_attempt(run_id: str, assistant_summary: str) -> i32 {
+    if plan_status_ready(run_id) == 1 {
+        return 0
+    }
+    if looks_like_plaintext_plan_attempt(assistant_summary) == 0 {
+        return 0
+    }
+    if turns_completed(run_id) >= 3 {
+        return 1
+    }
+    return 0
+}
+
+pub fn should_auto_complete_after_plan_create(run_id: str, result_kind: str, control_tool: str, control_outcome: str) -> i32 {
+    if result_kind != "control_tool" || control_tool != "plan_create" || control_outcome != "ok" {
+        return 0
+    }
+    if completion_mode(run_id) != "direct" {
+        return 0
+    }
+    if task_class(run_id) == "planning" || expected_total_turns(run_id) <= 2 {
+        return 1
+    }
+    return 0
+}
+
 fn should_auto_complete(run_id: str, assistant_summary: str) -> i32 {
+    if assistant_summary == "control_plane_tool_executed:plan_create" && completion_mode(run_id) == "direct" && (task_class(run_id) == "planning" || expected_total_turns(run_id) <= 2) {
+        return 1
+    }
     let parsed = json.parse(load_state_json(run_id))
     return completion_gate_ready(run_id, assistant_summary, apputil.parse_i32(state_last_evidence_count(parsed)))
 }
@@ -2717,6 +2798,15 @@ fn auto_continue_pending(run_id: str) -> i32 {
         if status == "planning" || status == "active" {
             return 1
         }
+    }
+    let local_raw = local_materialized_state_json(run_id)
+    let local_flag = quoted_json_field(local_raw, "auto_continue_pending")
+    if local_flag == "true" {
+        return 1
+    }
+    let local_status = quoted_json_field(local_raw, "run_status")
+    if local_status == "planning" || local_status == "active" {
+        return 1
     }
     return 0
 }
@@ -2937,6 +3027,23 @@ pub fn tool_event_count(tool_events_json: str) -> i32 {
     return count
 }
 
+fn looks_like_plaintext_plan_attempt(summary: str) -> i32 {
+    if summary == "" {
+        return 0
+    }
+    if str.starts_with(summary, "```json") == 1 {
+        if str.contains(summary, "\"goal_summary\"") == 1 || str.contains(summary, "\"steps\"") == 1 || str.contains(summary, "\"current_step_id\"") == 1 {
+            return 1
+        }
+    }
+    if str.starts_with(summary, "```bash") == 1 {
+        if str.contains(summary, "plan_create ") == 1 || str.contains(summary, "plan_update ") == 1 {
+            return 1
+        }
+    }
+    return 0
+}
+
 fn completion_gate_ready(run_id: str, assistant_summary: str, evidence_count: i32) -> i32 {
     if plan_status_ready(run_id) == 0 {
         return 0
@@ -2973,6 +3080,9 @@ fn completion_gate_ready(run_id: str, assistant_summary: str, evidence_count: i3
 fn turn_progress_score(run_id: str, assistant_summary: str, tool_events_json: str, previous_completed_steps: i32) -> i32 {
     let evidence_count = tool_event_count(tool_events_json)
     let current_completed_steps = completed_step_count(run_id)
+    if plan_status_ready(run_id) == 0 && looks_like_plaintext_plan_attempt(assistant_summary) == 1 {
+        return 0
+    }
     if str.starts_with(assistant_summary, "control_plane_tool_executed:goal_complete") == 1 {
         return 3
     }
@@ -2999,6 +3109,9 @@ fn turn_progress_score(run_id: str, assistant_summary: str, tool_events_json: st
 
 fn turn_progress_score_typed(run_id: str, assistant_summary: str, evidence_count: i32, previous_completed_steps: i32, result_kind: str, control_tool: str, control_outcome: str) -> i32 {
     let current_completed_steps = completed_step_count(run_id)
+    if plan_status_ready(run_id) == 0 && result_kind != "control_tool" && looks_like_plaintext_plan_attempt(assistant_summary) == 1 {
+        return 0
+    }
     if result_kind == "control_tool" && control_tool == "goal_complete" && control_outcome == "ok" {
         return 3
     }

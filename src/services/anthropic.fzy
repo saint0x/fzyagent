@@ -94,9 +94,9 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
         apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "payload_bytes", str.from_i32(str.len(payload)))
     )
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent/provider.debug")
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.meta.current.json", meta_payload)
-        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.meta.", str.concat(stamp, ".json")), meta_payload)
+        fs.mkdir(runtime.config.state_subdir("provider.debug"))
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.meta.current.json"), meta_payload)
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.meta.", str.concat(stamp, ".json"))), meta_payload)
     }
     if messages_json == "" || payload == "" {
         log.error(
@@ -104,25 +104,25 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
             apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "tool_bytes", str.from_i32(str.len(tools_json)))
         )
         if runtime.config.persist_request_artifacts() == 1 {
-            fs.mkdir("/tmp/fzyagent/provider.debug")
-            discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
-            discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".json")), payload)
-            discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".meta.json")), apputil.json_obj3("status", json.str("error"), "message_bytes", json.str(str.from_i32(str.len(messages_json))), "tool_bytes", json.str(str.from_i32(str.len(tools_json)))))
+            fs.mkdir(runtime.config.state_subdir("provider.debug"))
+            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
+            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
+            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".meta.json"))), apputil.json_obj3("status", json.str("error"), "message_bytes", json.str(str.from_i32(str.len(messages_json))), "tool_bytes", json.str(str.from_i32(str.len(tools_json)))))
         }
         return ""
     }
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent/provider.debug")
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.request.json", payload)
-        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.request.", str.concat(stamp, ".json")), payload)
+        fs.mkdir(runtime.config.state_subdir("provider.debug"))
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
     }
     let out = http.post_json_capture(endpoint(), payload)
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent/provider.debug")
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.response.raw", out)
-        discard fs.atomic_write("/tmp/fzyagent/provider.debug/anthropic.response.meta.json", response_meta_json())
-        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.response.", str.concat(stamp, ".raw")), out)
-        discard fs.atomic_write(str.concat("/tmp/fzyagent/provider.debug/anthropic.response.", str.concat(stamp, ".meta.json")), response_meta_json())
+        fs.mkdir(runtime.config.state_subdir("provider.debug"))
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.raw"), out)
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.meta.json"), response_meta_json())
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".raw"))), out)
+        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".meta.json"))), response_meta_json())
     }
     return out
 }

@@ -2,15 +2,15 @@ use core.fs;
 use core.time;
 
 fn checkpoint_path() -> str {
-    return "/tmp/fzyagent/runtime.checkpoint.json"
+    return runtime.config.state_path("runtime.checkpoint.json")
 }
 
 fn recovery_path() -> str {
-    return "/tmp/fzyagent/runtime.recovery.json"
+    return runtime.config.state_path("runtime.recovery.json")
 }
 
 fn save_checkpoint() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     let payload = model.types.recovery_checkpoint_json(
         "saved",
         "runtime",

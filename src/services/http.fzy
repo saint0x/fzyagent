@@ -5,9 +5,9 @@ use core.fs;
 use core.time;
 
 fn configure_server() -> i32 {
-    env.get("AGENT_HOST")
-    env.get("AGENT_PORT")
-    env.get("AGENT_WORKERS")
+    runtime.config.load_host()
+    runtime.config.load_port()
+    runtime.config.load_workers()
     return 0
 }
 
@@ -18,11 +18,11 @@ fn start_server() -> i32 {
 }
 
 fn shutdown_path() -> str {
-    return "/tmp/fzyagent/http.shutdown.json"
+    return runtime.config.state_path("http.shutdown.json")
 }
 
 fn graceful_stop() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     fs.write_file(shutdown_path(), model.types.http_shutdown_json(model.types.control_ok_label(), "graceful_stop", str.from_i32(time.now())))
     return 0
 }
@@ -275,8 +275,7 @@ fn handle_messages(conn: HttpHandle, path: str) -> i32 {
 }
 
 fn prompt_from_request(conn: HttpHandle) -> str {
-    let raw_body = http.body(conn)
-    let parsed = json.parse(if raw_body == "" { "{}" } else { raw_body })
+    let parsed = http.body_json(conn)
     let prompt = json.get_str(parsed, "message")
     if prompt == "" {
         return "runtime status"

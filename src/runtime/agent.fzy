@@ -5,19 +5,19 @@ use core.log;
 
 
 fn system_prompt_path() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/config/agent_system_prompt.md"
+    return runtime.config.agent_system_prompt_path()
 }
 
 fn runtime_overlay_prompt_path() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/config/prompt_overlay.runtime.md"
+    return runtime.config.runtime_overlay_prompt_path()
 }
 
 fn longrange_overlay_prompt_path() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/config/prompt_overlay.longrange.md"
+    return runtime.config.longrange_overlay_prompt_path()
 }
 
 fn debug_dir() -> str {
-    return "/tmp/fzyagent/agent.debug"
+    return runtime.config.state_subdir("agent.debug")
 }
 
 fn debug_path(name: str) -> str {
@@ -143,25 +143,47 @@ fn initial_messages_json(session_id: str, prompt: str) -> str {
 }
 
 fn append_message_json(messages_json: str, message_json: str) -> str {
-    if messages_json == "[]" {
-        let items = list.new()
-        discard list.push(items, message_json)
-        return json.array(items)
+    let parsed = json.parse(if messages_json == "" { "[]" } else { messages_json })
+    let items = list.new()
+    let mut idx: i32 = 0
+    while idx < 64 {
+        let item = json.get(parsed, str.from_i32(idx))
+        let raw = json.get_str(item, "raw")
+        if raw == "" {
+            break
+        }
+        discard list.push(items, apputil.json_value_or(raw, "{}"))
+        idx = idx + 1
     }
-    let prefix = str.slice(messages_json, 0, str.len(messages_json) - 1)
-    return str.concat(str.concat(str.concat(prefix, ","), message_json), "]")
+    discard list.push(items, apputil.json_value_or(message_json, "{}"))
+    return json.array(items)
 }
 
 fn append_array_json(left_json: str, right_json: str) -> str {
-    if left_json == "[]" {
-        return right_json
+    let items = list.new()
+    let left = json.parse(if left_json == "" { "[]" } else { left_json })
+    let right = json.parse(if right_json == "" { "[]" } else { right_json })
+    let mut idx: i32 = 0
+    while idx < 64 {
+        let item = json.get(left, str.from_i32(idx))
+        let raw = json.get_str(item, "raw")
+        if raw == "" {
+            break
+        }
+        discard list.push(items, apputil.json_value_or(raw, "{}"))
+        idx = idx + 1
     }
-    if right_json == "[]" {
-        return left_json
+    idx = 0
+    while idx < 64 {
+        let item = json.get(right, str.from_i32(idx))
+        let raw = json.get_str(item, "raw")
+        if raw == "" {
+            break
+        }
+        discard list.push(items, apputil.json_value_or(raw, "{}"))
+        idx = idx + 1
     }
-    let left_prefix = str.slice(left_json, 0, str.len(left_json) - 1)
-    let right_tail = str.slice(right_json, 1, str.len(right_json))
-    return str.concat(str.concat(left_prefix, ","), right_tail)
+    return json.array(items)
 }
 
 fn text_index_of(hay: str, needle: str) -> i32 {
@@ -182,25 +204,7 @@ fn text_index_of(hay: str, needle: str) -> i32 {
 }
 
 fn quoted_raw_field(raw: str, key: str) -> str {
-    if raw == "" || key == "" {
-        return ""
-    }
-    let marker = str.concat3("\"", key, "\":\"")
-    let start = text_index_of(raw, marker)
-    if start < 0 {
-        return ""
-    }
-    let mut idx: i32 = start + str.len(marker)
-    let mut out = ""
-    while idx < str.len(raw) {
-        let ch = str.slice(raw, idx, idx + 1)
-        if ch == "\"" {
-            return out
-        }
-        out = str.concat(out, ch)
-        idx = idx + 1
-    }
-    return out
+    return apputil.json_field_or_empty(raw, key)
 }
 
 fn extract_balanced_json(raw: str, start_idx: i32) -> str {
@@ -393,7 +397,7 @@ fn content_block_json(parsed: JsonHandle, index: str) -> str {
         discard map.set(payload, "type", json.str("tool_use"))
         discard map.set(payload, "id", json.str(content_block_tool_id(parsed, index)))
         discard map.set(payload, "name", json.str(content_block_tool_name(parsed, index)))
-        discard map.set(payload, "input", json.raw(content_block_tool_input_raw(parsed, index)))
+        discard map.set(payload, "input", apputil.json_value_or(content_block_tool_input_raw(parsed, index), "{}"))
         return json.object(payload)
     }
     return ""
@@ -412,7 +416,7 @@ fn assistant_message_json(parsed: JsonHandle) -> str {
     if raw != "" {
         let payload = map.new()
         discard map.set(payload, "role", json.str("assistant"))
-        discard map.set(payload, "content", json.raw(raw))
+        discard map.set(payload, "content", apputil.json_value_or(raw, "[]"))
         return json.object(payload)
     }
     let items = list.new()
@@ -421,7 +425,7 @@ fn assistant_message_json(parsed: JsonHandle) -> str {
         discard maybe_push_content_block(items, parsed, str.from_i32(idx))
         idx = idx + 1
     }
-    return apputil.json_obj2("role", json.str("assistant"), "content", json.raw(json.array(items)))
+    return apputil.json_obj2("role", json.str("assistant"), "content", apputil.json_array_value(items))
 }
 
 fn content_block_text_or_empty(parsed: JsonHandle, index: str) -> str {
@@ -542,7 +546,7 @@ fn stream_block_json(block: StreamBlock) -> str {
         discard map.set(payload, "type", json.str("tool_use"))
         discard map.set(payload, "id", json.str(block.tool_id))
         discard map.set(payload, "name", json.str(block.tool_name))
-        discard map.set(payload, "input", json.raw(if block.input_raw == "" { "{}" } else { block.input_raw }))
+        discard map.set(payload, "input", apputil.json_value_or(block.input_raw, "{}"))
         return json.object(payload)
     }
     return ""
@@ -565,7 +569,7 @@ fn streamed_response_json(stop_reason: str, block0: StreamBlock, block1: StreamB
     let payload = map.new()
     discard map.set(payload, "type", json.str("message"))
     discard map.set(payload, "role", json.str("assistant"))
-    discard map.set(payload, "content", json.raw(json.array(items)))
+    discard map.set(payload, "content", apputil.json_array_value(items))
     discard map.set(payload, "stop_reason", json.str(stop_reason))
     return json.object(payload)
 }
@@ -811,7 +815,7 @@ fn run_tool_from_input(tool_id: str, input_raw: str, session_id: str, request_id
     let normalized = apputil.json_obj4(
         "request_id", json.str(request_id),
         "tool_id", json.str(tool_id),
-        "input", json.raw(if input_raw == "" { "{}" } else { input_raw }),
+        "input", apputil.json_value_or(input_raw, "{}"),
         "session_id", json.str(session_id),
     )
     let tool_status = services.tools.dispatch_tool_request(tool_id, normalized)
@@ -834,19 +838,19 @@ fn compact_longrange_tool_result_content(result_raw: str) -> str {
     let message = quoted_raw_field(result_raw, "message")
     let guidance = quoted_raw_field(result_raw, "guidance")
     let next_step = quoted_raw_field(result_raw, "next_step")
-    let mut payload = "{\"tool\":"
-    payload = str.concat(payload, json.str(tool))
-    payload = str.concat(payload, str.concat(",\"status\":", json.str(status)))
+    let payload = map.new()
+    discard map.set(payload, "tool", json.str(tool))
+    discard map.set(payload, "status", json.str(status))
     if message != "" {
-        payload = str.concat(payload, str.concat(",\"message\":", json.str(message)))
+        discard map.set(payload, "message", json.str(message))
     }
     if guidance != "" {
-        payload = str.concat(payload, str.concat(",\"guidance\":", json.str(guidance)))
+        discard map.set(payload, "guidance", json.str(guidance))
     }
     if next_step != "" {
-        payload = str.concat(payload, str.concat(",\"next_step\":", json.str(next_step)))
+        discard map.set(payload, "next_step", json.str(next_step))
     }
-    return str.concat(payload, "}")
+    return json.object(payload)
 }
 
 fn tool_result_content(outcome_json: str) -> str {
@@ -903,7 +907,7 @@ fn tool_result_block_json(tool_use_id: str, outcome_json: str) -> str {
         "type", json.str("tool_result"),
         "tool_use_id", json.str(tool_use_id),
         "content", json.str(tool_result_content(outcome_json)),
-        "is_error", json.raw(is_error),
+        "is_error", apputil.json_value_or(is_error, "false"),
     )
 }
 
@@ -914,19 +918,19 @@ fn compact_tool_event_outcome_json(tool_id: str, outcome_json: str) -> str {
     let artifact_path = json.get_str(parsed, "artifact_path")
     let request_id = json.get_str(parsed, "request_id")
     let run_id = json.get_str(parsed, "run_id")
-    let mut payload = "{\"request_id\":"
-    payload = str.concat(payload, json.str(request_id))
-    payload = str.concat(payload, str.concat(",\"status\":", json.str(api.rpc.response_status_text(parsed))))
+    let payload = map.new()
+    discard map.set(payload, "request_id", json.str(request_id))
+    discard map.set(payload, "status", json.str(api.rpc.response_status_text(parsed)))
     if run_id != "" {
-        payload = str.concat(payload, str.concat(",\"run_id\":", json.str(run_id)))
+        discard map.set(payload, "run_id", json.str(run_id))
     }
     if artifact_path != "" {
-        payload = str.concat(payload, str.concat(",\"artifact_path\":", json.str(artifact_path)))
+        discard map.set(payload, "artifact_path", json.str(artifact_path))
     }
     if result_raw != "" {
-        payload = str.concat(payload, str.concat(",\"result_excerpt\":", json.str(apputil.excerpt_head(tool_result_content(safe_outcome), 320))))
+        discard map.set(payload, "result_excerpt", json.str(apputil.excerpt_head(tool_result_content(safe_outcome), 320)))
     }
-    return str.concat(payload, "}")
+    return json.object(payload)
 }
 
 fn tool_event_json(tool_id: str, tool_use_id: str, input_raw: str, outcome_json: str) -> str {
@@ -937,7 +941,7 @@ fn tool_event_json(tool_id: str, tool_use_id: str, input_raw: str, outcome_json:
     let mut payload = "{"
     payload = str.concat(payload, str.concat("\"tool\":", json.str(tool_id)))
     payload = str.concat(payload, str.concat(",\"tool_use_id\":", json.str(tool_use_id)))
-    payload = str.concat(payload, str.concat(",\"input\":", json.raw(safe_input)))
+    payload = str.concat(payload, str.concat(",\"input\":", apputil.json_value_or(safe_input, "{}")))
     payload = str.concat(payload, str.concat(",\"outcome_status\":", json.str(api.rpc.response_status_text(parsed_outcome))))
     let outcome_request_id = json.get_str(compact_outcome, "request_id")
     if outcome_request_id != "" {
@@ -1024,25 +1028,33 @@ fn raw_tool_input(block_raw: str) -> str {
 
 fn collect_tool_results_from_raw_content(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> i32 {
     let raw = content_raw(parsed)
-    let block_raw = raw_tool_use_block(raw)
-    if block_raw == "" {
+    if raw == "" {
         return 0
     }
-    let name = quoted_raw_field(block_raw, "name")
-    let tool_use_id = quoted_raw_field(block_raw, "id")
-    let input_raw = raw_tool_input(block_raw)
-    if name == "" || tool_use_id == "" {
-        return 0
+    let content = json.parse(raw)
+    let mut idx: i32 = 0
+    while idx < max_content_blocks() {
+        let block = json.get(content, str.from_i32(idx))
+        if json.get_str(block, "type") == "tool_use" {
+            let name = json.get_str(block, "name")
+            let tool_use_id = json.get_str(block, "id")
+            let input_raw = apputil.json_nested_field_or_empty(block, "input")
+            if name == "" || tool_use_id == "" {
+                return 0
+            }
+            let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
+            if stream_mode == 1 {
+                let outcome_parsed = json.parse(outcome)
+                discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
+                discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
+            }
+            discard list.push(tool_results, tool_result_block_json(tool_use_id, outcome))
+            discard list.push(tool_events, tool_event_json(name, tool_use_id, input_raw, outcome))
+            return 1
+        }
+        idx = idx + 1
     }
-    let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
-    if stream_mode == 1 {
-        let outcome_parsed = json.parse(outcome)
-        discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
-        discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
-    }
-    discard list.push(tool_results, tool_result_block_json(tool_use_id, outcome))
-    discard list.push(tool_events, tool_event_json(name, tool_use_id, input_raw, outcome))
-    return 1
+    return 0
 }
 
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32, system_prompt: str) -> str {
@@ -1172,7 +1184,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     write_debug("assistant_message.json", assistant_message)
     let tool_results_array = json.array(tool_results)
     write_debug("tool_results.json", tool_results_array)
-    let tool_result_message = apputil.json_obj2("role", json.str("user"), "content", json.raw(tool_results_array))
+    let tool_result_message = apputil.json_obj2("role", json.str("user"), "content", apputil.json_value_or(tool_results_array, "[]"))
     write_debug("tool_result_message.json", tool_result_message)
     let next_messages = append_message_json(append_message_json(messages_json, assistant_message), tool_result_message)
     write_debug("next_messages.json", next_messages)

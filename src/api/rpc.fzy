@@ -26,7 +26,7 @@ enum ToolResponseKind {
 }
 
 fn rpc_manifest_path() -> str {
-    return "/tmp/fzyagent/api.rpc.json"
+    return runtime.config.state_path("api.rpc.json")
 }
 
 fn tool_protocol_version() -> str {
@@ -83,28 +83,28 @@ fn schema_ref(schema_name: str) -> str {
 
 fn request_body_json(description: str, schema_name: str, required: str) -> str {
     let schema_obj = map.new()
-    discard map.set(schema_obj, "schema", json.raw(schema_ref(schema_name)))
+    discard map.set(schema_obj, "schema", apputil.json_value(schema_ref(schema_name)))
     let content = map.new()
-    discard map.set(content, "application/json", json.raw(json.object(schema_obj)))
+    discard map.set(content, "application/json", apputil.json_object_value(schema_obj))
     let payload = map.new()
     discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "required", json.raw(required))
-    discard map.set(payload, "content", json.raw(json.object(content)))
+    discard map.set(payload, "required", apputil.json_value(required))
+    discard map.set(payload, "content", apputil.json_object_value(content))
     return json.object(payload)
 }
 
 fn response_content_json(schema_name: str) -> str {
     let schema_obj = map.new()
-    discard map.set(schema_obj, "schema", json.raw(schema_ref(schema_name)))
+    discard map.set(schema_obj, "schema", apputil.json_value(schema_ref(schema_name)))
     let content = map.new()
-    discard map.set(content, "application/json", json.raw(json.object(schema_obj)))
+    discard map.set(content, "application/json", apputil.json_object_value(schema_obj))
     return json.object(content)
 }
 
 fn response_object_json(description: str, schema_name: str) -> str {
     let payload = map.new()
     discard map.set(payload, "description", json.str(description))
-    discard map.set(payload, "content", json.raw(response_content_json(schema_name)))
+    discard map.set(payload, "content", apputil.json_value(response_content_json(schema_name)))
     return json.object(payload)
 }
 
@@ -121,7 +121,7 @@ fn schema_object_json() -> str {
 }
 
 fn schema_array_items_json(items_json: str) -> str {
-    return apputil.json_obj2("type", json.str("array"), "items", json.raw(items_json))
+    return apputil.json_obj2("type", json.str("array"), "items", items_json)
 }
 
 fn required_list0() -> ListHandle {
@@ -164,9 +164,9 @@ fn required_list7(a: str, b: str, c: str, d: str, e: str, f: str, g: str) -> Lis
 fn object_schema_json(properties: MapHandle, required: ListHandle) -> str {
     let schema = map.new()
     discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "properties", apputil.json_object_value(properties))
     if list.len(required) > 0 {
-        discard map.set(schema, "required", json.raw(json.array(required)))
+        discard map.set(schema, "required", apputil.json_array_value(required))
     }
     return json.object(schema)
 }
@@ -174,8 +174,8 @@ fn object_schema_json(properties: MapHandle, required: ListHandle) -> str {
 fn object_schema_with_additional_json(properties: MapHandle, additional_raw: str) -> str {
     let schema = map.new()
     discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
-    discard map.set(schema, "additionalProperties", json.raw(additional_raw))
+    discard map.set(schema, "properties", apputil.json_object_value(properties))
+    discard map.set(schema, "additionalProperties", apputil.json_value(additional_raw))
     return json.object(schema)
 }
 
@@ -190,89 +190,89 @@ fn request_id_from(raw_body: str) -> str {
 
 fn step_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "step_id", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "input", json.raw(schema_object_json()))
+    discard map.set(properties, "step_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "input", apputil.json_value(schema_object_json()))
     return object_schema_json(properties, required_list1("tool_id"))
 }
 
 fn single_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "input", json.raw(schema_object_json()))
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    discard map.set(properties, "request_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "input", apputil.json_value(schema_object_json()))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required_list0())
 }
 
 fn batch_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "execution", json.raw(schema_string_json()))
-    discard map.set(properties, "steps", json.raw(schema_array_items_json(step_schema_json())))
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    discard map.set(properties, "request_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "execution", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "steps", apputil.json_value(schema_array_items_json(step_schema_json())))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required_list1("steps"))
 }
 
 fn request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "execution", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "input", json.raw(schema_object_json()))
-    discard map.set(properties, "steps", json.raw(schema_array_items_json(step_schema_json())))
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
+    discard map.set(properties, "request_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "execution", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "input", apputil.json_value(schema_object_json()))
+    discard map.set(properties, "steps", apputil.json_value(schema_array_items_json(step_schema_json())))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required_list0())
 }
 
 fn response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "artifact_path", json.raw(schema_string_json()))
-    discard map.set(properties, "result", json.raw(schema_object_json()))
+    discard map.set(properties, "request_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "artifact_path", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "result", apputil.json_value(schema_object_json()))
     return object_schema_json(properties, required_list5("status", "tool_id", "run_id", "artifact_path", "result"))
 }
 
 fn session_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
-    discard map.set(properties, "reset", json.raw(schema_string_json()))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "reset", apputil.json_value(schema_string_json()))
     return object_schema_with_additional_json(properties, "true")
 }
 
 fn session_response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "event", json.raw(schema_string_json()))
-    discard map.set(properties, "session", json.raw(schema_object_json()))
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
-    discard map.set(properties, "details", json.raw(schema_object_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "event", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "session", apputil.json_value(schema_object_json()))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "details", apputil.json_value(schema_object_json()))
     return object_schema_with_additional_json(properties, "true")
 }
 
 fn message_request_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "message", json.raw(schema_string_json()))
+    discard map.set(properties, "message", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required_list1("message"))
 }
 
 fn message_response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
-    discard map.set(properties, "request_id", json.raw(schema_string_json()))
-    discard map.set(properties, "data", json.raw(schema_object_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "request_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "data", apputil.json_value(schema_object_json()))
     return object_schema_json(properties, required_list4("status", "session_id", "request_id", "data"))
 }
 
 fn tools_response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "tools", json.raw(schema_array_items_json(schema_object_json())))
-    discard map.set(properties, "meta", json.raw(schema_object_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tools", apputil.json_value(schema_array_items_json(schema_object_json())))
+    discard map.set(properties, "meta", apputil.json_value(schema_object_json()))
     return object_schema_json(properties, required_list3("status", "tools", "meta"))
 }
 
@@ -280,16 +280,16 @@ fn run_response_schema_json() -> str {
     let schema = map.new()
     discard map.set(schema, "type", json.str("object"))
     discard map.set(schema, "description", json.str("stored run envelope or run artifact payload"))
-    discard map.set(schema, "additionalProperties", json.raw("true"))
+    discard map.set(schema, "additionalProperties", apputil.json_bool(1))
     return json.object(schema)
 }
 
 fn health_response_schema_json() -> str {
     let properties = map.new()
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "service", json.raw(schema_string_json()))
-    discard map.set(properties, "provider", json.raw(schema_string_json()))
-    discard map.set(properties, "model", json.raw(schema_string_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "service", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "provider", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "model", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required_list4("status", "service", "provider", "model"))
 }
 
@@ -297,7 +297,7 @@ fn batch_step_example_json(step_id: str, tool_id: str, input_json: str) -> str {
     return apputil.json_obj3(
         "step_id", json.str(step_id),
         "tool_id", json.str(tool_id),
-        "input", json.raw(input_json),
+        "input", if input_json == "" { "{}" } else { input_json },
     )
 }
 
@@ -305,18 +305,18 @@ fn single_example_json() -> str {
     return apputil.json_obj3(
         "request_id", json.str("req_example"),
         "tool_id", json.str("bash"),
-        "input", json.raw(apputil.json_obj1("command", json.str("printf hi"))),
+        "input", apputil.json_obj1("command", json.str("printf hi")),
     )
 }
 
 fn batch_example_json() -> str {
     let batch_steps = list.new()
-    discard list.push(batch_steps, json.raw(batch_step_example_json("a", "bash", apputil.json_obj1("command", json.str("printf a")))))
-    discard list.push(batch_steps, json.raw(batch_step_example_json("b", "grep_search", apputil.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
+    discard list.push(batch_steps, apputil.json_value(batch_step_example_json("a", "bash", apputil.json_obj1("command", json.str("printf a")))))
+    discard list.push(batch_steps, apputil.json_value(batch_step_example_json("b", "grep_search", apputil.json_obj2("pattern", json.str("fn "), "target", json.str("src")))))
     return apputil.json_obj3(
         "request_id", json.str("req_batch"),
         "execution", json.str("parallel"),
-        "steps", json.raw(json.array(batch_steps)),
+        "steps", json.array(batch_steps),
     )
 }
 
@@ -350,10 +350,10 @@ fn protocol_doc_json() -> str {
     let payload = map.new()
     discard map.set(payload, "protocol", json.str(tool_protocol_version()))
     discard map.set(payload, "transport", json.str("http+native-rpc"))
-    discard map.set(payload, "single_request_schema", json.raw(single_request_schema_json()))
-    discard map.set(payload, "batch_request_schema", json.raw(batch_request_schema_json()))
-    discard map.set(payload, "request_schema", json.raw(request_schema_json()))
-    discard map.set(payload, "response_schema", json.raw(response_schema_json()))
+    discard map.set(payload, "single_request_schema", apputil.json_value(single_request_schema_json()))
+    discard map.set(payload, "batch_request_schema", apputil.json_value(batch_request_schema_json()))
+    discard map.set(payload, "request_schema", apputil.json_value(request_schema_json()))
+    discard map.set(payload, "response_schema", apputil.json_value(response_schema_json()))
     discard map.set(payload, "request_schema_name", json.str(request_schema_name()))
     discard map.set(payload, "single_request_schema_name", json.str(single_request_schema_name()))
     discard map.set(payload, "batch_request_schema_name", json.str(batch_request_schema_name()))
@@ -365,39 +365,39 @@ fn protocol_doc_json() -> str {
     discard map.set(payload, "tools_response_schema_name", json.str(tools_response_schema_name()))
     discard map.set(payload, "run_response_schema_name", json.str(run_response_schema_name()))
     discard map.set(payload, "health_response_schema_name", json.str(health_response_schema_name()))
-    discard map.set(payload, "single_example", json.raw(single_example_json()))
-    discard map.set(payload, "batch_example", json.raw(batch_example_json()))
+    discard map.set(payload, "single_example", apputil.json_value(single_example_json()))
+    discard map.set(payload, "batch_example", apputil.json_value(batch_example_json()))
     return json.object(payload)
 }
 
 fn rpc_touch() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     let methods = list.new()
-    discard list.push(methods, json.raw(method_doc_json("CreateSession", "/sessions", "POST", "native rpc session allocation/reset surface")))
-    discard list.push(methods, json.raw(method_doc_json("GetSession", "/sessions/{session_id}", "GET", "native rpc session lookup surface")))
-    discard list.push(methods, json.raw(method_doc_json("PostMessage", "/sessions/{session_id}/messages", "POST", "native rpc assistant turn surface")))
-    discard list.push(methods, json.raw(method_doc_json("ListTools", "/tools", "GET", "native rpc tool discovery surface")))
-    discard list.push(methods, json.raw(method_doc_json("RunTool", "/tools/{tool_id}/run", "POST", "native rpc tool execution surface")))
-    discard list.push(methods, json.raw(method_doc_json("RunToolSequence", "/tools/tool_sequence/run", "POST", "native rpc batched sequence execution surface")))
-    discard list.push(methods, json.raw(method_doc_json("RunToolParallel", "/tools/tool_parallel/run", "POST", "native rpc batched parallel execution surface")))
-    discard list.push(methods, json.raw(method_doc_json("GetRun", "/runs/{run_id}", "GET", "native rpc run lookup surface")))
-    discard list.push(methods, json.raw(method_doc_json("GetHealth", "/healthz", "GET", "native rpc health surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("CreateSession", "/sessions", "POST", "native rpc session allocation/reset surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("GetSession", "/sessions/{session_id}", "GET", "native rpc session lookup surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("PostMessage", "/sessions/{session_id}/messages", "POST", "native rpc assistant turn surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("ListTools", "/tools", "GET", "native rpc tool discovery surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("RunTool", "/tools/{tool_id}/run", "POST", "native rpc tool execution surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("RunToolSequence", "/tools/tool_sequence/run", "POST", "native rpc batched sequence execution surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("RunToolParallel", "/tools/tool_parallel/run", "POST", "native rpc batched parallel execution surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("GetRun", "/runs/{run_id}", "GET", "native rpc run lookup surface")))
+    discard list.push(methods, apputil.json_value(method_doc_json("GetHealth", "/healthz", "GET", "native rpc health surface")))
     let payload = apputil.json_obj5(
         "status", json.str("ok"),
         "transport", json.str("http+native-rpc"),
         "project", json.str("fzyagent"),
-        "methods", json.raw(json.array(methods)),
-        "tool_protocol", json.raw(protocol_doc_json()),
+        "methods", json.array(methods),
+        "tool_protocol", protocol_doc_json(),
     )
     let payload_map = json.parse(payload)
     let exported = map.new()
     discard map.set(exported, "status", json.str(json.get_str(payload_map, "status")))
     discard map.set(exported, "transport", json.str(json.get_str(payload_map, "transport")))
     discard map.set(exported, "project", json.str(json.get_str(payload_map, "project")))
-    discard map.set(exported, "methods", json.raw(json.get_str(json.get(payload_map, "methods"), "raw")))
-    discard map.set(exported, "tool_protocol", json.raw(json.get_str(json.get(payload_map, "tool_protocol"), "raw")))
-    discard map.set(exported, "runtime_schemas", json.raw(runtime_schema_names_json()))
-    discard map.set(exported, "service_schemas", json.raw(service_schema_names_json()))
+    discard map.set(exported, "methods", apputil.json_value_or(json.get_str(json.get(payload_map, "methods"), "raw"), "[]"))
+    discard map.set(exported, "tool_protocol", apputil.json_value_or(json.get_str(json.get(payload_map, "tool_protocol"), "raw"), "{}"))
+    discard map.set(exported, "runtime_schemas", apputil.json_value(runtime_schema_names_json()))
+    discard map.set(exported, "service_schemas", apputil.json_value(service_schema_names_json()))
     fs.write_file(rpc_manifest_path(), json.object(exported))
     return 0
 }
@@ -406,7 +406,7 @@ fn rpc_error_json(request_id: str, code: str, message: str) -> str {
     return apputil.json_obj3(
         "request_id", json.str(request_id),
         "status", json.str("error"),
-        "error", json.raw(apputil.json_obj2("code", json.str(code), "message", json.str(message))),
+        "error", apputil.json_obj2("code", json.str(code), "message", json.str(message)),
     )
 }
 
@@ -438,7 +438,7 @@ fn single_request_json(request_id: str, tool_id: str, input_json: str) -> str {
     return apputil.json_obj3(
         "request_id", json.str(if request_id == "" { request_id_from("{}") } else { request_id }),
         "tool_id", json.str(tool_id),
-        "input", json.raw(if input_json == "" { "{}" } else { input_json }),
+        "input", if input_json == "" { "{}" } else { input_json },
     )
 }
 
@@ -468,7 +468,7 @@ fn tool_response_json(request_id: str, tool_id: str, run_id: str, status_code: i
     discard map.set(payload, "tool_id", json.str(tool_id))
     discard map.set(payload, "run_id", json.str(run_id))
     discard map.set(payload, "artifact_path", json.str(artifact_path))
-    discard map.set(payload, "result", json.raw(result_json))
+    discard map.set(payload, "result", apputil.json_value_or(result_json, "{}"))
     discard map.set(payload, "result_raw", json.str(result_json))
     return json.object(payload)
 }
@@ -513,7 +513,7 @@ fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
         let payload = map.new()
         discard map.set(payload, "request_id", json.str(request_id))
         discard map.set(payload, "execution", json.str(execution))
-        discard map.set(payload, "steps", json.raw(if steps_raw == "" { "[]" } else { steps_raw }))
+        discard map.set(payload, "steps", apputil.json_value_or(steps_raw, "[]"))
         if session_id != "" {
             discard map.set(payload, "session_id", json.str(session_id))
         }
@@ -522,7 +522,7 @@ fn normalize_tool_request(path_tool_id: str, raw_body: str) -> str {
     let payload = map.new()
     discard map.set(payload, "request_id", json.str(request_id))
     discard map.set(payload, "tool_id", json.str(path_tool_id))
-    discard map.set(payload, "input", json.raw(if input_raw == "" { safe_body } else { input_raw }))
+    discard map.set(payload, "input", apputil.json_value_or(if input_raw == "" { safe_body } else { input_raw }, "{}"))
     if session_id != "" {
         discard map.set(payload, "session_id", json.str(session_id))
     }

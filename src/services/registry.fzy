@@ -3,35 +3,35 @@ use core.storage;
 use core.time;
 
 fn registry_path() -> str {
-    return "/tmp/fzyagent/registry.json"
+    return runtime.config.state_path("registry.json")
 }
 
 fn tools_array_path() -> str {
-    return "/tmp/fzyagent/registry.tools.json"
+    return runtime.config.state_path("registry.tools.json")
 }
 
 fn anthropic_tools_array_path() -> str {
-    return "/tmp/fzyagent/registry.anthropic.tools.json"
+    return runtime.config.state_path("registry.anthropic.tools.json")
 }
 
 fn openai_tools_array_path() -> str {
-    return "/tmp/fzyagent/registry.openai_compat.tools.json"
+    return runtime.config.state_path("registry.openai_compat.tools.json")
 }
 
 fn summary_path() -> str {
-    return "/tmp/fzyagent/registry.summary.json"
+    return runtime.config.state_path("registry.summary.json")
 }
 
 fn tool_index_path() -> str {
-    return "/tmp/fzyagent/registry.by_id.json"
+    return runtime.config.state_path("registry.by_id.json")
 }
 
 fn hints_path() -> str {
-    return "/tmp/fzyagent/registry.hints.json"
+    return runtime.config.state_path("registry.hints.json")
 }
 
 fn audit_path() -> str {
-    return "/tmp/fzyagent/registry.audit.log"
+    return runtime.config.state_path("registry.audit.log")
 }
 
 fn configured_provider_name() -> str {
@@ -43,18 +43,18 @@ fn configured_provider_name() -> str {
 }
 
 fn ensure_state_dir() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     return 0
 }
 
 fn custom_tools_root() -> str {
-    return "/Users/deepsaint/Desktop/fzyagent/custom_tools"
+    return runtime.config.custom_tools_dir()
 }
 
 fn default_input_schema() -> str {
     let schema = map.new()
     discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw("{}"))
+    discard map.set(schema, "properties", apputil.json_empty_object())
     return json.object(schema)
 }
 
@@ -67,7 +67,7 @@ fn schema_object_json() -> str {
 }
 
 fn schema_array_items_json(items_json: str) -> str {
-    return apputil.json_obj2("type", json.str("array"), "items", json.raw(items_json))
+    return apputil.json_obj2("type", json.str("array"), "items", items_json)
 }
 
 fn required1(a: str) -> ListHandle {
@@ -79,9 +79,9 @@ fn required1(a: str) -> ListHandle {
 fn object_schema_json(properties: MapHandle, required: ListHandle) -> str {
     let schema = map.new()
     discard map.set(schema, "type", json.str("object"))
-    discard map.set(schema, "properties", json.raw(json.object(properties)))
+    discard map.set(schema, "properties", apputil.json_object_value(properties))
     if list.len(required) > 0 {
-        discard map.set(schema, "required", json.raw(json.array(required)))
+        discard map.set(schema, "required", apputil.json_array_value(required))
     }
     return json.object(schema)
 }
@@ -103,77 +103,77 @@ fn custom_tool_json(tool_id: str, description: str, kind: str, mode: str, input_
 }
 
 fn append_tool_triplet(tools: ListHandle, anthropic: ListHandle, openai: ListHandle, tool_json: str, anthropic_json: str, openai_json: str) -> i32 {
-    discard list.push(tools, json.raw(tool_json))
-    discard list.push(anthropic, json.raw(anthropic_json))
-    discard list.push(openai, json.raw(openai_json))
+    discard list.push(tools, apputil.json_value(tool_json))
+    discard list.push(anthropic, apputil.json_value(anthropic_json))
+    discard list.push(openai, apputil.json_value(openai_json))
     return 0
 }
 
 fn tool_schema_command() -> str {
     let properties = map.new()
-    discard map.set(properties, "command", json.raw(schema_string_json()))
+    discard map.set(properties, "command", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("command"))
 }
 
 fn tool_schema_grep() -> str {
     let properties = map.new()
-    discard map.set(properties, "pattern", json.raw(schema_string_json()))
-    discard map.set(properties, "target", json.raw(schema_string_json()))
+    discard map.set(properties, "pattern", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "target", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("pattern"))
 }
 
 fn tool_schema_queue_enqueue() -> str {
     let properties = map.new()
-    discard map.set(properties, "queue_tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "queued_run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "input", json.raw(schema_object_json()))
+    discard map.set(properties, "queue_tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "queued_run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "input", apputil.json_value(schema_object_json()))
     return object_schema_json(properties, required1("queue_tool_id"))
 }
 
 fn tool_schema_steps() -> str {
     let step_properties = map.new()
-    discard map.set(step_properties, "step_id", json.raw(schema_string_json()))
-    discard map.set(step_properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(step_properties, "input", json.raw(schema_object_json()))
+    discard map.set(step_properties, "step_id", apputil.json_value(schema_string_json()))
+    discard map.set(step_properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(step_properties, "input", apputil.json_value(schema_object_json()))
     let step_item = object_schema_json(step_properties, required1("tool_id"))
     let properties = map.new()
-    discard map.set(properties, "steps", json.raw(schema_array_items_json(step_item)))
+    discard map.set(properties, "steps", apputil.json_value(schema_array_items_json(step_item)))
     return object_schema_json(properties, required1("steps"))
 }
 
 fn tool_schema_aegis() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(schema_string_json()))
-    discard map.set(properties, "url", json.raw(schema_string_json()))
-    discard map.set(properties, "query", json.raw(schema_string_json()))
-    discard map.set(properties, "eval_js", json.raw(schema_string_json()))
-    discard map.set(properties, "commands_json", json.raw(schema_string_json()))
+    discard map.set(properties, "action", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "url", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "query", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "eval_js", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "commands_json", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_toolsmith() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(schema_string_json()))
-    discard map.set(properties, "tool_id", json.raw(schema_string_json()))
-    discard map.set(properties, "description", json.raw(schema_string_json()))
-    discard map.set(properties, "command_template", json.raw(schema_string_json()))
-    discard map.set(properties, "input_schema_json", json.raw(schema_string_json()))
-    discard map.set(properties, "kind", json.raw(schema_string_json()))
-    discard map.set(properties, "mode", json.raw(schema_string_json()))
+    discard map.set(properties, "action", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "tool_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "description", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "command_template", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "input_schema_json", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "kind", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "mode", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_promptsmith() -> str {
     let properties = map.new()
-    discard map.set(properties, "action", json.raw(schema_string_json()))
-    discard map.set(properties, "content", json.raw(schema_string_json()))
+    discard map.set(properties, "action", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "content", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("action"))
 }
 
 fn tool_schema_fzydoc() -> str {
     let properties = map.new()
-    discard map.set(properties, "query", json.raw(schema_string_json()))
-    discard map.set(properties, "max_lines", json.raw(schema_string_json()))
+    discard map.set(properties, "query", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "max_lines", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("query"))
 }
 
@@ -183,74 +183,74 @@ fn tool_schema_runtime_control() -> str {
 
 fn plan_step_schema() -> str {
     let properties = map.new()
-    discard map.set(properties, "step_id", json.raw(schema_string_json()))
-    discard map.set(properties, "title", json.raw(schema_string_json()))
-    discard map.set(properties, "description", json.raw(schema_string_json()))
-    discard map.set(properties, "status", json.raw(schema_string_json()))
-    discard map.set(properties, "done_criteria", json.raw(schema_string_json()))
-    discard map.set(properties, "step_type", json.raw(schema_string_json()))
-    discard map.set(properties, "evidence_mode", json.raw(schema_string_json()))
-    discard map.set(properties, "completion_signal", json.raw(schema_string_json()))
-    discard map.set(properties, "step_outlook", json.raw(schema_string_json()))
-    discard map.set(properties, "target_turns", json.raw(schema_string_json()))
+    discard map.set(properties, "step_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "title", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "description", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "status", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "done_criteria", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "step_type", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "evidence_mode", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "completion_signal", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "step_outlook", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "target_turns", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("step_id"))
 }
 
 fn tool_schema_plan_write() -> str {
     let properties = map.new()
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "goal_summary", json.raw(schema_string_json()))
-    discard map.set(properties, "finished_definition", json.raw(schema_string_json()))
-    discard map.set(properties, "difficulty", json.raw(schema_string_json()))
-    discard map.set(properties, "estimated_effort", json.raw(schema_string_json()))
-    discard map.set(properties, "task_class", json.raw(schema_string_json()))
-    discard map.set(properties, "completion_mode", json.raw(schema_string_json()))
-    discard map.set(properties, "expected_total_turns", json.raw(schema_string_json()))
-    discard map.set(properties, "execution_outlook", json.raw(schema_string_json()))
-    discard map.set(properties, "planning_style", json.raw(schema_string_json()))
-    discard map.set(properties, "current_step_id", json.raw(schema_string_json()))
-    discard map.set(properties, "plan_summary", json.raw(schema_string_json()))
-    discard map.set(properties, "steps", json.raw(schema_array_items_json(plan_step_schema())))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "goal_summary", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "finished_definition", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "difficulty", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "estimated_effort", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "task_class", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "completion_mode", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "expected_total_turns", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "execution_outlook", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "planning_style", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "current_step_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "plan_summary", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "steps", apputil.json_value(schema_array_items_json(plan_step_schema())))
     return object_schema_json(properties, required1("goal_summary"))
 }
 
 fn tool_schema_plan_update_compact() -> str {
     let properties = map.new()
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "current_step_id", json.raw(schema_string_json()))
-    discard map.set(properties, "plan_summary", json.raw(schema_string_json()))
-    discard map.set(properties, "execution_outlook", json.raw(schema_string_json()))
-    discard map.set(properties, "planning_style", json.raw(schema_string_json()))
-    discard map.set(properties, "expected_total_turns", json.raw(schema_string_json()))
-    discard map.set(properties, "steps", json.raw(schema_array_items_json(plan_step_schema())))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "current_step_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "plan_summary", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "execution_outlook", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "planning_style", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "expected_total_turns", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "steps", apputil.json_value(schema_array_items_json(plan_step_schema())))
     return object_schema_json(properties, list.new())
 }
 
 fn tool_schema_goal_complete() -> str {
     let properties = map.new()
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "summary", json.raw(schema_string_json()))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "summary", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("summary"))
 }
 
 fn tool_schema_longrange_start() -> str {
     let properties = map.new()
-    discard map.set(properties, "session_id", json.raw(schema_string_json()))
-    discard map.set(properties, "goal", json.raw(schema_string_json()))
+    discard map.set(properties, "session_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "goal", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("goal"))
 }
 
 fn tool_schema_longrange_message() -> str {
     let properties = map.new()
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
-    discard map.set(properties, "message", json.raw(schema_string_json()))
-    discard map.set(properties, "interrupt", json.raw(schema_string_json()))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "message", apputil.json_value(schema_string_json()))
+    discard map.set(properties, "interrupt", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, required1("message"))
 }
 
 fn tool_schema_longrange_select() -> str {
     let properties = map.new()
-    discard map.set(properties, "run_id", json.raw(schema_string_json()))
+    discard map.set(properties, "run_id", apputil.json_value(schema_string_json()))
     return object_schema_json(properties, list.new())
 }
 
@@ -436,7 +436,7 @@ fn export_index_and_summary() -> i32 {
             }
             let raw = tool_raw_at(parsed, idx)
             if raw != "" {
-                discard map.set(index, tool_id, json.raw(raw))
+                discard map.set(index, tool_id, apputil.json_value_or(raw, "{}"))
             }
             discard add_tool_to_arrays(parsed, idx, ids, search, browser, authoring, workflows)
         }
@@ -578,7 +578,7 @@ fn append_provider_tool(items: ListHandle, tool_id: str, description: str, input
     } else {
         anthropic_tool_json(tool_id, description, input_schema_json)
     }
-    discard list.push(items, json.raw(encoded))
+    discard list.push(items, apputil.json_value_or(encoded, "{}"))
     return 0
 }
 

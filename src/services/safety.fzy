@@ -1,7 +1,7 @@
 use core.fs;
 
 fn safety_path() -> str {
-    return "/tmp/fzyagent/safety.last.json"
+    return runtime.config.state_path("safety.last.json")
 }
 
 fn safety_runtime_mode() -> str {
@@ -23,7 +23,7 @@ fn record(stage: str, status: str, details: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 0 {
         return 0
     }
-    fs.mkdir("/tmp/fzyagent")
+    runtime.config.ensure_state_root()
     let payload = json.object(#{
         "stage": json.str(stage),
         "mode": json.str(safety_runtime_mode()),

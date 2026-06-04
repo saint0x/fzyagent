@@ -3,19 +3,19 @@ use core.storage;
 use core.time;
 
 fn state_dir() -> str {
-    return "/tmp/fzyagent"
+    return runtime.config.state_root()
 }
 
 fn sessions_dir() -> str {
-    return "/tmp/fzyagent/sessions"
+    return apputil.path_join2(state_dir(), "sessions")
 }
 
 fn sessions_path() -> str {
-    return "/tmp/fzyagent/sessions.json"
+    return apputil.path_join2(state_dir(), "sessions.json")
 }
 
 fn runs_dir() -> str {
-    return "/tmp/fzyagent/runs"
+    return apputil.path_join2(state_dir(), "runs")
 }
 
 fn transcript_excerpt_limit() -> i32 {
@@ -34,7 +34,7 @@ fn normalize_session_id(session_id: str) -> str {
 }
 
 fn session_dir(session_id: str) -> str {
-    return str.concat("/tmp/fzyagent/sessions/", normalize_session_id(session_id))
+    return apputil.path_join2(sessions_dir(), normalize_session_id(session_id))
 }
 
 fn session_state_path(session_id: str) -> str {
@@ -55,13 +55,13 @@ fn session_runs_path(session_id: str) -> str {
 
 fn run_path(run_id: str) -> str {
     if run_id == "latest" {
-        return "/tmp/fzyagent/runs/latest.json"
+        return apputil.path_join2(runs_dir(), "latest.json")
     }
-    return str.concat(str.concat("/tmp/fzyagent/runs/", run_id), ".json")
+    return apputil.path_join2(runs_dir(), str.concat(run_id, ".json"))
 }
 
 fn ensure_state() -> i32 {
-    fs.mkdir(state_dir())
+    runtime.config.ensure_state_root()
     fs.mkdir(sessions_dir())
     fs.mkdir(runs_dir())
     return 0
@@ -94,7 +94,7 @@ fn clear_session_files(session_id: str) -> i32 {
 }
 
 fn static_index_path() -> str {
-    return "/tmp/fzyagent/sessions.json"
+    return sessions_path()
 }
 
 fn now_label() -> str {
@@ -153,13 +153,7 @@ fn save_session() -> i32 {
 }
 
 fn append_line(path: str, line: str) -> i32 {
-    let current = if fs.exists(path) == 1 { fs.read_file(path) } else { "" }
-    let next = if current == "" {
-        str.concat(line, "\n")
-    } else {
-        str.concat3(current, line, "\n")
-    }
-    return atomic_write_text(path, next)
+    return storage.atomic_append(path, str.concat(line, "\n"))
 }
 
 fn count_lines(text_value: str) -> i32 {

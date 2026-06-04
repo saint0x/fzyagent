@@ -8,22 +8,22 @@ enum ProviderKind {
 }
 
 fn debug_dispatch_json(provider_name: str, max_tokens: str, messages_json: str, tools_json: str, system_prompt: str) -> str {
-    let mut payload = "{\"provider\":"
-    payload = str.concat(payload, json.str(provider_name))
-    payload = str.concat(payload, str.concat(",\"max_tokens\":", json.str(max_tokens)))
-    payload = str.concat(payload, str.concat(",\"messages_chars\":", json.str(str.from_i32(str.len(messages_json)))))
-    payload = str.concat(payload, str.concat(",\"tools_chars\":", json.str(str.from_i32(str.len(tools_json)))))
-    payload = str.concat(payload, str.concat(",\"system_prompt_chars\":", json.str(str.from_i32(str.len(system_prompt)))))
-    return str.concat(payload, "}")
+    let payload = map.new()
+    discard map.set(payload, "provider", json.str(provider_name))
+    discard map.set(payload, "max_tokens", json.str(max_tokens))
+    discard map.set(payload, "messages_chars", json.str(str.from_i32(str.len(messages_json))))
+    discard map.set(payload, "tools_chars", json.str(str.from_i32(str.len(tools_json))))
+    discard map.set(payload, "system_prompt_chars", json.str(str.from_i32(str.len(system_prompt))))
+    return json.object(payload)
 }
 
 fn debug_dispatch_result_json(provider_name: str, raw: str) -> str {
-    let mut payload = "{\"provider\":"
-    payload = str.concat(payload, json.str(provider_name))
-    payload = str.concat(payload, str.concat(",\"http_status\":", json.str(str.from_i32(http.last_status()))))
-    payload = str.concat(payload, str.concat(",\"last_error\":", json.str(http.last_error())))
-    payload = str.concat(payload, str.concat(",\"raw_chars\":", json.str(str.from_i32(str.len(raw)))))
-    return str.concat(payload, "}")
+    let payload = map.new()
+    discard map.set(payload, "provider", json.str(provider_name))
+    discard map.set(payload, "http_status", json.str(str.from_i32(http.last_status())))
+    discard map.set(payload, "last_error", json.str(http.last_error()))
+    discard map.set(payload, "raw_chars", json.str(str.from_i32(str.len(raw))))
+    return json.object(payload)
 }
 
 fn configured_provider_raw() -> str {
@@ -156,9 +156,9 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     let provider_name = current_provider_name()
     let max_tokens = request_max_tokens()
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir("/tmp/fzyagent")
+        runtime.config.ensure_state_root()
         discard fs.atomic_write(
-            "/tmp/fzyagent/provider.dispatch.json",
+            runtime.config.state_path("provider.dispatch.json"),
             debug_dispatch_json(provider_name, max_tokens, messages_json, tools_json, system_prompt),
         )
     }
@@ -176,7 +176,7 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     }
     if runtime.config.persist_request_artifacts() == 1 {
         discard fs.atomic_write(
-            "/tmp/fzyagent/provider.dispatch.result.json",
+            runtime.config.state_path("provider.dispatch.result.json"),
             debug_dispatch_result_json(provider_name, raw),
         )
     }

@@ -8,8 +8,96 @@ fn env_or(key: str, fallback: str) -> str {
     return value
 }
 
+fn project_dir() -> str {
+    let configured = env.get("AGENT_PROJECT_DIR")
+    if configured != "" {
+        return configured
+    }
+    let pwd = env.get("PWD")
+    if pwd != "" {
+        return pwd
+    }
+    return "/Users/deepsaint/Desktop/fzyagent"
+}
+
+fn state_root() -> str {
+    return env_or("AGENT_STATE_DIR", "/tmp/fzyagent")
+}
+
+fn config_dir() -> str {
+    return apputil.path_join2(project_dir(), "config")
+}
+
+fn docs_dir() -> str {
+    return apputil.path_join3(project_dir(), "docs", "fzy")
+}
+
+fn scripts_dir() -> str {
+    return apputil.path_join2(project_dir(), "scripts")
+}
+
+fn custom_tools_dir() -> str {
+    return apputil.path_join2(project_dir(), "custom_tools")
+}
+
+fn state_path(name: str) -> str {
+    return apputil.path_join2(state_root(), name)
+}
+
+fn state_subdir(name: str) -> str {
+    return apputil.path_join2(state_root(), name)
+}
+
 fn config_path() -> str {
-    return "/tmp/fzyagent/runtime.config.json"
+    return state_path("runtime.config.json")
+}
+
+fn agent_system_prompt_path() -> str {
+    return apputil.path_join2(config_dir(), "agent_system_prompt.md")
+}
+
+fn agent_system_prompt_default_path() -> str {
+    return apputil.path_join2(config_dir(), "agent_system_prompt.default.md")
+}
+
+fn runtime_overlay_prompt_path() -> str {
+    return apputil.path_join2(config_dir(), "prompt_overlay.runtime.md")
+}
+
+fn longrange_overlay_prompt_path() -> str {
+    return apputil.path_join2(config_dir(), "prompt_overlay.longrange.md")
+}
+
+fn host_name() -> str {
+    return env_or("AGENT_HOST", "127.0.0.1")
+}
+
+fn port_value() -> str {
+    return env_or("AGENT_PORT", "8787")
+}
+
+fn worker_count_value() -> str {
+    return env_or("AGENT_WORKERS", "4")
+}
+
+fn worker_count() -> i32 {
+    let parsed = apputil.parse_i32(worker_count_value())
+    if parsed <= 0 {
+        return 1
+    }
+    return parsed
+}
+
+fn capture_request_bodies() -> i32 {
+    if env_or("AGENT_CAPTURE_REQUEST_BODIES", "0") == "1" {
+        return 1
+    }
+    return 0
+}
+
+fn ensure_state_root() -> i32 {
+    fs.mkdir(state_root())
+    return 0
 }
 
 fn background_mode() -> str {
@@ -49,26 +137,23 @@ fn persist_runtime_events() -> i32 {
 }
 
 fn apply_server_config() -> i32 {
-    fs.mkdir("/tmp/fzyagent")
-    let host_name = env_or("AGENT_HOST", "127.0.0.1")
-    let port_value = env_or("AGENT_PORT", "8787")
-    let worker_count_value = env_or("AGENT_WORKERS", "4")
-    let payload = model.types.runtime_config_json(host_name, port_value, worker_count_value, background_mode(), observability_mode())
+    ensure_state_root()
+    let payload = model.types.runtime_config_json(host_name(), port_value(), worker_count_value(), background_mode(), observability_mode())
     fs.write_file(config_path(), payload)
     return 0
 }
 
 fn load_host() -> i32 {
-    env.get("AGENT_HOST")
+    host_name()
     return 0
 }
 
 fn load_port() -> i32 {
-    env.get("AGENT_PORT")
+    port_value()
     return 0
 }
 
 fn load_workers() -> i32 {
-    env.get("AGENT_WORKERS")
+    worker_count_value()
     return 0
 }
