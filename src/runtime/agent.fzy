@@ -28,9 +28,15 @@ fn write_debug(name: str, payload: str) -> i32 {
     if runtime.config.persist_request_artifacts() == 0 {
         return 0
     }
-    fs.mkdir(debug_dir())
-    discard fs.atomic_write(debug_path(name), payload)
+    discard services.localfs.write_text(debug_path(name), payload)
     return 0
+}
+
+fn write_debug_current(prefix: str, payload: str) -> i32 {
+    if runtime.config.persist_request_artifacts() == 0 {
+        return 0
+    }
+    return write_debug(str.concat(prefix, ".current.json"), payload)
 }
 
 fn read_prompt_or_empty(path: str) -> str {
@@ -592,6 +598,19 @@ fn parsed_message_has_content(parsed: JsonHandle) -> i32 {
     return 0
 }
 
+fn raw_looks_like_provider_message(raw: str) -> i32 {
+    if raw == "" {
+        return 0
+    }
+    if str.contains(raw, "\"type\":\"message\"") == 1 {
+        return 1
+    }
+    if str.contains(raw, "\"role\":\"assistant\"") == 1 && str.contains(raw, "\"content\":") == 1 {
+        return 1
+    }
+    return 0
+}
+
 fn tool_event_summary(parsed: JsonHandle) -> str {
     let tool_id = json.get_str(parsed, "tool")
     if tool_id == "bash" {
@@ -980,14 +999,14 @@ fn maybe_push_tool_result(items: ListHandle, events: ListHandle, parsed: JsonHan
     return 1
 }
 
-fn collect_tool_results_and_events(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> i32 {
+fn collect_tool_results_and_events(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, raw_response: str, session_id: str, request_id: str, stream_mode: i32) -> i32 {
     let mut idx: i32 = 0
     while idx < max_content_blocks() {
         discard maybe_push_tool_result(tool_results, tool_events, parsed, str.from_i32(idx), session_id, request_id, stream_mode)
         idx = idx + 1
     }
     if list.len(tool_events) == 0 {
-        discard collect_tool_results_from_raw_content(tool_results, tool_events, parsed, session_id, request_id, stream_mode)
+        discard collect_tool_results_from_raw_content(tool_results, tool_events, raw_response, session_id, request_id, stream_mode)
     }
     return 0
 }
@@ -1002,7 +1021,10 @@ fn raw_tool_use_block(content_json: str) -> str {
     while start > 0 {
         let probe = str.slice(content_json, start, start + 1)
         if probe == "{" {
-            return extract_balanced_json(content_json, start)
+            let prev = str.slice(content_json, start - 1, start)
+            if prev == "[" || prev == "," {
+                return extract_balanced_json(content_json, start)
+            }
         }
         start = start - 1
     }
@@ -1026,35 +1048,29 @@ fn raw_tool_input(block_raw: str) -> str {
     return ""
 }
 
-fn collect_tool_results_from_raw_content(tool_results: ListHandle, tool_events: ListHandle, parsed: JsonHandle, session_id: str, request_id: str, stream_mode: i32) -> i32 {
-    let raw = content_raw(parsed)
-    if raw == "" {
+fn collect_tool_results_from_raw_content(tool_results: ListHandle, tool_events: ListHandle, raw_response: str, session_id: str, request_id: str, stream_mode: i32) -> i32 {
+    if raw_response == "" {
         return 0
     }
-    let content = json.parse(raw)
-    let mut idx: i32 = 0
-    while idx < max_content_blocks() {
-        let block = json.get(content, str.from_i32(idx))
-        if json.get_str(block, "type") == "tool_use" {
-            let name = json.get_str(block, "name")
-            let tool_use_id = json.get_str(block, "id")
-            let input_raw = apputil.json_nested_field_or_empty(block, "input")
-            if name == "" || tool_use_id == "" {
-                return 0
-            }
-            let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
-            if stream_mode == 1 {
-                let outcome_parsed = json.parse(outcome)
-                discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
-                discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
-            }
-            discard list.push(tool_results, tool_result_block_json(tool_use_id, outcome))
-            discard list.push(tool_events, tool_event_json(name, tool_use_id, input_raw, outcome))
-            return 1
-        }
-        idx = idx + 1
+    let block_raw = raw_tool_use_block(raw_response)
+    if block_raw == "" {
+        return 0
     }
-    return 0
+    let name = quoted_raw_field(block_raw, "name")
+    let tool_use_id = quoted_raw_field(block_raw, "id")
+    let input_raw = raw_tool_input(block_raw)
+    if name == "" || tool_use_id == "" {
+        return 0
+    }
+    let outcome = run_tool_from_input(name, input_raw, session_id, request_id)
+    if stream_mode == 1 {
+        let outcome_parsed = json.parse(outcome)
+        discard cli.render.print_tool_call(name, if input_raw == "" { "{}" } else { input_raw })
+        discard cli.render.print_tool_result(name, api.rpc.response_status_text(outcome_parsed), api.rpc.response_result_raw(outcome_parsed))
+    }
+    discard list.push(tool_results, tool_result_block_json(tool_use_id, outcome))
+    discard list.push(tool_events, tool_event_json(name, tool_use_id, input_raw, outcome))
+    return 1
 }
 
 fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, depth: i32, accumulated_events_json: str, stream_mode: i32, system_prompt: str) -> str {
@@ -1062,6 +1078,8 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
     let tool_defs = tool_definitions_for(messages_json)
     write_debug(str.concat("messages_", str.concat(request_id, str.concat("_", str.concat(str.from_i32(depth), ".json")))), messages_json)
     write_debug(str.concat("tools_", str.concat(request_id, str.concat("_", str.concat(str.from_i32(depth), ".json")))), tool_defs)
+    write_debug_current("messages", messages_json)
+    write_debug_current("tools", tool_defs)
     log.info(
         "runtime.agent turn request",
         apputil.log_fields3("session_id", session_id, "request_id", request_id, "depth", str.from_i32(depth))
@@ -1073,7 +1091,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
         "runtime.agent turn response",
         apputil.log_fields3("session_id", session_id, "request_id", request_id, "status", str.from_i32(status))
     )
-    if status < 200 || status >= 300 {
+    if (status < 200 || status >= 300) && raw_looks_like_provider_message(raw) == 0 {
         let error_message = if raw == "" && services.provider.last_error() == "" { "provider_request_failed_before_response" } else { "" }
         let upstream_raw = upstream_error_raw_response(payload, raw)
         let transport_error = if raw == "" { services.provider.last_error() } else { raw }
@@ -1128,7 +1146,7 @@ fn run_session_turn_loop(session_id: str, request_id: str, messages_json: str, d
 
     let tool_results = list.new()
     let tool_events = list.new()
-    discard collect_tool_results_and_events(tool_results, tool_events, parsed, session_id, request_id, stream_mode)
+    discard collect_tool_results_and_events(tool_results, tool_events, parsed, raw, session_id, request_id, stream_mode)
     let tool_events_array = json.array(tool_events)
     write_debug("tool_events.json", tool_events_array)
     log.info(

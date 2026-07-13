@@ -68,7 +68,7 @@ fn ensure_state() -> i32 {
 }
 
 fn atomic_write_text(path: str, payload: str) -> i32 {
-    return fs.atomic_write(path, payload)
+    return services.localfs.write_text(path, payload)
 }
 
 fn json_doc_missing_or_corrupt(payload: str) -> i32 {

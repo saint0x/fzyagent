@@ -205,6 +205,13 @@ fn should_drain_after_turn(parsed: JsonHandle, raw: str, candidate_run_id: str) 
     return 0
 }
 
+fn turn_succeeded(parsed: JsonHandle, raw: str) -> i32 {
+    if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(raw) == 1 {
+        return 1
+    }
+    return 0
+}
+
 fn run_chat_turn(session_id: str, prompt: str) -> i32 {
     let request_id = str.concat("cli-", str.from_i32(time.now()))
     let filtered = services.safety.filter_prompt_text(prompt)
@@ -239,11 +246,18 @@ fn run_chat_turn(session_id: str, prompt: str) -> i32 {
             )
             discard runtime.longrange.drain_run(drain_run_id)
         }
-        if runtime.agent.turn_response_is_ok(parsed) == 1 || runtime.agent.turn_response_text_is_ok(raw) == 1 {
+        if turn_succeeded(parsed, raw) == 1 {
             if assistant_text(parsed) == "" {
                 discard render.print_assistant("(empty response)")
             }
         } else if drain_run_id != "" {
+            discard render.print_assistant("(empty response)")
+        }
+        return 0
+    }
+    if turn_succeeded(parsed, raw) == 1 {
+        let text = assistant_text(parsed)
+        if text == "" {
             discard render.print_assistant("(empty response)")
         }
         return 0

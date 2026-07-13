@@ -29,13 +29,7 @@ fn debug_sessions_dir() -> str {
 }
 
 fn ensure_local_dir(path: str) -> i32 {
-    if path == "" {
-        return 1
-    }
-    let handle = proc.spawn(str.concat("mkdir -p ", json.str(path)))
-    defer proc.close(handle)
-    discard proc.wait(handle, 5000)
-    return proc.exit_code(handle)
+    return services.localfs.ensure_dir(path)
 }
 
 fn active_runs_path() -> str {
@@ -197,10 +191,15 @@ fn safe_read(path: str) -> str {
         if fs.exists(local) == 1 {
             let payload = fs.read_file(local)
             if payload != "" {
-                discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_materialized"), "bytes", json.str(str.from_i32(str.len(payload))), "path", json.str(local)))
                 return payload
             }
             discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_materialized_empty"), "bytes", json.str("0"), "path", json.str(local)))
+        }
+        let kv_payload = services.sqlite_store.kv_get(path)
+        if kv_payload != "" {
+            discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("sqlite_state_fallback"), "bytes", json.str(str.from_i32(str.len(kv_payload))), "path", json.str(path)))
+            discard services.localfs.write_text(local, kv_payload)
+            return kv_payload
         }
         discard append_text_line(debug_payload_path(state_run_id, "state.read.trace.log"), apputil.json_obj3("source", json.str("local_state_missing"), "bytes", json.str("0"), "path", json.str(local)))
         return ""
@@ -211,10 +210,15 @@ fn safe_read(path: str) -> str {
         if fs.exists(local) == 1 {
             let payload = fs.read_file(local)
             if payload != "" {
-                discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_materialized"), "bytes", json.str(str.from_i32(str.len(payload))), "path", json.str(local)))
                 return payload
             }
             discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_materialized_empty"), "bytes", json.str("0"), "path", json.str(local)))
+        }
+        let kv_payload = services.sqlite_store.kv_get(path)
+        if kv_payload != "" {
+            discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("sqlite_progress_fallback"), "bytes", json.str(str.from_i32(str.len(kv_payload))), "path", json.str(path)))
+            discard services.localfs.write_text(local, kv_payload)
+            return kv_payload
         }
         discard append_text_line(debug_payload_path(progress_run_id, "progress.read.trace.log"), apputil.json_obj3("source", json.str("local_progress_missing"), "bytes", json.str("0"), "path", json.str(local)))
         return ""
@@ -228,21 +232,26 @@ fn safe_read(path: str) -> str {
     return fs.read_file(path)
 }
 
+fn parent_dir_path(path: str) -> str {
+    let mut idx: i32 = str.len(path) - 1
+    while idx >= 0 {
+        if str.slice(path, idx, idx + 1) == "/" {
+            return str.slice(path, 0, idx)
+        }
+        idx = idx - 1
+    }
+    return ""
+}
+
 fn atomic_write_text(path: str, payload: str) -> i32 {
     if str.starts_with(path, "kv:") == 1 {
         return services.sqlite_store.kv_put(path, payload)
     }
-    return fs.write_file(path, payload)
+    return services.localfs.write_text(path, payload)
 }
 
 fn append_text_line(path: str, line: str) -> i32 {
-    let current = safe_read(path)
-    let next = if current == "" {
-        str.concat(line, "\n")
-    } else {
-        str.concat3(current, line, "\n")
-    }
-    let rc = atomic_write_text(path, next)
+    let rc = services.localfs.append_text_line(path, line)
     if rc != 0 {
         log.error(
             "services.longrange append_text_line_failed",
@@ -272,6 +281,10 @@ fn text_index_of(hay: str, needle: str) -> i32 {
 fn quoted_json_field(raw: str, key: str) -> str {
     if raw == "" || key == "" {
         return ""
+    }
+    let parsed_value = apputil.json_field_or_empty(raw, key)
+    if parsed_value != "" {
+        return parsed_value
     }
     let marker = str.concat3("\"", key, "\":\"")
     let start = text_index_of(raw, marker)
@@ -406,7 +419,7 @@ fn mark_stage(run_id: str, stage: str) -> i32 {
     if run_id == "" {
         return 0
     }
-    return fs.write_file(debug_payload_path(run_id, "create_run.stage.txt"), stage)
+    return services.localfs.write_text(debug_payload_path(run_id, "create_run.stage.txt"), stage)
 }
 
 fn append_state_debug(run_id: str, event: str, a: str, b: str, c: str) -> i32 {
@@ -526,7 +539,7 @@ fn write_state_payload(run_id: str, payload: str) -> i32 {
         )
         return 1
     }
-    discard fs.atomic_write(materialized_run_state_path(run_id), payload)
+    discard services.localfs.write_text(materialized_run_state_path(run_id), payload)
     return 0
 }
 
@@ -556,7 +569,7 @@ fn append_progress_payload(run_id: str, payload: str) -> i32 {
         )
         return 1
     }
-    discard fs.atomic_write(materialized_run_progress_path(run_id), next)
+    discard services.localfs.write_text(materialized_run_progress_path(run_id), next)
     return 0
 }
 

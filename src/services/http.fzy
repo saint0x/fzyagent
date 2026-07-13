@@ -11,6 +11,10 @@ fn configure_server() -> i32 {
     return 0
 }
 
+fn listener_addr() -> str {
+    return str.concat(runtime.config.host_name(), str.concat(":", runtime.config.port_value()))
+}
+
 fn start_server() -> i32 {
     log.info("http.start_server", apputil.log_fields2("component", "http", "phase", "start_server"))
     web.start_listener()
@@ -28,7 +32,7 @@ fn graceful_stop() -> i32 {
 }
 
 fn listen_public() -> i32 {
-    let listener: HttpHandle = http.bind()
+    let listener: HttpHandle = http.bind(listener_addr())
     http.listen(listener)
     close(listener)
     return 0

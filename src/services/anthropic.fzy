@@ -2,6 +2,7 @@ use core.http;
 use core.time;
 use core.log;
 use core.fs;
+use core.proc;
 
 enum ModelClass {
     ClaudeHaiku45,
@@ -73,13 +74,74 @@ fn build_request_payload(messages_json: str, tools_json: str, system_prompt: str
 
 fn response_meta_json() -> str {
     return apputil.json_obj2(
-        "status", json.str(str.from_i32(http.last_status())),
-        "error", json.str(http.last_error()),
+        "status", json.str(last_status_text()),
+        "error", json.str(last_error()),
     )
 }
 
+fn helper_path() -> str {
+    return apputil.path_join2(runtime.config.scripts_dir(), "anthropic_request.py")
+}
+
+fn python_path() -> str {
+    return "/usr/bin/python3"
+}
+
+fn helper_out_path() -> str {
+    return runtime.config.state_path("anthropic.helper.response.raw")
+}
+
+fn helper_meta_path() -> str {
+    return runtime.config.state_path("anthropic.helper.response.meta.json")
+}
+
+fn helper_payload_path() -> str {
+    return runtime.config.state_path("anthropic.helper.request.json")
+}
+
+fn last_status_text() -> str {
+    if fs.exists(helper_meta_path()) == 0 {
+        return str.from_i32(http.last_status())
+    }
+    return apputil.json_field_or_empty(fs.read_file(helper_meta_path()), "status")
+}
+
+fn helper_status_value() -> i32 {
+    return apputil.parse_i32(last_status_text())
+}
+
+fn helper_error_text() -> str {
+    if fs.exists(helper_meta_path()) == 0 {
+        return http.last_error()
+    }
+    return apputil.json_field_or_empty(fs.read_file(helper_meta_path()), "error")
+}
+
+fn request_via_helper(payload: str) -> str {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, endpoint())
+    discard proc.argv_push(argv, api_key())
+    discard proc.argv_push(argv, request_version())
+    discard proc.argv_push(argv, helper_payload_path())
+    discard proc.argv_push(argv, helper_out_path())
+    discard proc.argv_push(argv, helper_meta_path())
+    discard proc.argv_push(argv, "60")
+    let env_map: ProcessEnv = proc.env_new()
+    discard proc.env_set(env_map, "TERM", "dumb")
+    discard proc.env_set(env_map, "ANTHROPIC_INLINE_PAYLOAD", payload)
+    let handle = proc.spawn_cmd(python_path(), argv, env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 70000)
+    let stdout = proc.stdout(handle)
+    let file_body = if fs.exists(helper_out_path()) == 1 { fs.read_file(helper_out_path()) } else { "" }
+    if file_body != "" {
+        return file_body
+    }
+    return stdout
+}
+
 fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str, max_tokens: str) -> str {
-    queue_headers()
     let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
     let stamp = str.from_i32(time.now())
     let meta_payload = apputil.json_obj5(
@@ -94,9 +156,8 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
         apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "payload_bytes", str.from_i32(str.len(payload)))
     )
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir(runtime.config.state_subdir("provider.debug"))
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.meta.current.json"), meta_payload)
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.meta.", str.concat(stamp, ".json"))), meta_payload)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.meta.current.json"), meta_payload)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.meta.", str.concat(stamp, ".json"))), meta_payload)
     }
     if messages_json == "" || payload == "" {
         log.error(
@@ -104,35 +165,32 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
             apputil.log_fields3("stamp", stamp, "message_bytes", str.from_i32(str.len(messages_json)), "tool_bytes", str.from_i32(str.len(tools_json)))
         )
         if runtime.config.persist_request_artifacts() == 1 {
-            fs.mkdir(runtime.config.state_subdir("provider.debug"))
-            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
-            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
-            discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".meta.json"))), apputil.json_obj3("status", json.str("error"), "message_bytes", json.str(str.from_i32(str.len(messages_json))), "tool_bytes", json.str(str.from_i32(str.len(tools_json)))))
+            discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
+            discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
+            discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".meta.json"))), apputil.json_obj3("status", json.str("error"), "message_bytes", json.str(str.from_i32(str.len(messages_json))), "tool_bytes", json.str(str.from_i32(str.len(tools_json)))))
         }
         return ""
     }
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir(runtime.config.state_subdir("provider.debug"))
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.request.json"), payload)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.request.", str.concat(stamp, ".json"))), payload)
     }
-    let out = http.post_json_capture(endpoint(), payload)
+    let out = request_via_helper(payload)
     if runtime.config.persist_request_artifacts() == 1 {
-        fs.mkdir(runtime.config.state_subdir("provider.debug"))
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.raw"), out)
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.meta.json"), response_meta_json())
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".raw"))), out)
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".meta.json"))), response_meta_json())
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.raw"), out)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "anthropic.response.meta.json"), response_meta_json())
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".raw"))), out)
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), str.concat("anthropic.response.", str.concat(stamp, ".meta.json"))), response_meta_json())
     }
     return out
 }
 
 fn last_status() -> i32 {
-    return http.last_status()
+    return helper_status_value()
 }
 
 fn last_error() -> str {
-    return http.last_error()
+    return helper_error_text()
 }
 
 fn status_label(status: i32) -> str {

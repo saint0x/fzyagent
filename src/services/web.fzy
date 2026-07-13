@@ -29,9 +29,13 @@ fn configure_listener() -> i32 {
     return 0
 }
 
+fn listener_addr() -> str {
+    return str.concat(runtime.config.host_name(), str.concat(":", runtime.config.port_value()))
+}
+
 fn start_listener() -> i32 {
     configure_listener()
-    let listener: HttpHandle = http.bind()
+    let listener: HttpHandle = http.bind(listener_addr())
     http.listen(listener)
     log.info("web listener started", apputil.log_fields2("component", "web", "phase", "listener_started"))
     close(listener)
@@ -40,7 +44,7 @@ fn start_listener() -> i32 {
 
 fn serve_forever() -> i32 {
     configure_listener()
-    let listener: HttpHandle = http.bind()
+    let listener: HttpHandle = http.bind(listener_addr())
     defer close(listener)
     http.listen(listener)
     log.info("web listener started", apputil.log_fields2("component", "web", "phase", "listener_started"))

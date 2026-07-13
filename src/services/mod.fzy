@@ -15,6 +15,7 @@ mod chaos;
 mod safety;
 mod longrange;
 mod sqlite_store;
+mod localfs;
 
 use core.log;
 use registry.list_tools as list_tools_alias;

@@ -1,0 +1,79 @@
+use core.fs;
+use core.proc;
+use core.log;
+
+fn parent_dir_path(path: str) -> str {
+    let mut idx: i32 = str.len(path) - 1
+    while idx >= 0 {
+        if str.slice(path, idx, idx + 1) == "/" {
+            return str.slice(path, 0, idx)
+        }
+        idx = idx - 1
+    }
+    return ""
+}
+
+fn helper_path() -> str {
+    return apputil.path_join2(runtime.config.scripts_dir(), "localfs_io.py")
+}
+
+fn python_path() -> str {
+    return "/usr/bin/python3"
+}
+
+fn default_env() -> ProcessEnv {
+    let env_map: ProcessEnv = proc.env_new()
+    discard proc.env_set(env_map, "TERM", "dumb")
+    return env_map
+}
+
+fn run_helper(op: str, path: str, payload: str) -> i32 {
+    let argv: ProcessArgv = proc.argv_new()
+    discard proc.argv_push(argv, helper_path())
+    discard proc.argv_push(argv, op)
+    discard proc.argv_push(argv, path)
+    let env_map = default_env()
+    if payload != "" {
+        discard proc.env_set(env_map, "FZY_LOCALFS_PAYLOAD", payload)
+    }
+    let handle = proc.spawn_cmd(python_path(), argv, env_map, "")
+    defer proc.close(handle)
+    discard proc.wait(handle, 15000)
+    let exit_code = proc.exit_code(handle)
+    if exit_code != 0 {
+        log.error(
+            "services.localfs helper_failed",
+            apputil.log_fields3("op", op, "path", path, "stderr", apputil.excerpt_head(proc.stderr(handle), 220))
+        )
+    }
+    return exit_code
+}
+
+pub fn ensure_dir(path: str) -> i32 {
+    if path == "" {
+        return 0
+    }
+    return run_helper("mkdir", path, "")
+}
+
+pub fn write_text(path: str, payload: str) -> i32 {
+    let parent = parent_dir_path(path)
+    if parent != "" {
+        let rc = ensure_dir(parent)
+        if rc != 0 {
+            return rc
+        }
+    }
+    return run_helper("write_env", path, payload)
+}
+
+pub fn append_text_line(path: str, line: str) -> i32 {
+    let parent = parent_dir_path(path)
+    if parent != "" {
+        let rc = ensure_dir(parent)
+        if rc != 0 {
+            return rc
+        }
+    }
+    return run_helper("append_env", path, str.concat(line, "\n"))
+}

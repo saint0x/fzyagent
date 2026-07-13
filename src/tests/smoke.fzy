@@ -41,6 +41,14 @@ fn lang_apply(cb: fn(i32) -> i32, value: i32) -> i32 {
     return lang_id(value);
 }
 
+fn lang_probe_score(v: i32) -> i32 {
+    return v + 1;
+}
+
+fn lang_probe_code(v: i32) -> i32 {
+    return v + 2;
+}
+
 fn next_surface_counter() -> i32 {
     return 1;
 }
@@ -172,8 +180,8 @@ test "det_language_surface" {
     let probe = LangProbe { value: 7 };
     let kept = lang_keep<LangProbe>(probe);
     discard kept;
-    let trait_score = LangProbe.score(7);
-    let trait_code = LangProbe.code(7);
+    let trait_score: i32 = lang_probe_score(7);
+    let trait_code: i32 = lang_probe_code(7);
     discard loop {
         break class;
     };

@@ -369,9 +369,8 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     let payload = build_request_payload(messages_json, tools_json, system_prompt, max_tokens)
     if runtime.config.persist_request_artifacts() == 1 {
         runtime.config.ensure_state_root()
-        fs.mkdir(runtime.config.state_subdir("provider.debug"))
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.request.json"), payload)
-        discard fs.atomic_write(
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.request.json"), payload)
+        discard services.localfs.write_text(
             apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.request.meta.json"),
             request_meta_json(resolved_endpoint, payload, messages_json, tools_json, system_prompt, max_tokens),
         )
@@ -385,9 +384,8 @@ fn request_messages_sync(messages_json: str, tools_json: str, system_prompt: str
     let error = http.last_error()
     if runtime.config.persist_request_artifacts() == 1 {
         runtime.config.ensure_state_root()
-        fs.mkdir(runtime.config.state_subdir("provider.debug"))
-        discard fs.atomic_write(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.response.raw"), raw)
-        discard fs.atomic_write(
+        discard services.localfs.write_text(apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.response.raw"), raw)
+        discard services.localfs.write_text(
             apputil.path_join2(runtime.config.state_subdir("provider.debug"), "openai_compat.response.meta.json"),
             response_meta_json(status, error, raw),
         )

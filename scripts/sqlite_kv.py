@@ -4,6 +4,28 @@ import sys
 import json
 import time
 from pathlib import Path
+from typing import Optional
+
+
+STATE_ROOT: Optional[Path] = None
+
+
+def configure_state_root(db_path: str) -> None:
+    global STATE_ROOT
+    STATE_ROOT = Path(db_path).resolve().parent
+
+
+def state_root() -> Path:
+    if STATE_ROOT is None:
+        return Path("/tmp/fzyagent")
+    return STATE_ROOT
+
+
+def state_path(*parts: str) -> Path:
+    base = state_root()
+    for part in parts:
+        base = base / part
+    return base
 
 
 def connect(db_path: str) -> sqlite3.Connection:
@@ -145,27 +167,27 @@ def _write_debug(path: str, payload: object) -> None:
 
 
 def _run_dir(run_id: str) -> Path:
-    return Path("/tmp/fzyagent/longrange/runs") / run_id
+    return state_path("longrange", "runs", run_id)
 
 
 def _session_active_run_path(session_id: str) -> Path:
-    return Path("/tmp/fzyagent/longrange/sessions") / session_id / "active_run.txt"
+    return state_path("longrange", "sessions", session_id, "active_run.txt")
 
 
 def _active_runs_path() -> Path:
-    return Path("/tmp/fzyagent/longrange/active_runs.txt")
+    return state_path("longrange", "active_runs.txt")
 
 
 def _summary_path() -> Path:
-    return Path("/tmp/fzyagent/longrange/summary.json")
+    return state_path("longrange", "summary.json")
 
 
 def _summary_last_write_path() -> Path:
-    return Path("/tmp/fzyagent/longrange/summary.json.last.write.json")
+    return state_path("longrange", "summary.json.last.write.json")
 
 
 def _summary_debug_path() -> Path:
-    return Path("/tmp/fzyagent/longrange/summary.rebuild.debug.json")
+    return state_path("longrange", "summary.rebuild.debug.json")
 
 
 def _active_run_freshness_window_ms() -> int:
@@ -256,8 +278,8 @@ def _mono_ms_as_int() -> int:
 
 
 def cmd_longrange_rebuild_projection(db_path: str) -> int:
-    del db_path
-    sessions_root = Path("/tmp/fzyagent/longrange/sessions")
+    configure_state_root(db_path)
+    sessions_root = state_path("longrange", "sessions")
     active_ids: list[str] = []
     if sessions_root.exists():
         for active_path in sorted(sessions_root.glob("*/active_run.txt")):
@@ -282,7 +304,7 @@ def cmd_longrange_rebuild_projection(db_path: str) -> int:
     latest_run_id = ""
     latest_status = "idle"
     latest_stamp = 0
-    runs_root = Path("/tmp/fzyagent/longrange/runs")
+    runs_root = state_path("longrange", "runs")
     if runs_root.exists():
         for run_dir in sorted(runs_root.iterdir()):
             if not run_dir.is_dir():
@@ -316,7 +338,7 @@ def cmd_longrange_rebuild_projection(db_path: str) -> int:
     atomic_write_text(_summary_last_write_path(), payload)
     atomic_write_text(_summary_path(), payload)
     _write_debug(
-        "/tmp/fzyagent/last_longrange_rebuild_projection.json",
+        str(state_path("last_longrange_rebuild_projection.json")),
         {"active_ids": active_ids, "summary_doc": summary_doc},
     )
     return 0
@@ -348,6 +370,7 @@ def cmd_longrange_bootstrap_run(
     request_id: str,
     created_at: str,
 ) -> int:
+    configure_state_root(db_path)
     if not run_id:
         run_id = session_id
     if not state_key and run_id:
@@ -358,7 +381,7 @@ def cmd_longrange_bootstrap_run(
     if not created_at:
         created_at = commit_stamp
     _write_debug(
-        "/tmp/fzyagent/last_longrange_bootstrap_run_args.json",
+        str(state_path("last_longrange_bootstrap_run_args.json")),
         {
             "state_key": state_key,
             "progress_key": progress_key,
@@ -428,7 +451,7 @@ def cmd_longrange_bootstrap_run(
     }
     with connect(db_path) as conn:
         _write_debug(
-            "/tmp/fzyagent/last_longrange_bootstrap_run_commit.json",
+            str(state_path("last_longrange_bootstrap_run_commit.json")),
             {
                 "state_doc": state_doc,
                 "progress_doc": progress_doc,
@@ -451,7 +474,7 @@ def cmd_longrange_bootstrap_run(
         atomic_write_text(_session_active_run_path(session_id), run_id)
     if run_id:
         _append_unique_line(_active_runs_path(), run_id)
-        atomic_write_text("/tmp/fzyagent/last_longrange_bootstrap_active_runs.txt", _active_runs_path().read_text(encoding="utf-8"))
+        atomic_write_text(state_path("last_longrange_bootstrap_active_runs.txt"), _active_runs_path().read_text(encoding="utf-8"))
     _materialize_run_docs(run_id, state_doc, progress_doc)
     return 0
 
@@ -488,6 +511,7 @@ def cmd_longrange_update_turn(
     progress_request_id: str,
     progress_detail: str,
 ) -> int:
+    configure_state_root(db_path)
     if not run_id:
         run_id = session_id
     if not state_key and run_id:
@@ -495,7 +519,7 @@ def cmd_longrange_update_turn(
     if not progress_key and run_id:
         progress_key = f"kv:longrange:progress:{run_id}"
     _write_debug(
-        "/tmp/fzyagent/last_longrange_update_turn_args.json",
+        str(state_path("last_longrange_update_turn_args.json")),
         {
             "state_key": state_key,
             "progress_key": progress_key,
@@ -579,7 +603,7 @@ def cmd_longrange_update_turn(
         progress = list(progress_before)
         progress.append(progress_doc)
         _write_debug(
-            "/tmp/fzyagent/last_longrange_update_turn_commit.json",
+            str(state_path("last_longrange_update_turn_commit.json")),
             {
                 "commit_stamp": commit_stamp,
                 "state_doc": state_doc,
@@ -625,6 +649,7 @@ def cmd_longrange_terminalize(
     progress_request_id: str,
     progress_detail: str,
 ) -> int:
+    configure_state_root(db_path)
     if not run_id:
         run_id = session_id
     if not state_key and run_id:
@@ -632,7 +657,7 @@ def cmd_longrange_terminalize(
     if not progress_key and run_id:
         progress_key = f"kv:longrange:progress:{run_id}"
     _write_debug(
-        "/tmp/fzyagent/last_longrange_terminalize_args.json",
+        str(state_path("last_longrange_terminalize_args.json")),
         {
             "state_key": state_key,
             "progress_key": progress_key,

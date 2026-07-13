@@ -46,13 +46,12 @@ fz check . --json
 fz build . --backend cranelift --json
 fz build . --release --backend llvm --json
 fz audit unsafe . --workspace --json
-fozzy doctor --deep --scenario .fz/det/main.det.fozzy.json --runs 5 --seed 4242 --json
-fozzy test --det --strict .fz/det/main.det.fozzy.json --json
+fz doctor project . --strict --json
 fz test . --det --strict-verify --seed 4242 --record artifacts/fzyagent.det.trace.fozzy --json
 fz run . --backend cranelift --json
-fozzy trace verify artifacts/fzyagent.det.trace.fozzy --strict --json
-fozzy replay artifacts/fzyagent.det.trace.fozzy --json
-fozzy ci artifacts/fzyagent.det.trace.fozzy --json
+fz trace verify artifacts/fzyagent.det.trace.fozzy --strict --json
+fz replay artifacts/fzyagent.det.trace.fozzy --json
+fz ci artifacts/fzyagent.det.trace.fozzy --strict --json
 ```
 
 Default listen address is `127.0.0.1:8787`.
@@ -72,6 +71,28 @@ Direct binary form:
 ```bash
 ./.fz/build/fzyagent chat --session mywork
 ```
+
+## Long-Range FZL Bench
+
+There is a checked-in long-range benchmark harness for language pickup work against the Desktop Fozzylang checkout.
+
+It points the model at:
+
+- `/Users/deepsaint/Desktop/fozzylang/src`
+- `/Users/deepsaint/Desktop/fozzylang/fzl-showcase.html`
+
+and asks it to create a small FZY project locally on the Desktop.
+
+```bash
+python3 scripts/run_longrange_bench.py --model claude-fable-5
+```
+
+Useful flags:
+
+- `--dry-run` to print the rendered benchmark goal without executing it
+- `--target-project-dir /Users/deepsaint/Desktop/my-bench-project` to pin the output location
+- `--output /tmp/fzyagent/my-bench-result.json` to control where the run summary is written
+- `--state-root /tmp/fzyagent/my-bench-state` to keep the long-range artifacts in a specific directory
 
 ## Notes
 

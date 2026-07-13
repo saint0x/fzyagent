@@ -201,7 +201,7 @@ fn run_longrange_update_turn_shell(
         "last_request_id", json.str(last_request_id),
         "progress_request_id", json.str(progress_request_id),
     )
-    discard fs.atomic_write(runtime.config.state_path("last_longrange_update_turn_spawn.json"), debug_payload)
+    discard services.localfs.write_text(runtime.config.state_path("last_longrange_update_turn_spawn.json"), debug_payload)
     let argv: ProcessArgv = proc.argv_new()
     discard proc.argv_push(argv, helper_path())
     discard proc.argv_push(argv, "longrange_update_turn")
@@ -413,7 +413,7 @@ fn refresh_mirror_from_db(key: str) -> i32 {
         return rc
     }
     let value = str.trim(fs.read_file(scratch))
-    return fs.atomic_write(mirror_path(key), value)
+    return services.localfs.write_text(mirror_path(key), value)
 }
 
 fn mirror_path(key: str) -> str {
@@ -464,7 +464,7 @@ pub fn kv_get(key: str) -> str {
             return ""
         }
         let trimmed = str.trim(fs.read_file(scratch))
-        discard fs.atomic_write(mirror, trimmed)
+        discard services.localfs.write_text(mirror, trimmed)
         if trimmed != "" || key_retries_on_empty(key) == 0 {
             return trimmed
         }
@@ -480,7 +480,7 @@ pub fn kv_put(key: str, value: str) -> i32 {
     }
     let rc = run_put_shell(key, value)
     if rc == 0 && is_longrange_key(key) == 0 {
-        discard fs.atomic_write(mirror_path(key), value)
+        discard services.localfs.write_text(mirror_path(key), value)
     }
     return rc
 }
