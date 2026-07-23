@@ -29,7 +29,7 @@ fn debug_dispatch_result_json(provider_name: str, raw: str) -> str {
 fn configured_provider_raw() -> str {
     let provider = env.get("AGENT_PROVIDER")
     if provider == "" {
-        return "anthropic"
+        return "openai_compat"
     }
     return provider
 }
