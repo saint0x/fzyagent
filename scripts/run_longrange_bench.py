@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-ROOT = Path("/Users/deepsaint/Desktop/fzyagent")
+ROOT = Path(os.environ.get("FZYAGENT_ROOT", Path(__file__).resolve().parents[1])).resolve()
 DEFAULT_BIN = ROOT / ".fz/build/fzyagent"
 DEFAULT_TEMPLATE = ROOT / "bench/longrange/fzl_desktop_project.goal.md"
-DEFAULT_FZL_SOURCE_DIR = Path("/Users/deepsaint/Desktop/fozzylang/src")
-DEFAULT_FZL_SHOWCASE_PATH = Path("/Users/deepsaint/Desktop/fozzylang/fzl-showcase.html")
+DEFAULT_FOZZYLANG_ROOT = Path(os.environ.get("FOZZYLANG_ROOT", ROOT.parent / "fozzylang")).resolve()
+DEFAULT_FZL_SOURCE_DIR = DEFAULT_FOZZYLANG_ROOT / "src"
+DEFAULT_FZL_SHOWCASE_PATH = DEFAULT_FOZZYLANG_ROOT / "fzl-showcase.html"
 
 
 def slugify(value: str) -> str:
@@ -65,7 +66,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run the checked-in long-range FZY/FZL benchmark harness against a selected model."
     )
-    parser.add_argument("--model", default="claude-fable-5", help="Anthropic model name to use.")
+    parser.add_argument("--model", default="Qwen3", help="Model name to use.")
+    parser.add_argument("--provider", default=os.environ.get("AGENT_PROVIDER", "openai_compat"), help="Provider to use: openai_compat or anthropic.")
+    parser.add_argument("--endpoint", default=os.environ.get("OPENAI_COMPAT_ENDPOINT", "http://127.0.0.1:8000/v1"), help="OpenAI-compatible base URL or chat completions URL.")
+    parser.add_argument("--api-key", default=os.environ.get("OPENAI_COMPAT_API_KEY", ""), help="Optional OpenAI-compatible bearer token.")
     parser.add_argument("--session", default="", help="Optional explicit long-range session id.")
     parser.add_argument("--state-root", default="", help="Optional AGENT_STATE_DIR override.")
     parser.add_argument("--target-project-dir", default="", help="Where the benchmarked model should create the FZY project.")
@@ -80,7 +84,7 @@ def main() -> int:
     model_slug = slugify(args.model)
     session_id = args.session or f"longrange-{model_slug}-{stamp}"
     target_project_dir = Path(
-        args.target_project_dir or f"/Users/deepsaint/Desktop/{model_slug}-fzl-bench-{stamp}"
+        args.target_project_dir or f"/tmp/fzyagent/targets/{model_slug}-fzl-bench-{stamp}"
     )
     state_root = Path(args.state_root or f"/tmp/fzyagent/longrangebench/{model_slug}/{stamp}")
     output_path = Path(args.output or state_root / "result.json")
@@ -100,11 +104,15 @@ def main() -> int:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env["AGENT_PROVIDER"] = "anthropic"
+    env["AGENT_PROVIDER"] = args.provider
     env["AGENT_MODEL"] = args.model
     env["AGENT_PROJECT_DIR"] = str(ROOT)
     env["AGENT_STATE_DIR"] = str(state_root)
     env["AGENT_OBSERVABILITY_MODE"] = "verbose"
+    if args.provider in {"openai", "openai_compat", "local", "local_openai"}:
+        env["OPENAI_COMPAT_ENDPOINT"] = args.endpoint
+        if args.api_key:
+            env["OPENAI_COMPAT_API_KEY"] = args.api_key
 
     cmd = [
         str(bin_path),
@@ -124,6 +132,8 @@ def main() -> int:
         "schema_version": "fzyagent.longrangebench.v1",
         "started_at": now.isoformat(),
         "model": args.model,
+        "provider": args.provider,
+        "endpoint": args.endpoint if args.provider in {"openai", "openai_compat", "local", "local_openai"} else "",
         "session_id": session_id,
         "target_project_dir": str(target_project_dir),
         "state_root": str(state_root),

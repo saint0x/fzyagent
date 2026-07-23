@@ -31,5 +31,5 @@
 
 ## Production Smoke Command
 ```bash
-fz run /Users/deepsaint/Desktop/fzyagent --det --strict-verify --seed 151 --host-backends --json
+fz run . --det --strict-verify --seed 151 --host-backends --json
 ```

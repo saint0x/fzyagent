@@ -1,7 +1,7 @@
 # Failure Analysis (Production RC)
 
 Date: 2026-02-24
-Project: /Users/deepsaint/Desktop/fzyagent
+Project: fzyagent
 
 ## Current Status
 No active blocking failures in the current production RC matrix.

@@ -1,12 +1,12 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="${0:A:h}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="${SCRIPT_DIR}"
-AEGIS_ROOT="/Users/deepsaint/Desktop/aegis"
+AEGIS_ROOT="${AEGIS_ROOT:-$(cd "${WORKSPACE_ROOT}/../aegis" 2>/dev/null && pwd || true)}"
 LOCAL_BIN_DIR="${WORKSPACE_ROOT}/.local/bin"
 LOCAL_AEGIS="${LOCAL_BIN_DIR}/aegis"
-BUILD_AEGIS="${AEGIS_ROOT}/target/aarch64-apple-darwin/release/aegis"
+BUILD_AEGIS="${AEGIS_ROOT}/target/release/aegis"
 
 usage() {
   cat <<'EOF'
@@ -49,9 +49,11 @@ verify_binary() {
 
   chmod +x "${candidate}"
 
-  if ! file "${candidate}" | grep -q 'Mach-O 64-bit executable arm64'; then
+  local artifact_type
+  artifact_type="$(file "${candidate}" 2>/dev/null || true)"
+  if [[ "${artifact_type}" != *"executable"* ]]; then
     printf 'unexpected aegis artifact type for %s\n' "${candidate}" >&2
-    file "${candidate}" >&2 || true
+    printf '%s\n' "${artifact_type}" >&2
     exit 1
   fi
 

@@ -1,12 +1,12 @@
 {
-  "dependencyGraphHash": "36fd70f40d54c3b685cea8e1de89c8bc03ddca4a428e5db9d10b40000fa5cd5a",
+  "schemaVersion": "fozzylang.lock.v0",
+  "dependencyGraphHash": "7ec97698309277485012511b0cc984a6b7a58809f7f9b199f2b2bfc84cace575",
   "graph": {
-    "deps": [],
     "package": {
-      "manifestHash": "63d6e6bf3c24be1f22f51ec224d6613527a5f9b9f6eb9ea8ac01e05dcac8852d",
       "name": "fzyagent",
-      "version": "0.1.0"
-    }
-  },
-  "schemaVersion": "fozzylang.lock.v0"
+      "version": "0.1.0",
+      "manifestHash": "63d6e6bf3c24be1f22f51ec224d6613527a5f9b9f6eb9ea8ac01e05dcac8852d"
+    },
+    "deps": []
+  }
 }

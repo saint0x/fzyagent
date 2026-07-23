@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /Users/deepsaint/Desktop/fzyagent
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
 if [[ "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
-  exec /Users/deepsaint/Desktop/fzyagent/.fz/build/fzyagent help
+  exec "${SCRIPT_DIR}/.fz/build/fzyagent" help
 fi
-/Users/deepsaint/Desktop/fzyagent/.fz/build/fzyagent chat "$@"
+exec "${SCRIPT_DIR}/.fz/build/fzyagent" chat "$@"

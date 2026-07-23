@@ -1,9 +1,9 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="${0:A:h}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="${SCRIPT_DIR}"
-FOZZYLANG_ROOT="/Users/deepsaint/Desktop/fozzylang"
+FOZZYLANG_ROOT="${FOZZYLANG_ROOT:-$(cd "${WORKSPACE_ROOT}/../fozzylang" 2>/dev/null && pwd || true)}"
 LOCAL_BIN_DIR="${WORKSPACE_ROOT}/.local/bin"
 LOCAL_FZ="${LOCAL_BIN_DIR}/fz"
 
@@ -43,9 +43,11 @@ verify_binary() {
 
   chmod +x "${candidate}"
 
-  if ! file "${candidate}" | grep -q 'Mach-O 64-bit executable arm64'; then
+  local artifact_type
+  artifact_type="$(file "${candidate}" 2>/dev/null || true)"
+  if [[ "${artifact_type}" != *"executable"* ]]; then
     printf 'unexpected compiler artifact type for %s\n' "${candidate}" >&2
-    file "${candidate}" >&2 || true
+    printf '%s\n' "${artifact_type}" >&2
     exit 1
   fi
 

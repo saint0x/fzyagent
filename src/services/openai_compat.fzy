@@ -22,7 +22,7 @@ fn endpoint() -> str {
         }
         return str.concat(configured, "/v1/chat/completions")
     }
-    return "http://127.0.0.1:1234/v1/chat/completions"
+    return "http://127.0.0.1:8000/v1/chat/completions"
 }
 
 fn api_key() -> str {

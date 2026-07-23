@@ -1,7 +1,7 @@
 # Benchmark Report (Production RC)
 
 Date: 2026-02-24
-Project: /Users/deepsaint/Desktop/fzyagent
+Project: fzyagent
 
 ## Method
 - Deterministic tests: `fz test --det --strict-verify`

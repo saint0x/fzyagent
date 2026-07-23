@@ -8,10 +8,10 @@ Older ad hoc bench history was intentionally discarded. The current report keeps
 
 ## Harness
 
-- runtime: `/Users/deepsaint/Desktop/fzyagent/.fz/build/fzyagent`
+- runtime: `.fz/build/fzyagent`
 - mode: deterministic `longrange-start` harness
 - shape: `create_run(...)` followed by long-range drain
-- repo under test: `/Users/deepsaint/Desktop/fzyagent`
+- repo under test: `fzyagent`
 - runs: `21` total
 - matrix: `3` models x `7` cases
 - result source: `/tmp/fzyagent/longrangebench_20260603.json`
@@ -38,7 +38,7 @@ Why this harness:
 ### `liquid/lfm2.5-1.2b`
 
 - provider: `openai_compat`
-- endpoint: `http://127.0.0.1:1234`
+- endpoint: `http://127.0.0.1:8000/v1`
 
 | Case | Status | Turns | Failures | Duration ms | Summary |
 | --- | --- | --- | --- | --- | --- |

@@ -40,7 +40,7 @@ In practice, that means we can ship real agent runtime features quickly while ke
 
 ```bash
 cp .env.example .env
-# set ANTHROPIC_API_KEY in .env
+# adjust AGENT_MODEL / OPENAI_COMPAT_ENDPOINT if your local sock endpoint differs
 
 fz check . --json
 fz build . --backend cranelift --json
@@ -74,29 +74,32 @@ Direct binary form:
 
 ## Long-Range FZL Bench
 
-There is a checked-in long-range benchmark harness for language pickup work against the Desktop Fozzylang checkout.
+There is a checked-in long-range benchmark harness for language pickup work against a sibling Fozzylang checkout.
 
 It points the model at:
 
-- `/Users/deepsaint/Desktop/fozzylang/src`
-- `/Users/deepsaint/Desktop/fozzylang/fzl-showcase.html`
+- `${FOZZYLANG_ROOT:-../fozzylang}/src`
+- `${FOZZYLANG_ROOT:-../fozzylang}/fzl-showcase.html`
 
-and asks it to create a small FZY project locally on the Desktop.
+and asks it to create a small FZY project in a local target directory.
 
 ```bash
-python3 scripts/run_longrange_bench.py --model claude-fable-5
+python3 scripts/run_longrange_bench.py \
+  --provider openai_compat \
+  --endpoint http://127.0.0.1:8000/v1 \
+  --model Qwen3
 ```
 
 Useful flags:
 
 - `--dry-run` to print the rendered benchmark goal without executing it
-- `--target-project-dir /Users/deepsaint/Desktop/my-bench-project` to pin the output location
+- `--target-project-dir /tmp/fzyagent/my-bench-project` to pin the output location
 - `--output /tmp/fzyagent/my-bench-result.json` to control where the run summary is written
 - `--state-root /tmp/fzyagent/my-bench-state` to keep the long-range artifacts in a specific directory
 
 ## Notes
 
-- Secrets are env-driven (`ANTHROPIC_API_KEY`) and `.env` is gitignored.
+- Provider settings are env-driven and `.env` is gitignored.
 - Unsafe audit now emits unsafe inventory/docs artifacts under `.fz/` (JSON + Markdown + HTML).
 - Strict unsafe policy for CI is opt-in with `FZ_UNSAFE_STRICT=1`.
 - `src/tests/smoke.fzy` exercises first-class unsafe semantics in `det_language_surface` (`unsafe fn` + `unsafe { ... }`).

@@ -17,7 +17,7 @@ fn project_dir() -> str {
     if pwd != "" {
         return pwd
     }
-    return "/Users/deepsaint/Desktop/fzyagent"
+    return "."
 }
 
 fn state_root() -> str {

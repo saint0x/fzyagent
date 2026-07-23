@@ -1,7 +1,7 @@
 # Release Candidate
 
 RC: RC-2026-02-24-01
-Project: /Users/deepsaint/Desktop/fzyagent
+Project: fzyagent
 
 ## Gate Evidence
 - Deterministic trace: `artifacts/phase8_rc.trace.fozzy`

@@ -29,16 +29,16 @@ const COLORS = {
   red: "\x1b[38;5;196m",
 };
 
-const ROOT = "/Users/deepsaint/Desktop/fzyagent";
+const ROOT = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 const ARTIFACTS_DIR = `${ROOT}/artifacts`;
 const HISTORY_PATH = `${ARTIFACTS_DIR}/agent_chat_history.jsonl`;
 const LOG_PATH = `${ARTIFACTS_DIR}/agent_chat_cli.log`;
 const AGENT_URL = "http://127.0.0.1:8080/sessions/demo/messages";
 
 const DEFAULT_TOOL_USES = [
-  "ls -1 /Users/deepsaint/Desktop",
-  "rg -n --no-heading --max-count 20 -g '*.md' FZY /Users/deepsaint/Desktop",
-  "touch /Users/deepsaint/Desktop/test_from_agent.txt",
+  "ls -1 .",
+  "rg -n --no-heading --max-count 20 -g '*.md' FZY .",
+  "printf fzyagent-tool-smoke > artifacts/test_from_agent.txt",
 ];
 
 function ensureArtifacts(): void {
